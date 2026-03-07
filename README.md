@@ -2,6 +2,8 @@
 
 This project uses an esp32 to emulate a cp-plus to control a truma combi D (the model with the square cowl).
 
+![square cowl](doc/cowl.png)
+
 It connects to an mqtt broker to get the settings for the heating, boiler and fan and to report back the status of the combi.
 
 It also provides a simple web interface to control the combi. The settings can also be given using the serial port.
