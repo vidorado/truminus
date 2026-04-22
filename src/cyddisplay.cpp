@@ -252,9 +252,6 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     s_heatOn  = heatingOn;
     s_fanMode = fanMode;
 
-    // ── Font fallback: los símbolos FA se buscan en symbols_14 si no están en montserrat_14
-    lv_font_montserrat_14.fallback = &symbols_14;
-
     // ── Pantalla ─────────────────────────────────────────────────────────
     s_scr = lv_obj_create(NULL);
     lv_obj_remove_style_all(s_scr);
@@ -273,13 +270,13 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     lv_obj_clear_flag(topBar, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
 
     s_ambLbl = lv_label_create(topBar);
-    lv_obj_set_style_text_font(s_ambLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_ambLbl, &symbols_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ambLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
     lv_label_set_text(s_ambLbl, MY_SYMBOL_THERMOMETER " Temp. amb.: -- \xc2\xb0""C");
     lv_obj_set_pos(s_ambLbl, 5, 7);
 
     s_aguaLbl = lv_label_create(topBar);
-    lv_obj_set_style_text_font(s_aguaLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_aguaLbl, &symbols_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_aguaLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
     lv_label_set_text(s_aguaLbl, MY_SYMBOL_TINT " Agua: -- \xc2\xb0""C");
     lv_obj_set_pos(s_aguaLbl, 165, 7);

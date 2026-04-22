@@ -4,11 +4,10 @@
  * Size   : 14px   BPP: 4
  */
 
-#ifdef LV_LVGL_H_INCLUDE_SIMPLE
 #include "lvgl.h"
-#else
-#include "lvgl/lvgl.h"
-#endif
+
+// symbols_14 → lv_font_montserrat_14 (fallback para caracteres normales)
+LV_FONT_DECLARE(lv_font_montserrat_14);
 
 #ifndef LV_ATTRIBUTE_MEM_ALIGN
 #define LV_ATTRIBUTE_MEM_ALIGN
@@ -68,6 +67,6 @@ const lv_font_t symbols_14 = {
     .underline_position  = -1,
     .underline_thickness = 1,
     .dsc              = &font_dsc,
-    .fallback         = NULL,
+    .fallback         = &lv_font_montserrat_14,
     .user_data        = NULL,
 };
