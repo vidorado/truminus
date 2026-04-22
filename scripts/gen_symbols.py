@@ -26,7 +26,7 @@ except ImportError:
 # ── Config ────────────────────────────────────────────────────────────────────
 GLYPHS = [
     (0xF043, "fa-tint"),
-    (0xF2C7, "fa-thermometer-half"),
+    (0xF2C9, "fa-thermometer-half"),
 ]
 SIZE      = 14          # px — must match what cyddisplay.cpp uses
 BPP       = 4           # bits per pixel

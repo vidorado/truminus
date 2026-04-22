@@ -7,7 +7,7 @@
 // ── Símbolos FontAwesome extra (generados por scripts/gen_symbols.ps1) ───────
 // Fichero fuente: src/symbols_14.c  (lv_font_conv, tamaño 14 px, 4 bpp)
 LV_FONT_DECLARE(symbols_14);
-#define MY_SYMBOL_THERMOMETER "\xEF\x8B\x87"   // U+F2C7  fa-thermometer-half
+#define MY_SYMBOL_THERMOMETER "\xEF\x8B\x89"   // U+F2C9  fa-thermometer-half
 #define MY_SYMBOL_TINT        "\xEF\x81\x83"   // U+F043  fa-tint
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -272,13 +272,13 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     s_ambLbl = lv_label_create(topBar);
     lv_obj_set_style_text_font(s_ambLbl, &symbols_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ambLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
-    lv_label_set_text(s_ambLbl, MY_SYMBOL_THERMOMETER " Temp. amb.: -- \xc2\xb0""C");
+    lv_label_set_text(s_ambLbl, MY_SYMBOL_THERMOMETER " -- \xc2\xb0""C");
     lv_obj_set_pos(s_ambLbl, 5, 7);
 
     s_aguaLbl = lv_label_create(topBar);
     lv_obj_set_style_text_font(s_aguaLbl, &symbols_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_aguaLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
-    lv_label_set_text(s_aguaLbl, MY_SYMBOL_TINT " Agua: -- \xc2\xb0""C");
+    lv_label_set_text(s_aguaLbl, MY_SYMBOL_TINT " -- \xc2\xb0""C");
     lv_obj_set_pos(s_aguaLbl, 165, 7);
 
     // Iconos de estado WiFi / MQTT / LIN bus — tres iconos en la esquina superior derecha
@@ -385,17 +385,17 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
     if (s_ambLbl) {
         char buf[32];
         if (trumaok && roomTemp > -200.0f)
-            snprintf(buf, sizeof(buf), MY_SYMBOL_THERMOMETER " Temp. amb.: %.1f \xc2\xb0""C", roomTemp);
+            snprintf(buf, sizeof(buf), MY_SYMBOL_THERMOMETER " %.1f \xc2\xb0""C", roomTemp);
         else
-            strcpy(buf, MY_SYMBOL_THERMOMETER " Temp. amb.: -- \xc2\xb0""C");
+            strcpy(buf, MY_SYMBOL_THERMOMETER " -- \xc2\xb0""C");
         lv_label_set_text(s_ambLbl, buf);
     }
     if (s_aguaLbl) {
         char buf[24];
         if (trumaok && waterTemp > -200.0f)
-            snprintf(buf, sizeof(buf), MY_SYMBOL_TINT " Agua: %.1f \xc2\xb0""C", waterTemp);
+            snprintf(buf, sizeof(buf), MY_SYMBOL_TINT " %.1f \xc2\xb0""C", waterTemp);
         else
-            strcpy(buf, MY_SYMBOL_TINT " Agua: -- \xc2\xb0""C");
+            strcpy(buf, MY_SYMBOL_TINT " -- \xc2\xb0""C");
         lv_label_set_text(s_aguaLbl, buf);
     }
 
