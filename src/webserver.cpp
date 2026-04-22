@@ -67,18 +67,16 @@ void StartServer(WebsocketCallback cb,  WebsocketConnected conn) {
   wsCb=cb;
   wsConn=conn;
   if (LittleFS.begin(false)) {
-    Serial.println("Starting webserver");
+    Serial.printf("Starting webserver — free heap: %u bytes\n", ESP.getFreeHeap());
 
     initWebSocket();
 
-    // Web Server Root URL
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
       request->send(LittleFS, "/index.html", "text/html");
     });
-    
+
     server.serveStatic("/", LittleFS, "/");
 
-    // Start server
     server.begin();
   } else {
     Serial.println("**** cannot start LittleFS");

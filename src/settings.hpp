@@ -16,12 +16,14 @@ class TMqttSetting: public TAutoDiscovery{
     SettingKind fkind;
     #ifdef WEBSERVER
     void sendToWebsocket(const String &value);
-    #endif 
+    #endif
   protected:
     String ftopic;
     String fstringvalue;
     double ffloatvalue;
     int fintvalue;
+    bool fretain = true;   // publish to MQTT broker with retain flag
+    bool fpersist = false; // save/load to NVS (CYD only)
     virtual bool Validate(int newvalue);
     virtual bool Validate(double newvalue);
     virtual bool Validate(String newvalue);
@@ -38,6 +40,14 @@ class TMqttSetting: public TAutoDiscovery{
     String getStringValue() { return fstringvalue; };
     int32_t getIntValue()  { return fintvalue; };
     double  getFloatValue() { return ffloatvalue; };
+    // Control whether this setting is published to MQTT with retain=true.
+    // Set to false for transient states that should not survive a reboot.
+    TMqttSetting* setRetain(bool r) { fretain = r; return this; }
+    // Enable NVS persistence for this setting (CYD only).
+    // Call loadPersistedValue() right after setPersist(true).
+    TMqttSetting* setPersist(bool p) { fpersist = p; return this; }
+    // Load last persisted value from NVS (no-op if fpersist==false).
+    void loadPersistedValue();
 };
 
 class TBoilerSetting : public TMqttSetting {

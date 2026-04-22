@@ -3,6 +3,9 @@
 #ifdef WEBSERVER
 #include <ArduinoJson.h>
 #endif
+#ifdef CYD
+#include <Preferences.h>
+#endif
 
 std::vector<String> BoilerMode = {"off","eco","high","boost"};
 double BoilerTemp[] = {0.0, 40.0, 55.0, 60.0}; 
@@ -23,7 +26,7 @@ void TMqttSetting::PublishValue(bool local)
            break;   
     }
     if (local) {
-      mqttClient.publish(BaseTopicSet+ftopic, value,0,true);
+      mqttClient.publish(BaseTopicSet+ftopic, value, 0, fretain);
     }
     #ifdef WEBSERVER
     sendToWebsocket(value);
@@ -110,7 +113,36 @@ void TMqttSetting::setValue(double newvalue, bool local)
         return;
     }
     ffloatvalue=newvalue;
+#ifdef CYD
+    if (fpersist) {
+        Preferences prefs;
+        prefs.begin("truminus", false);
+        String key = ftopic.startsWith("/") ? ftopic.substring(1) : ftopic;
+        prefs.putDouble(key.c_str(), ffloatvalue);
+        prefs.end();
+    }
+#endif
     PublishValue(local);
+}
+
+void TMqttSetting::loadPersistedValue() {
+#ifdef CYD
+    if (!fpersist) return;
+    Preferences prefs;
+    prefs.begin("truminus", true);  // read-only
+    if (fkind == SKFloat) {
+        // Use -9999 as sentinel: if not stored yet, leave the default unchanged
+        double v = prefs.getDouble(
+            ftopic.startsWith("/") ? ftopic.substring(1).c_str() : ftopic.c_str(),
+            -9999.0);
+        if (v > -9000.0) {
+            // Bypass setValue to avoid triggering MQTT/WebSocket during setup
+            ffloatvalue = v;
+        }
+    }
+    prefs.end();
+    Serial.printf("NVS load %s = %.1f\n", ftopic.c_str(), ffloatvalue);
+#endif
 }
 
 void TMqttSetting::setValue(String newvalue, bool local)

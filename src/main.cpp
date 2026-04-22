@@ -1,13 +1,23 @@
 #include <Arduino.h>
 #include <ESP32MQTTClient.h>
 #include <WiFi.h>
-//------ you should create your own wifi_config.h with
-//#define WLAN_SSID "your_ssid"
-//#define WLAN_PASS "your_password"
-//#define MQTT_URI "mqtt://x.x.x.x:1883"
+//------ you should create your own wifi_config.h with:
+//
+// For non-CYD builds (all three settings required):
+//#define MQTT_URI      "mqtt://x.x.x.x:1883"
 //#define MQTT_USERNAME ""
 //#define MQTT_PASSWORD ""
+//#define WLAN_SSID     "your_ssid"
+//#define WLAN_PASS     "your_password"
+//
+// For CYD builds: wifi_config.h can be empty — WiFi and MQTT are
+// configured interactively on the display at first boot.
 #include "wifi_config.h"
+#ifdef CYD
+#include <esp32_smartdisplay.h>
+#include "wifisetup.hpp"
+#include "cyddisplay.hpp"
+#endif
 #include "globals.hpp"
 #include "trumaframes.hpp"
 #include "autodiscovery.hpp"
@@ -52,6 +62,37 @@
 #define LED_OFF HIGH
 #define TX_PIN 6
 #define RX_PIN 7
+#endif
+#ifdef CYD
+// ESP32-2432S028R (Cheap Yellow Display)
+// Status shown on LVGL display — no LED used.
+// LIN bus UART: TX=27, RX=22 (available on CN2/P3 connectors, not used by display/touch/SD)
+#define TX_PIN 27
+#define RX_PIN 22
+
+// ── LVGL task (Core 1) ────────────────────────────────────────────────────
+// lv_timer_handler() must be called every few ms for smooth touch response.
+// The LIN bus loop takes ~150 ms per iteration so we run LVGL on its own task.
+static SemaphoreHandle_t s_lvglMutex = nullptr;
+
+static void lvglTask(void*) {
+    static uint32_t last = millis();
+    for (;;) {
+        uint32_t now = millis();
+        lv_tick_inc(now - last);
+        last = now;
+        if (xSemaphoreTake(s_lvglMutex, portMAX_DELAY) == pdTRUE) {
+            lv_timer_handler();
+            xSemaphoreGive(s_lvglMutex);
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+// Call before any LVGL function from the main loop.
+static inline void lvglLock()   { xSemaphoreTake(s_lvglMutex, portMAX_DELAY); }
+static inline void lvglUnlock() { xSemaphoreGive(s_lvglMutex); }
+
 #endif
 #ifndef TX_PIN
 #error Please define GOOUUUC3, C3SUPERMINI, WROOM32 or your custom LED/TX_PIN/RX_PIN
@@ -109,14 +150,14 @@ TGetErrorInfo *getErrorInfo;
 int current_master_frame=-1;
 
 //error reset requested
-boolean truma_reset=false;
+volatile boolean truma_reset=false;
 //error reset requested and truma in status 1, stop communication
 boolean truma_reset_stop_comm=false;
-//new web client or new connection to the broker, force a 
+//new web client or new connection to the broker, force a
 //send of the frame received data
-boolean doforcesend=false;
+volatile boolean doforcesend=false;
 //keep truma on (websocket or screen active)
-boolean forceon=false;
+volatile boolean forceon=false;
 //delay to stop the communication during reset
 unsigned long truma_reset_delay;
 //max time to wait for the truma to report status 1 during reset
@@ -139,8 +180,12 @@ TPubBool PublishHeartBeat("/heartbeat");
 
 //start an error reset
 void HandleCommandReset();
-//led in a separate task
+// Forward declaration: linBusTask is defined after loop() but used in setup()
+static void linBusTask(void*);
+//led in a separate task (not used on CYD)
+#ifndef CYD
 void LedLoop(void * pvParameters);
+#endif
 
 #ifdef WEBSERVER
 //message from the websocket
@@ -155,8 +200,9 @@ unsigned long lastwifi;
 
 //conditions for the led
 bool wifiok=false;
-bool trumaok=false;
+volatile bool trumaok=false;
 bool mqttok=false;
+bool mqttEnabled=false;  // false si el usuario omitió la config MQTT
 
 //---------------------------------------------------------------------
 void setup() {
@@ -167,10 +213,30 @@ void setup() {
   LinBus.rxPin=RX_PIN;
   LinBus.verboseMode=0;
 
+  #ifndef CYD
   pinMode(LED,OUTPUT);
   #ifdef RED_LED
   pinMode(RED_LED,OUTPUT);
-  #endif 
+  #endif
+  #endif // !CYD
+
+  #ifdef CYD
+  smartdisplay_init();
+  s_lvglMutex = xSemaphoreCreateMutex();
+  auto disp = lv_display_get_default();
+  // LV_DISPLAY_ROTATION_270 gives MV=1,MX=0,MY=0 on the ILI9341 = correct
+  // landscape for the ESP32-2432S028R.  (ROTATION_90 would give MV=1,MX=1,MY=1
+  // which rotates the image 270° instead of 90°, producing the "vertical line"
+  // artifact when our horizontal separator is rendered in portrait coordinates.)
+  lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_270);
+  // Load touch calibration from NVS.  If none is stored yet (first boot or
+  // after clearing NVS), run the interactive 3-point calibration screen.
+  // raw coordinates pass through when valid=false, which is what
+  // runTouchCalibration() needs to record them.
+  if (!loadTouchCalibration(touch_calibration_data)) {
+    runTouchCalibration();
+  }
+  #endif
 
   //frames to read
   //frames 0x14 and 0x37 are defined but are useless for this model of combi D
@@ -239,23 +305,72 @@ void setup() {
   //waterboost
   WaterBoost = new TWaterBoost(WaterSetpoint,"high","/waterboost");
 
+  #ifdef CYD
+  // ── Persistencia NVS (CYD solamente) ──────────────────────────────────
+  // RoomSetpoint: se recuerda entre reinicios.
+  RoomSetpoint->setPersist(true);
+  RoomSetpoint->loadPersistedValue();   // carga último valor guardado
+  // HeatingOn / WaterSetpoint / FanMode: arrancan siempre en el valor por
+  // defecto (off) — no se publican con retain para que el broker MQTT no
+  // restaure el estado en el siguiente reinicio.
+  HeatingOn->setRetain(false);
+  WaterSetpoint->setRetain(false);
+  FanMode->setRetain(false);
+
+  // Now that all settings objects exist, init the display controls.
+  cydDisplayInit(RoomSetpoint, WaterSetpoint, HeatingOn, FanMode);
+  #endif
+
   //autodiscovery for local topics
   PublishReset.setADComponent(CKBinary_sensor)->setADName("Resetting")->setADIcon("mdi:sync")->setADDevice_class("connectivity");
   PublishLinOk.setADComponent(CKBinary_sensor)->setADName("LIN bus status")->setADIcon("mdi:serial-port")->setADDevice_class("connectivity");
 
   //starts the wifi (loop will check if it's connected)
   WiFi.mode(WIFI_STA);
+  #ifdef CYD
+  {
+    String wifiSSID, wifiPass;
+    if (!loadWifiCredentials(wifiSSID, wifiPass)) {
+      runWifiSetup(wifiSSID, wifiPass);
+    }
+    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
+  }
+  #else
   WiFi.begin(WLAN_SSID, WLAN_PASS);
+  #endif
   lastwifi=millis();
 
   //starts the mqtt connection to the broker
+  #ifdef CYD
+  {
+    String mqttUri, mqttUser, mqttPass;
+    String mqttHost, mqttPort;
+    if (!loadMqttConfig(mqttHost, mqttPort, mqttUser, mqttPass)) {
+      runMqttSetup(mqttUri, mqttUser, mqttPass);
+      // runMqttSetup devuelve uri="" si el usuario pulsó "Omitir"
+    } else if (!mqttHost.isEmpty() && mqttHost != "_skip_") {
+      mqttUri = "mqtt://" + mqttHost + ":" + mqttPort;
+    }
+    // Solo inicia MQTT si hay URI válida (host no vacío)
+    if (!mqttUri.isEmpty()) {
+      mqttEnabled = true;
+      mqttClient.setURI(mqttUri.c_str(), mqttUser.c_str(), mqttPass.c_str());
+      mqttClient.enableLastWillMessage(STATUS_TOPIC, STATUS_OFFLINE, true);
+      mqttClient.setKeepAlive(30);
+      mqttClient.enableDebuggingMessages(false);
+      mqttClient.loopStart();
+    }
+  }
+  #else
   mqttClient.setURI(MQTT_URI, MQTT_USERNAME, MQTT_PASSWORD);
   mqttClient.enableLastWillMessage(STATUS_TOPIC, STATUS_OFFLINE, true);
   mqttClient.setKeepAlive(30);
   mqttClient.enableDebuggingMessages(false);
   mqttClient.loopStart();
+  #endif
 
-  //creates the led task
+  //creates the led task (not needed on CYD: status shown on display)
+  #ifndef CYD
   xTaskCreate (
       LedLoop,     // Function to implement the task
       "LedLoop",   // Name of the task
@@ -264,6 +379,10 @@ void setup() {
       1,         // Priority of the task
       NULL      // Task handle
     );
+  #endif // !CYD
+
+  // cydDisplayInit() already called right after smartdisplay_init() above
+
   ArduinoOTA
       .onStart([]() {
         String type;
@@ -296,6 +415,16 @@ void setup() {
         else if (error == OTA_END_ERROR) Serial.println("End Failed");
       });
   esp_task_wdt_init(10,true);
+
+  // LIN bus task: pinned to Core 0 (WiFi core) so the blocking serial reads
+  // don't interfere with LVGL (Core 1) or WebSocket response latency.
+  xTaskCreatePinnedToCore(linBusTask, "LinBus", 4096, nullptr, 1, nullptr, 0);
+
+  #ifdef CYD
+  // Start LVGL task only now — all LVGL init (calibration, wifi/mqtt setup
+  // screens, cydDisplayInit) is complete, so no race condition.
+  xTaskCreatePinnedToCore(lvglTask, "LVGL", 16384, nullptr, 2, nullptr, 1);
+  #endif
 }
 
 //enable/disables the master frames to assign frame ranges
@@ -377,192 +506,177 @@ void CheckWifi() {
   }
 }
 
+// ── LIN bus task (Core 0) ─────────────────────────────────────────────────
+// All blocking serial I/O runs here so the main loop (Core 1) stays free
+// to service WiFi, MQTT, OTA, WebSocket and the LVGL display.
+static void linBusTask(void*) {
+  for (;;) {
+    esp_task_wdt_reset();
+
+    byte PumpOrFan;
+    double LocSetPointTemp = 0.0;
+    double LocRoomSetpoint = RoomSetpoint->getFloatValue();
+    double LocWaterSetpoint = WaterSetpoint->getFloatValue();
+    boolean LocHeatingOn = HeatingOn->getIntValue()!=0;
+    int LocFanMode = FanMode->getIntValue();
+
+    //determines operating mode
+    if (!LocHeatingOn) {
+       if (LocWaterSetpoint<=0.0) {
+         if (LocFanMode>0) {
+          PumpOrFan = 0x10 | LocFanMode;
+         } else {
+          PumpOrFan = 0x10;
+         }
+       } else {
+        PumpOrFan=0;
+       }
+    } else {
+      LocSetPointTemp = LocRoomSetpoint;
+      if (LocFanMode!=-1 && LocFanMode!=-2) {
+        if (LocFanMode==2) {
+          FanMode->setValue("high",true);
+          LocFanMode=-2;
+        } else {
+          FanMode->setValue("eco",true);
+          LocFanMode=-1;
+        }
+      }
+      if (LocFanMode==-2) {
+        PumpOrFan = 2;
+      } else {
+        PumpOrFan = 1;
+      }
+    }
+
+    //Water boost
+    if (LocWaterSetpoint>=60.0) {
+       WaterBoost->Start(Frame16->getWaterDemand());
+    } else {
+       WaterBoost->Stop();
+    }
+    if (WaterBoost->Active(Frame16->getWaterDemand()) && Frame16->getWaterTemp()<50.0) {
+        LocSetPointTemp=0.0;
+        PumpOrFan=0;
+    }
+
+    //prepare setpoint frames
+    SimulateTempFrame->setTemperature(SimulatedTemp->getFloatValue());
+    RoomSetpointFrame->setTemperature(LocSetPointTemp);
+    WaterSetpointFrame->setTemperature(LocWaterSetpoint);
+    FanFrame->setPumpOrFan(PumpOrFan);
+
+    //truma reset requested, turn off and wait
+    if (truma_reset) {
+      onOff->SetOn(false);
+      if (!truma_reset_stop_comm) {
+        unsigned long elapsed=millis()-truma_reset_max_time;
+        if (elapsed>120000) {
+          truma_reset=false;
+          Serial.println("Reset time exceeded");
+          EnableOnlyOnOff(false);
+        }
+      }
+    } else
+    if (LocHeatingOn || LocWaterSetpoint > 0.0 || LocFanMode > 0 || forceon) {
+      onOff->SetOn(true);
+      forceon = false;
+      off_delay = millis();
+    } else {
+      if (onOff->GetOn()) {
+         unsigned long elapsed=millis()-off_delay;
+         if (elapsed>20000) {
+          onOff->SetOn(false);
+         }
+      }
+    }
+
+    if (truma_reset_stop_comm) {
+      unsigned long elapsed=millis()-truma_reset_delay;
+      if (elapsed>10000) {
+        truma_reset=false;
+        truma_reset_stop_comm=false;
+        EnableOnlyOnOff(false);
+        Serial.println("Reset done, restarting communication");
+      }
+    } else {
+      if (doforcesend) {
+        for (int i=0; i<FRAMES_TO_READ; i++) frames_to_read[i]->setForcesend();
+        for (int i=0; i<MASTER_FRAMES; i++) master_frames[i]->setForcesend();
+        PublishLinOk.setForcesend();
+        PublishReset.setForcesend();
+        PublishHeartBeat.setForcesend();
+        doforcesend=false;
+      }
+      //read all the frames (blocking — that's why this runs in its own task)
+      for (int i=0; i<FRAMES_TO_READ; i++) {
+        if (LinBus.readFrame(frames_to_read[i]->frameid(),8)) {
+          frames_to_read[i]->setReadResult(true);
+          frames_to_read[i]->setData((uint8_t*)&(LinBus.LinMessage));
+        } else {
+          frames_to_read[i]->setReadResult(false);
+        }
+      }
+
+      boolean extraFramesOk=true;
+      for (int i=1; i<FRAMES_TO_READ; i++) {
+         if (!frames_to_read[i]->getDataOk()) { extraFramesOk=false; break; }
+      }
+      AssignFrameRanges(!extraFramesOk);
+
+      trumaok=Frame16->getDataOk();
+
+      for (int i=0; i<FRAMES_TO_WRITE; i++) {
+        frames_to_write[i]->getData((uint8_t*)&(LinBus.LinMessage));
+        LinBus.writeFrame(frames_to_write[i]->frameid(),8);
+      }
+      NextMasterFrame();
+      if (current_master_frame>=0) {
+        master_frames[current_master_frame]->getData((uint8_t*)&(LinBus.LinMessage));
+        LinBus.writeFrame(0x3c,8);
+        if (LinBus.readFrame(0x3d,8)) {
+          master_frames[current_master_frame]->setData((uint8_t*)&(LinBus.LinMessage));
+          if (truma_reset && master_frames[current_master_frame]==onOff && onOff->getCurrentState()==1) {
+            truma_reset_delay=millis();
+            truma_reset_stop_comm=true;
+            Serial.println("truma reset: truma off, stopping communication for 10 seconds");
+          }
+        } else {
+          master_frames[current_master_frame]->setReadResult(false);
+        }
+      }
+    }
+
+    PublishReset.setValue(truma_reset);
+    PublishLinOk.setValue(trumaok);
+    PublishHeartBeat.setValue(true);
+
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+}
+
 //-------------------------------------------------------------------------
 void loop() {
   esp_task_wdt_reset();
   delay(1);
+  #ifdef CYD
+  // lv_timer_handler() runs in lvglTask (Core 1) every 5 ms.
+  // We only need to update display state; grab the mutex briefly.
+  if (xSemaphoreTake(s_lvglMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    cydDisplayUpdate(wifiok, mqttok, trumaok, truma_reset, inota, mqttEnabled,
+                     (float)Frame16->getRoomTemp(), (float)Frame16->getWaterTemp());
+    xSemaphoreGive(s_lvglMutex);
+  }
+  #endif
   CheckWifi();
   if (wifiok) {
     ArduinoOTA.handle();
   }
 
-  byte PumpOrFan;
-  double LocSetPointTemp = 0.0;
-  double LocRoomSetpoint = RoomSetpoint->getFloatValue();
-  double LocWaterSetpoint = WaterSetpoint->getFloatValue();
-  boolean LocHeatingOn = HeatingOn->getIntValue()!=0;
-  int LocFanMode = FanMode->getIntValue();
-
-
-  //determines operating mode
-  if (!LocHeatingOn) {
-     //no heating
-     if (LocWaterSetpoint<=0.0) {
-       //no boiler 
-       if (LocFanMode>0) {
-        PumpOrFan = 0x10 | LocFanMode;
-       } else {
-        //setting it to off (0) would turn on water heating,
-        //so I just leave it on with speed 0
-        PumpOrFan = 0x10; 
-       }
-     } else {
-      //boiler on
-      PumpOrFan=0;
-     }
-  } else {
-    //heating active
-    LocSetPointTemp = LocRoomSetpoint;
-    //force the setting of the fan if it's not already ok for heating
-    if (LocFanMode!=-1 && LocFanMode!=-2) {
-      if (LocFanMode==2) {
-        FanMode->setValue("high",true);
-        LocFanMode=-2;
-      } else {
-        FanMode->setValue("eco",true);
-        LocFanMode=-1;
-      }
-    } 
-    if (LocFanMode==-2) {
-      PumpOrFan = 2; //high
-    } else {
-      PumpOrFan = 1; //eco
-    }
-  } 
-
-  //Water boost
-  if (LocWaterSetpoint>=60.0) {
-     WaterBoost->Start(Frame16->getWaterDemand());
-  } else {
-     WaterBoost->Stop();
-  }
-  //stop heating with water boost and water temperature less than 50ºC
-  if (WaterBoost->Active(Frame16->getWaterDemand()) && Frame16->getWaterTemp()<50.0) {
-      LocSetPointTemp=0.0;
-      PumpOrFan=0;
-  }
-  
-  //prepare setpoint frames
-  SimulateTempFrame->setTemperature(SimulatedTemp->getFloatValue());
-  RoomSetpointFrame->setTemperature(LocSetPointTemp);
-  WaterSetpointFrame->setTemperature(LocWaterSetpoint);
-  FanFrame->setPumpOrFan(PumpOrFan);
-
-  //truma reset requested, turn off and wait
-  if (truma_reset) {
-    onOff->SetOn(false);
-    if (!truma_reset_stop_comm ) {
-      unsigned long elapsed=millis()-truma_reset_max_time;
-      if (elapsed>120000) {
-        truma_reset=false;
-        Serial.println("Reset time exceeded");
-        EnableOnlyOnOff(false);
-      }
-    }
-  } else
-  //no reset requested, turn on the heater if is there something active
-  if (LocHeatingOn || LocWaterSetpoint > 0.0 || LocFanMode > 0 || forceon) {
-    onOff->SetOn(true);
-    forceon = false;
-    off_delay = millis();
-  } else {
-    //keep the heater on for a while (so it can send the frames to stop the fan without activating the boiler)
-    if (onOff->GetOn()) {
-       unsigned long elapsed=millis()-off_delay;
-       if (elapsed>20000) {
-        onOff->SetOn(false);
-       }
-    }
-  } 
-
-  if (truma_reset_stop_comm) {
-    //stop the communication for 10 seconds to reset the error
-    unsigned long elapsed=millis()-truma_reset_delay;
-    if (elapsed>10000) {
-      truma_reset=false;
-      truma_reset_stop_comm=false;
-      EnableOnlyOnOff(false);
-      Serial.println("Reset done, restarting communication");
-    }
-  } else {
-    //normal cycle
-    //force send requested (new websocket client or connection to the broker)
-    if (doforcesend) {
-      for (int i=0; i<FRAMES_TO_READ; i++) {
-        frames_to_read[i]->setForcesend();
-      }
-      for (int i=0; i<MASTER_FRAMES; i++) {
-        master_frames[i]->setForcesend();
-      }
-      PublishLinOk.setForcesend();
-      PublishReset.setForcesend();
-      PublishHeartBeat.setForcesend();
-      doforcesend=false;
-    }
-    //read all the frames
-    for (int i=0; i<FRAMES_TO_READ; i++) {
-      if (LinBus.readFrame(frames_to_read[i]->frameid(),8)) {
-        frames_to_read[i]->setReadResult(true);
-        frames_to_read[i]->setData((uint8_t*)&(LinBus.LinMessage));
-      } else {
-        frames_to_read[i]->setReadResult(false);
-      }
-    }
-
-    //if all the extra frames can be read successfully, there is no need to send
-    //the master frames to assign frame ranges
-    boolean extraFramesOk=true;
-    for (int i=1; i<FRAMES_TO_READ; i++) {
-       if (!frames_to_read[i]->getDataOk()) {
-          extraFramesOk=false;
-          break;
-       }
-    }
-    AssignFrameRanges(!extraFramesOk);
-
-    //for the time being frame 16 is used to check the lin bus communication
-    //(perhaps some more frames should be taken into account)
-    trumaok=Frame16->getDataOk();
-    //write all the frames
-    for (int i=0; i<FRAMES_TO_WRITE; i++) {
-      frames_to_write[i]->getData((uint8_t*)&(LinBus.LinMessage));
-      LinBus.writeFrame(frames_to_write[i]->frameid(),8);
-    }
-    //and send the next master frame
-    NextMasterFrame();
-    if (current_master_frame>=0) {
-      master_frames[current_master_frame]->getData((uint8_t*)&(LinBus.LinMessage));
-      LinBus.writeFrame(0x3c,8);
-      if (LinBus.readFrame(0x3d,8)) {
-        //setData will call ReadResult if the data is valid
-        master_frames[current_master_frame]->setData((uint8_t*)&(LinBus.LinMessage));
-        if (truma_reset && master_frames[current_master_frame]==onOff &&  onOff->getCurrentState()==1) {
-          truma_reset_delay=millis();
-          truma_reset_stop_comm=true;
-          Serial.println("truma reset: truma off, stopping communication for 10 seconds");
-        }
-      } else {
-        master_frames[current_master_frame]->setReadResult(false);
-      }
-    }
-  }
-
-  //report the status of the reset and the lin bus communication
-  PublishReset.setValue(truma_reset);
-  PublishLinOk.setValue(trumaok);
-  //and the heartbeat
-  PublishHeartBeat.setValue(true);
-
- /*
-  Serial.print(ESP.getFreeHeap());
-  Serial.print(", ");
-  Serial.println(ESP.getFreePsram());
-*/
-
   //accept a command from the serial port
   String cmd;
   String param;
-  boolean found=false; 
+  boolean found=false;
   if (CommandReader.Available(&cmd, &param)) {
     if (cmd=="help") {
        Serial.println("Available commands:");
@@ -718,11 +832,20 @@ void onConnectionEstablishedCallback(esp_mqtt_client_handle_t client) {
   doforcesend=true;
   mqttok=true;
   PublishMqttAutoDiscovery();
+#ifdef CYD
+  // Clear any retained messages the broker has for transient states
+  // so they don't get restored on next reboot.  Must be done BEFORE
+  // subscribe so we don't immediately receive the old retained value.
+  mqttClient.publish(BaseTopicSet+"/heating", "", 0, true);
+  mqttClient.publish(BaseTopicSet+"/fan",     "", 0, true);
+  mqttClient.publish(BaseTopicSet+"/boiler",  "", 0, true);
+#endif
   mqttClient.subscribe(BaseTopicSet+"/#", callback);
   mqttClient.publish(STATUS_TOPIC, STATUS_ONLINE, 2, true);
 }
 
 //------------------------------------------------------------------------
+#ifndef CYD
 void LedLoop(void * pvParameters) {
   int flashes;
   while(1) {
@@ -768,3 +891,4 @@ void LedLoop(void * pvParameters) {
     }
   }
 }
+#endif // !CYD

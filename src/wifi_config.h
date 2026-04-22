@@ -1,0 +1,5 @@
+#define MQTT_URI      "mqtt://x.x.x.x:1883"
+#define MQTT_USERNAME ""
+#define MQTT_PASSWORD ""
+#define WLAN_SSID "your_ssid"
+#define WLAN_PASS "your_password"

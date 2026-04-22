@@ -130,6 +130,9 @@ void TFrameBase::PublishAutoDiscovery()
 TFrame16::TFrame16():TFrameBase()
 {
     fframeid=0x16;
+    FWaterDemand=false;
+    FWaterTemp=-273.0;
+    FRoomTemp=-273.0;
     fpublishers.push_back(new TPubBool("/antifreeze"));
     fpublishers.back()->setADComponent(CKBinary_sensor)
       ->setADName("Antifreeze")
@@ -200,6 +203,7 @@ void TFrame16::publishFrameData()
     fpublishers[8]->setValue(le16toh(locdata->BatteryVoltage));
     FWaterDemand=locdata->WaterDemand;
     FWaterTemp=RawKelvinToTemp(le16toh(locdata->WaterTemperature));
+    FRoomTemp=RawKelvinToTemp(le16toh(locdata->RoomTemperature));
 }
 
 TFrameSetTemp::TFrameSetTemp(uint8_t frameid)

@@ -439,13 +439,15 @@ class TFrame16: public TFrameBase {
     private:
        bool FWaterDemand;
        double FWaterTemp;
+       double FRoomTemp;
     public:
       TFrame16();
       void publishFrameData() override;
       //method to keep track of current water demand and temperature
-      //for the  
+      //for the
       bool getWaterDemand() { return FWaterDemand;};
-      double getWaterTemp() { return FWaterTemp;}; 
+      double getWaterTemp() { return FWaterTemp;};
+      double getRoomTemp()  { return FRoomTemp; };
 };
 
 class TFrame34: public TFrameBase {
