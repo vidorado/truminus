@@ -4,12 +4,319 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Combi D</title>
-<link rel="stylesheet" href="styles.css">
+<style>
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  margin: 0;
+  padding: 60px 0 44px 0;
+  background-color: #fff;
+}
+
+.topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background-color: #005aaa;
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  z-index: 2;
+}
+
+.topbar img {
+  height: 40px;
+}
+
+.container {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.settings-table {
+  width: fit-content;
+  white-space: nowrap;
+}
+
+.settings-table td {
+  border: none;
+  max-width: 1%;
+  white-space: nowrap;
+}
+
+.settings-table label {
+  font-weight: bold;
+  color: #555;
+  font-size: 1em;
+}
+
+h1 {
+  text-align: center;
+  color: #333;
+}
+
+.select,
+input[type="number"] {
+  padding: 12px;
+  border-radius: 8px;
+  background-color: #f9f9f9;
+  border: 1px solid #ccc;
+  font-size: 1.5em;
+}
+
+.temperature-control {
+  width: 80px;
+}
+
+span {
+  font-size: 1.2em;
+}
+
+input[type="checkbox"] {
+  margin-left: 10px;
+  transform: scale(1.5);
+}
+
+.status {
+  font-size: 2em;
+}
+
+.status td {
+  width: 33%;
+}
+
+.status-line {
+  text-align: center;
+}
+
+.reset_msg {
+  color: #ff5555;
+}
+
+.reset_button {
+  background-color: #f44336;
+  font-size: 1.5em;
+  color: white;
+  border-radius: 5px;
+  padding: 5px;
+}
+
+.tab {
+  overflow: hidden;
+  border: 1px solid #ccc;
+  background-color: #f1f1f1;
+}
+
+.tab button {
+  background-color: inherit;
+  float: left;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  padding: 14px 16px;
+  transition: 0.3s;
+}
+
+.tab button:hover {
+  background-color: #ddd;
+}
+
+.tab button.active {
+  background-color: #ccc;
+}
+
+.tabcontent {
+  display: none;
+  padding: 6px 12px;
+  border: 1px solid #ccc;
+  border-top: none;
+}
+
+.tabcontent.active {
+  display: block;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+}
+
+th {
+  background-color: #f2f2f2;
+}
+
+.status-table td {
+  width: 33%;
+}
+
+.visually-hidden {
+  position: absolute;
+  left: -100vw;
+}
+
+.room-demand::after {
+  content: "🔥";
+  font-size: 20px;
+}
+#roomdemand:not(:checked) ~ .room-demand::after {
+  content: "🔥";
+  font-size: 20px;
+  color: transparent;
+  text-shadow: 0 0 0 #d0d0d0;
+}
+.water-demand::after {
+  content: "🔥";
+  font-size: 20px;
+}
+
+#waterdemand:not(:checked) ~ .water-demand::after {
+  content: "🔥";
+  font-size: 20px;
+  color: transparent;
+  text-shadow: 0 0 0 #d0d0d0;
+}
+
+.window::after {
+  content: "closed";
+  font-size: 20px;
+}
+
+#window:not(:checked) ~ .window::after {
+  content: "open";
+  font-size: 20px;
+  color: red;
+}
+
+input[type="number"] {
+  -webkit-appearance: textfield;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+}
+
+.number-input {
+  display: inline-flex;
+}
+
+.number-input,
+.number-input * {
+  box-sizing: border-box;
+}
+
+.number-input button {
+  outline: none;
+  -webkit-appearance: none;
+  background-color: transparent;
+  border: none;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  cursor: pointer;
+  margin: 0;
+  position: relative;
+  box-shadow: 0px 0px 1px #474747;
+  border-radius: 8px;
+}
+
+.number-input button:before,
+.number-input button:after {
+  display: inline-block;
+  position: absolute;
+  content: '';
+  width: 1rem;
+  height: 2px;
+  background-color: #212121;
+  transform: translate(-50%, -50%);
+}
+.number-input button.plus:after {
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.number-input input[type=number] {
+  max-width: 5rem;
+  padding: .5rem;
+  font-size: 1.5rem;
+  height: 3rem;
+  text-align: center;
+}
+
+.vert-center {
+  align-items: center;
+  display: flex;
+}
+
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0,0,0,0.4);
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-content {
+  background-color: #fefefe;
+  margin: 0;
+  padding: 20px;
+  border: 1px solid #888;
+  width: 80%;
+  color: red;
+  font-size: 1.5em;
+  text-align: center;
+}
+
+.error {
+  color: red;
+}
+
+.statusbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  background-color: #005aaa;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 15px;
+}
+
+.statusbar a {
+  font-size: 0.8em;
+  color: #fff;
+  text-decoration: none;
+}
+
+.statusbar a:hover {
+  color: #cce0ff;
+}
+</style>
 </head>
 <body>
 
+<header class="topbar">
+  <img src="truminus-logo.png" alt="TruMinus">
+</header>
+
 <div class="container">
-  <!-- <h1>Combi D</h1> -->
 
   <!-- Tabs -->
   <div class="tab">
@@ -22,35 +329,42 @@
 
     <table class="settings-table">
       <tr>
-        <td>  
-        <label for="temp">Heating:</label>
-        </td>
+        <td><label for="temp">Room temp:</label></td>
         <td class="vert-center">
           <span class="number-input">
-            <button onclick="changeTemp(-0.1)" ></button>
-            <input class="quantity" min="5.0" max="30.0" step="0.1" name="temp" id="temp" value="5.0" type="number">
-            <button onclick="changeTemp(0.1)" class="plus"></button>
+            <button onclick="changeTemp(-0.5)"></button>
+            <input class="quantity" min="5.0" max="30.0" step="0.5" name="temp" id="temp" value="5.0" type="number">
+            <button onclick="changeTemp(0.5)" class="plus"></button>
           </span>
-        <span style="margin-left: 5px; font-size: 1.5em;">°C</span>
-        <input type="checkbox" id="heating"><label for="heating" style="margin-left: 5px;"> On</label>
+          <span style="margin-left:5px;font-size:1.3em;">°C</span>
         </td>
       </tr>
       <tr>
-        <td>    
-        <label for="boiler">Water:</label>
-        </td>
+        <td><label for="heating">Heating:</label></td>
         <td>
-        <select id="boiler" class="select">
-          <option value="off">Off</option>
-          <option value="eco">Eco</option>
-          <option value="high">High</option>
-          <option value="boost">Boost</option>
-        </select>
-        <label for="fan">Fan:</label>
-        <select id="fan" class="select">
-          <option value="eco">Eco</option>
-          <option value="high">High</option>
-          <optgroup label="Speed" id="fanspeed">
+          <select id="heating" class="select">
+            <option value="0">Off</option>
+            <option value="1">On</option>
+          </select>
+        </td>
+      </tr>
+      <tr>
+        <td><label for="boiler">Boiler:</label></td>
+        <td>
+          <select id="boiler" class="select">
+            <option value="off">Off</option>
+            <option value="eco">Eco</option>
+            <option value="high">High</option>
+            <option value="boost">Boost</option>
+          </select>
+        </td>
+      </tr>
+      <tr>
+        <td><label for="fan">Fan:</label></td>
+        <td>
+          <select id="fan" class="select">
+            <option value="eco">Eco</option>
+            <option value="high">High</option>
             <option value="off">Off</option>
             <option value="1">1</option>
             <option value="2">2</option>
@@ -62,61 +376,270 @@
             <option value="8">8</option>
             <option value="9">9</option>
             <option value="10">10</option>
-          </optgroup>
-        </select>
-      </td>
+          </select>
+        </td>
       </tr>
-      </table>
+      <tr>
+        <td><label for="elpower">Electric power:</label></td>
+        <td>
+          <select id="elpower" class="select">
+            <option value="0">Off (0 W)</option>
+            <option value="900">900 W</option>
+            <option value="1800">1800 W</option>
+          </select>
+        </td>
+      </tr>
+      <tr style="display:none;">
+        <td><label for="energy">Energy:</label></td>
+        <td>
+          <select id="energy" class="select">
+            <option value="gas">Gas</option>
+            <option value="electricity">Electricity</option>
+            <option value="mix">Mix</option>
+          </select>
+        </td>
+      </tr>
+    </table>
 
-  <table>
-      <tr> 
-      <td>Room Temperature</td>
-      <td>Water Temperature</td>
-      <td>Voltage</td>
+    <table class="status-table" style="margin-top:12px;">
+      <tr>
+        <td>Temp. amb.</td>
+        <td>Agua</td>
+        <td>Estado</td>
       </tr>
-    <tr class="status"> 
-       <td><span id="room_temp">--</span> °C</td>
-       <td><span id="water_temp">--</span> °C</td> 
-       <td><span id="voltage">--</span> V</td> 
-       </tr> 
-  </table>
-  <table class="status-table">
-    <tr>
-    <td><input type="checkbox" id="roomdemand" class="visually-hidden"><span class="room-demand">Heating </span></td>
-    <td><input type="checkbox" id="waterdemand" class="visually-hidden"><span class="water-demand">Boiler </span></td>
-    <td><input type="checkbox" id="window" class="visually-hidden"><span class="window">Window </span></td>
-    </tr>
-  </table>    
-  <div class="status-line">
-    <p><span id="error_class" class="error"></span> <span id="error_code" class="error"></span> <button id="error_reset_button" class="reset_button" style="visibility: hidden;">Reset</button></p>
-  </div>
-  <div class="status-line">
-    <p><span id="error_msg" class="error"></span></p>
-  </div>
-  <div class="status-line">
-    <p><span id="waterboost_msg"></span></p>
-  </div>
+      <tr class="status">
+        <td><span id="room_temp">--</span> °C</td>
+        <td><span id="water_temp">--</span> °C</td>
+        <td><span id="current_state">--</span></td>
+      </tr>
+    </table>
+
+    <div class="status-line">
+      <p id="error_line" class="error"></p>
+    </div>
+
   </div>
 
   <!-- Details Tab -->
   <div id="Details" class="tabcontent">
     <table id="detailsTable">
-      <tr>
-        <th>Item</th>
-        <th>Value</th>
-      </tr>
+      <tr><th>Item</th><th>Value</th></tr>
     </table>
   </div>
+
+</div>
+
+<div class="statusbar">
+  <a href="#" onclick="openPortal(); return false;">Config portal</a>
 </div>
 
 <div id="modal" class="modal">
   <div class="modal-content">
-     <p id="modal-text"></p>
+    <p id="modal-text"></p>
   </div>
-</div> 
+</div>
 
-<script src="reconnecting-websocket.min.js"></script>
-<script src="errors.js"></script>
-<script src="script.js"></script>
+<script>
+!function(a,b){"function"==typeof define&&define.amd?define([],b):"undefined"!=typeof module&&module.exports?module.exports=b():a.ReconnectingWebSocket=b()}(this,function(){function a(b,c,d){function l(a,b){var c=document.createEvent("CustomEvent");return c.initCustomEvent(a,!1,!1,b),c}var e={debug:!1,automaticOpen:!0,reconnectInterval:1e3,maxReconnectInterval:3e4,reconnectDecay:1.5,timeoutInterval:2e3};d||(d={});for(var f in e)this[f]="undefined"!=typeof d[f]?d[f]:e[f];this.url=b,this.reconnectAttempts=0,this.readyState=WebSocket.CONNECTING,this.protocol=null;var h,g=this,i=!1,j=!1,k=document.createElement("div");k.addEventListener("open",function(a){g.onopen(a)}),k.addEventListener("close",function(a){g.onclose(a)}),k.addEventListener("connecting",function(a){g.onconnecting(a)}),k.addEventListener("message",function(a){g.onmessage(a)}),k.addEventListener("error",function(a){g.onerror(a)}),this.addEventListener=k.addEventListener.bind(k),this.removeEventListener=k.removeEventListener.bind(k),this.dispatchEvent=k.dispatchEvent.bind(k),this.open=function(b){h=new WebSocket(g.url,c||[]),b||k.dispatchEvent(l("connecting")),(g.debug||a.debugAll)&&console.debug("ReconnectingWebSocket","attempt-connect",g.url);var d=h,e=setTimeout(function(){(g.debug||a.debugAll)&&console.debug("ReconnectingWebSocket","connection-timeout",g.url),j=!0,d.close(),j=!1},g.timeoutInterval);h.onopen=function(){clearTimeout(e),(g.debug||a.debugAll)&&console.debug("ReconnectingWebSocket","onopen",g.url),g.protocol=h.protocol,g.readyState=WebSocket.OPEN,g.reconnectAttempts=0;var d=l("open");d.isReconnect=b,b=!1,k.dispatchEvent(d)},h.onclose=function(c){if(clearTimeout(e),h=null,i)g.readyState=WebSocket.CLOSED,k.dispatchEvent(l("close"));else{g.readyState=WebSocket.CONNECTING;var d=l("connecting");d.code=c.code,d.reason=c.reason,d.wasClean=c.wasClean,k.dispatchEvent(d),b||j||((g.debug||a.debugAll)&&console.debug("ReconnectingWebSocket","onclose",g.url),k.dispatchEvent(l("close")));var e=g.reconnectInterval*Math.pow(g.reconnectDecay,g.reconnectAttempts);setTimeout(function(){g.reconnectAttempts++,g.open(!0)},e>g.maxReconnectInterval?g.maxReconnectInterval:e)}},h.onmessage=function(b){(g.debug||a.debugAll)&&console.debug("ReconnectingWebSocket","onmessage",g.url,b.data);var c=l("message");c.data=b.data,k.dispatchEvent(c)},h.onerror=function(b){(g.debug||a.debugAll)&&console.debug("ReconnectingWebSocket","onerror",g.url,b),k.dispatchEvent(l("error"))}},1==this.automaticOpen&&this.open(!1),this.send=function(b){if(h)return(g.debug||a.debugAll)&&console.debug("ReconnectingWebSocket","send",g.url,b),h.send(b);throw"INVALID_STATE_ERR : Pausing to reconnect websocket"},this.close=function(a,b){"undefined"==typeof a&&(a=1e3),i=!0,h&&h.close(a,b)},this.refresh=function(){h&&h.close()}}return a.prototype.onopen=function(){},a.prototype.onclose=function(){},a.prototype.onconnecting=function(){},a.prototype.onmessage=function(){},a.prototype.onerror=function(){},a.debugAll=!1,a.CONNECTING=WebSocket.CONNECTING,a.OPEN=WebSocket.OPEN,a.CLOSING=WebSocket.CLOSING,a.CLOSED=WebSocket.CLOSED,a});
+</script>
+<script>
+var gateway = 'ws://' + window.location.hostname + (window.location.port ? ':' + window.location.port : '') + '/ws';
+var wserror  = true;
+var linerror = false;
+var modal      = document.getElementById('modal');
+var modal_text = document.getElementById('modal-text');
+
+function showModal() {
+    if (wserror) {
+        modal_text.textContent = 'Connecting, please wait';
+        modal.style.display = 'flex';
+    } else if (linerror) {
+        modal_text.textContent = 'LIN bus error – Truma not responding';
+        modal.style.display = 'flex';
+    } else {
+        modal.style.display = 'none';
+    }
+}
+showModal();
+
+// -----------------------------------------------------------------------
+// WebSocket
+// -----------------------------------------------------------------------
+var ws = new ReconnectingWebSocket(gateway);
+
+function ping() { ws.send('ping'); setTimeout(ping, 10000); }
+setTimeout(ping, 10000);
+
+ws.onopen = function() {
+    wserror = false;
+    showModal();
+    ws.send('settings');
+};
+ws.onclose = function() {
+    wserror = true;
+    showModal();
+};
+
+ws.onmessage = function(event) {
+    var data = JSON.parse(event.data);
+    if (!data.command || !data.id) return;
+    var id    = data.id.replace(/^\//, '');   // strip leading /
+    var value = data.value;
+    if (data.command === 'setting') {
+        updateSetting(id, value);
+    } else {
+        updateStatus(id, value);
+    }
+};
+
+// -----------------------------------------------------------------------
+// Update a setpoint control
+// -----------------------------------------------------------------------
+function updateSetting(id, value) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.value = value;
+    if (id === 'heating') { enableHeatingTemp(); enableFan(); }
+    if (id === 'boiler') enableFan();
+}
+
+// -----------------------------------------------------------------------
+// Update a status value
+// -----------------------------------------------------------------------
+function updateStatus(id, value) {
+    // Inline status fields
+    var el = document.getElementById(id);
+    if (el) el.textContent = value;
+
+    // LIN alive tracking
+    if (id === 'linok') {
+        linerror = parseInt(value) !== 1;
+        showModal();
+    }
+
+    // Error code display
+    if (id === 'error_code') {
+        var line = document.getElementById('error_line');
+        if (parseInt(value) === 0) {
+            line.textContent = '';
+        } else {
+            line.textContent = 'Error code: ' + value;
+        }
+    }
+
+    // Dynamic details table
+    var table = document.getElementById('detailsTable');
+    for (var i = 1; i < table.rows.length; i++) {
+        if (table.rows[i].cells[0].textContent === id) {
+            table.rows[i].cells[1].textContent = value;
+            return;
+        }
+    }
+    var row = table.insertRow(-1);
+    row.insertCell(0).textContent = id;
+    row.insertCell(1).textContent = value;
+}
+
+// -----------------------------------------------------------------------
+// Send a setpoint change to the device
+// -----------------------------------------------------------------------
+function send(id, value) {
+    if (ws.readyState === 1) {
+        ws.send(JSON.stringify({ id: id, value: String(value) }));
+    }
+}
+
+// -----------------------------------------------------------------------
+// Room temperature controls
+// -----------------------------------------------------------------------
+var tempTimer;
+
+function applyTemp() {
+    var el  = document.getElementById('temp');
+    var val = parseFloat(el.value);
+    if (val < 5.0)  val = 5.0;
+    if (val > 30.0) val = 30.0;
+    el.value = val.toFixed(1);
+    send('/temp', el.value);
+}
+
+function changeTemp(delta) {
+    clearTimeout(tempTimer);
+    var el  = document.getElementById('temp');
+    var val = parseFloat(el.value) + delta;
+    if (val < 5.0)  val = 5.0;
+    if (val > 30.0) val = 30.0;
+    el.value = val.toFixed(1);
+    tempTimer = setTimeout(applyTemp, 600);
+}
+
+document.getElementById('temp').addEventListener('input', function() {
+    clearTimeout(tempTimer);
+    tempTimer = setTimeout(applyTemp, 800);
+});
+
+// -----------------------------------------------------------------------
+// Select controls
+// -----------------------------------------------------------------------
+document.getElementById('heating').addEventListener('change', function() {
+    send('/heating', this.value);
+    enableHeatingTemp();
+    enableFan();
+});
+document.getElementById('boiler').addEventListener('change', function() {
+    send('/boiler', this.value);
+    enableFan();
+});
+document.getElementById('fan').addEventListener('change', function() {
+    send('/fan', this.value);
+});
+document.getElementById('elpower').addEventListener('change', function() {
+    send('/elpower', this.value);
+});
+document.getElementById('energy').addEventListener('change', function() {
+    send('/energy', this.value);
+});
+
+// Room temp spinner enabled only when heating is On
+function enableHeatingTemp() {
+    var heatingOn = document.getElementById('heating').value === '1';
+    var tempEl = document.getElementById('temp');
+    tempEl.disabled = !heatingOn;
+    document.querySelectorAll('.number-input button').forEach(function(b) {
+        b.disabled = !heatingOn;
+    });
+}
+
+// Fan enabled when heating is On OR boiler is Off
+function enableFan() {
+    var heatingOn = document.getElementById('heating').value === '1';
+    var boilerOff = document.getElementById('boiler').value === 'off';
+    document.getElementById('fan').disabled = !(heatingOn || boilerOff);
+}
+
+// -----------------------------------------------------------------------
+// Config portal
+// -----------------------------------------------------------------------
+function openPortal() {
+    if (!confirm('El dispositivo abrirá el portal de configuración y dejará de responder.\nConéctate a la red Wi-Fi "TruMinus-Setup" y ve a 192.168.4.1')) return;
+    send('/portal', '1');
+}
+
+// -----------------------------------------------------------------------
+// Tab switching
+// -----------------------------------------------------------------------
+window.openTab = function(evt, tabName) {
+    var tabs = document.getElementsByClassName('tabcontent');
+    for (var i = 0; i < tabs.length; i++) tabs[i].style.display = 'none';
+    var links = document.getElementsByClassName('tablinks');
+    for (var i = 0; i < links.length; i++) links[i].className = links[i].className.replace(' active', '');
+    document.getElementById(tabName).style.display = 'block';
+    evt.currentTarget.className += ' active';
+};
+
+document.querySelector('.tablinks.active').click();
+enableHeatingTemp();
+enableFan();
+</script>
 </body>
 </html>

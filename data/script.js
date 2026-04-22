@@ -1,276 +1,197 @@
-var gateway
-if (window.location.port) {
-    gateway = `ws://${window.location.hostname}:${window.location.port}/ws`;
-} else {
-    gateway = `ws://${window.location.hostname}/ws`;
-}  
-var showing_reset = false;
-var modal = document.getElementById("modal");
-var modal_text = document.getElementById("modal-text");
-var wserror = true;
-var linerror = false
-var doingreset = false;
+var gateway = 'ws://' + window.location.hostname + (window.location.port ? ':' + window.location.port : '') + '/ws';
+var wserror  = true;
+var linerror = false;
+var modal      = document.getElementById('modal');
+var modal_text = document.getElementById('modal-text');
 
-function ShowModal() {
+function showModal() {
     if (wserror) {
-        modal_text.textContent="Connecting, please wait";
-        modal.style.display="block";
-        return;
+        modal_text.textContent = 'Connecting, please wait';
+        modal.style.display = 'flex';
+    } else if (linerror) {
+        modal_text.textContent = 'LIN bus error – Truma not responding';
+        modal.style.display = 'flex';
+    } else {
+        modal.style.display = 'none';
     }
-    if (linerror) {
-        modal_text.textContent="Lin bus error";
-        modal.style.display="block";
-        return;
+}
+showModal();
+
+// -----------------------------------------------------------------------
+// WebSocket
+// -----------------------------------------------------------------------
+var ws = new ReconnectingWebSocket(gateway);
+
+function ping() { ws.send('ping'); setTimeout(ping, 10000); }
+setTimeout(ping, 10000);
+
+ws.onopen = function() {
+    wserror = false;
+    showModal();
+    ws.send('settings');
+};
+ws.onclose = function() {
+    wserror = true;
+    showModal();
+};
+
+ws.onmessage = function(event) {
+    var data = JSON.parse(event.data);
+    if (!data.command || !data.id) return;
+    var id    = data.id.replace(/^\//, '');   // strip leading /
+    var value = data.value;
+    if (data.command === 'setting') {
+        updateSetting(id, value);
+    } else {
+        updateStatus(id, value);
     }
-    if (doingreset) {
-        modal_text.textContent="Resetting, please wait";
-        modal.style.display="block";
-        return;
-    }
-    modal.style.display="none";
+};
+
+// -----------------------------------------------------------------------
+// Update a setpoint control
+// -----------------------------------------------------------------------
+function updateSetting(id, value) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.value = value;
+    if (id === 'heating') { enableHeatingTemp(); enableFan(); }
+    if (id === 'boiler') enableFan();
 }
 
-ShowModal();
+// -----------------------------------------------------------------------
+// Update a status value
+// -----------------------------------------------------------------------
+function updateStatus(id, value) {
+    // Inline status fields
+    var el = document.getElementById(id);
+    if (el) el.textContent = value;
 
-function EnableFanSpeed(enable) {
-    document.getElementById("fanspeed").disabled=!enable;
+    // LIN alive tracking
+    if (id === 'linok') {
+        linerror = parseInt(value) !== 1;
+        showModal();
+    }
+
+    // Error code display
+    if (id === 'error_code') {
+        var line = document.getElementById('error_line');
+        if (parseInt(value) === 0) {
+            line.textContent = '';
+        } else {
+            line.textContent = 'Error code: ' + value;
+        }
+    }
+
+    // Dynamic details table
+    var table = document.getElementById('detailsTable');
+    for (var i = 1; i < table.rows.length; i++) {
+        if (table.rows[i].cells[0].textContent === id) {
+            table.rows[i].cells[1].textContent = value;
+            return;
+        }
+    }
+    var row = table.insertRow(-1);
+    row.insertCell(0).textContent = id;
+    row.insertCell(1).textContent = value;
 }
 
-function EnableFan() {
-    heating=document.getElementById("heating").checked;
-    EnableFanSpeed(!heating);
-    enabled=document.getElementById("boiler").value=="off" || heating;
-    document.getElementById("fan").disabled=!enabled;  
+// -----------------------------------------------------------------------
+// Send a setpoint change to the device
+// -----------------------------------------------------------------------
+function send(id, value) {
+    if (ws.readyState === 1) {
+        ws.send(JSON.stringify({ id: id, value: String(value) }));
+    }
 }
 
-function ShowResetButton() {
-    button=document.getElementById("error_reset_button");
-    if (showing_reset && !doingreset ) {
-        button.style.visibility="visible";
-   } else {
-        button.style.visibility="hidden";
-   }
+// -----------------------------------------------------------------------
+// Room temperature controls
+// -----------------------------------------------------------------------
+var tempTimer;
+
+function applyTemp() {
+    var el  = document.getElementById('temp');
+    var val = parseFloat(el.value);
+    if (val < 5.0)  val = 5.0;
+    if (val > 30.0) val = 30.0;
+    el.value = val.toFixed(1);
+    send('/temp', el.value);
 }
-    // WebSocket connection
-    const ws = new ReconnectingWebSocket(gateway);
-    ws.debug=true;
 
-    function Ping() {
-        ws.send("ping");
-        setTimeout(Ping,10000);
-    }
+function changeTemp(delta) {
+    clearTimeout(tempTimer);
+    var el  = document.getElementById('temp');
+    var val = parseFloat(el.value) + delta;
+    if (val < 5.0)  val = 5.0;
+    if (val > 30.0) val = 30.0;
+    el.value = val.toFixed(1);
+    tempTimer = setTimeout(applyTemp, 600);
+}
 
-    setTimeout(Ping,10000);
+document.getElementById('temp').addEventListener('input', function() {
+    clearTimeout(tempTimer);
+    tempTimer = setTimeout(applyTemp, 800);
+});
 
-    // Function to update control values
-    function updateControl(id, value) {
-        const control = document.getElementById(id);
-        if (control) {
-            if (control.type=="checkbox") {
-                control.checked=parseInt(value);
-            } else {
-                control.value = value;
-            }
-            if (id=="boiler" || id=="heating") {
-                EnableFan();
-            }
-        }
-    }
+// -----------------------------------------------------------------------
+// Select controls
+// -----------------------------------------------------------------------
+document.getElementById('heating').addEventListener('change', function() {
+    send('/heating', this.value);
+    enableHeatingTemp();
+    enableFan();
+});
+document.getElementById('boiler').addEventListener('change', function() {
+    send('/boiler', this.value);
+    enableFan();
+});
+document.getElementById('fan').addEventListener('change', function() {
+    send('/fan', this.value);
+});
+document.getElementById('elpower').addEventListener('change', function() {
+    send('/elpower', this.value);
+});
+document.getElementById('energy').addEventListener('change', function() {
+    send('/energy', this.value);
+});
 
-    // Function to handle incoming WebSocket messages
-    ws.onmessage = function (event) {
-        //console.log("==ws message: "+event.data);
-        const data = JSON.parse(event.data);
-        if (data.command && data.id && data.value) {
-            id=data.id.replace('/','')
-            if (data.command=='setting')
-              updateControl(id, data.value);
-            else
-              updateDetails(id, data.value);
-        }
-    };
-
-    ws.onopen = function (event) {
-        wserror=false;
-        ShowModal();
-        ws.send("settings");
-    };
-
-    ws.onclose = function (event) {
-        wserror=true;
-        ShowModal();
-    };
-
-    // Function to update details in the Details tab
-     function updateDetails(name, value) {
-        v=document.getElementById(name);
-        if (v) {
-            if (v.type=="checkbox") {
-                v.checked=parseInt(value);
-            } else {
-                v.textContent=value;
-            }
-        }
-        if (name == "linok") {
-            linerror=parseInt(value)!=1;
-            ShowModal();
-        }
-        if (name == "reset") {
-            doingreset=parseInt(value)==1;
-            ShowModal();
-            ShowResetButton();
-        }
-        if (name=="err_class") {
-          err_class=parseInt(value);
-          elem=document.getElementById("error_class");
-          switch(err_class) {
-                case 0:
-                  elem.textContent="";  
-                  showing_reset=false;
-                  break;
-                case 1:
-                case 2:
-                  elem.textContent="Warning";
-                  showing_reset=false;
-                  break;
-                case 10:
-                case 20:
-                case 30:
-                  elem.textContent="Error";
-                  showing_reset=true;
-                  break;
-                case 40:
-                  elem.textContent="Locked";      
-                  showing_reset=false;
-                  break;
-                default:
-                  elem.textContent="???";
-                  showing_reset=true;
-          }
-          ShowResetButton();
-        }
-        if (name=="err_code") {
-            code=parseInt(value);
-            if (code==0) {
-                document.getElementById("error_code").textContent="";
-                document.getElementById("error_msg").textContent="";
-            } else {
-                document.getElementById("error_code").textContent=value;
-                msg=ErrText[code];
-                if (msg) {
-                    document.getElementById("error_msg").textContent=msg;
-                } else {
-                    document.getElementById("error_msg").textContent="unknown error code";
-                }
-            }
-        }
-        if (name=="waterboost") {
-            if (parseInt(value)==0) {
-                document.getElementById("waterboost_msg").textContent="";
-            } else {
-                document.getElementById("waterboost_msg").textContent="waterboost "+value+" minutes remaining";
-            }
-        }
-        const detailsTable = document.getElementById('detailsTable');
-        let updated = false;
-        for (let i = 1; i < detailsTable.rows.length; i++) {
-            if (detailsTable.rows[i].cells[0].textContent === name) {
-                detailsTable.rows[i].cells[1].textContent = value;
-                updated = true;
-                break;
-            }
-        }
-        if (!updated) {
-            const newRow = detailsTable.insertRow(-1);
-            newRow.insertCell(0).textContent = name;
-            newRow.insertCell(1).textContent = value;
-        }
-    }
-
-    // Function to send control selections back via WebSocket
-    function sendControlSelection(id, value) {
-        if (ws.readyState == 1) {
-            const message = JSON.stringify({ id: id, value: value });
-            ws.send(message);
-        }
-    }
-
-    // Function to switch tabs
-    window.openTab = function (evt, tabName) {
-        var i, tabcontent, tablinks;
-
-        // Hide all tab content
-        tabcontent = document.getElementsByClassName("tabcontent");
-        for (i = 0; i < tabcontent.length; i++) {
-            tabcontent[i].style.display = "none";
-        }
-
-        // Deactivate all tab links
-        tablinks = document.getElementsByClassName("tablinks");
-        for (i = 0; i < tablinks.length; i++) {
-            tablinks[i].className = tablinks[i].className.replace(" active", "");
-        }
-
-        // Show the specific tab content and mark the button as active
-        document.getElementById(tabName).style.display = "block";
-        evt.currentTarget.className += " active";
-    };
-
-    // Open the default tab (Controls tab)
-    document.querySelector('.tablinks.active').click();
-
-    // Event listeners for control selections
-    document.getElementById('boiler').addEventListener('change', function () {
-        sendControlSelection('/boiler', this.value);
-        EnableFan();
+// Room temp spinner enabled only when heating is On
+function enableHeatingTemp() {
+    var heatingOn = document.getElementById('heating').value === '1';
+    var tempEl = document.getElementById('temp');
+    tempEl.disabled = !heatingOn;
+    document.querySelectorAll('.number-input button').forEach(function(b) {
+        b.disabled = !heatingOn;
     });
+}
 
-    var tempTimer;
+// Fan enabled when heating is On OR boiler is Off
+function enableFan() {
+    var heatingOn = document.getElementById('heating').value === '1';
+    var boilerOff = document.getElementById('boiler').value === 'off';
+    document.getElementById('fan').disabled = !(heatingOn || boilerOff);
+}
 
-    function ValidateAndSetTemperature() {
-        elem=document.getElementById('temp');
-        val = parseFloat(elem.value);
-        if (val<5.0) {
-            val=5.0;
-        };
-        if (val>30.0) {
-            val=30.0;
-        };
-        elem.value = val.toFixed(1).toString();
-        sendControlSelection('/temp', elem.value);
-    }
+// -----------------------------------------------------------------------
+// Config portal
+// -----------------------------------------------------------------------
+function openPortal() {
+    if (!confirm('El dispositivo abrirá el portal de configuración y dejará de responder.\nConéctate a la red Wi-Fi "TruMinus-Setup" y ve a 192.168.4.1')) return;
+    send('/portal', '1');
+}
 
-    function changeTemp(increment) {
-      clearTimeout(tempTimer);
-      t=document.getElementById('temp');
-      val=parseFloat(t.value)+increment;
-      if (val<5.0) {
-        val=5.0;
-      }
-      if (val>30.0) {
-        val=30.0;
-      }
-      t.value=val.toFixed(1).toString();
-      tempTimer = setTimeout(ValidateAndSetTemperature, 800);
-    }
+// -----------------------------------------------------------------------
+// Tab switching
+// -----------------------------------------------------------------------
+window.openTab = function(evt, tabName) {
+    var tabs = document.getElementsByClassName('tabcontent');
+    for (var i = 0; i < tabs.length; i++) tabs[i].style.display = 'none';
+    var links = document.getElementsByClassName('tablinks');
+    for (var i = 0; i < links.length; i++) links[i].className = links[i].className.replace(' active', '');
+    document.getElementById(tabName).style.display = 'block';
+    evt.currentTarget.className += ' active';
+};
 
-    document.getElementById('temp').addEventListener('input', function() {
-            clearTimeout(tempTimer);
-            tempTimer = setTimeout(ValidateAndSetTemperature, 800);
-    });
-
-    document.getElementById('heating').addEventListener('change', function () {
-        if (this.checked) 
-          sendControlSelection('/heating','1');
-        else
-          sendControlSelection('/heating', '0');
-        EnableFan();
-    });
-
-    document.getElementById('fan').addEventListener('change', function () {
-        sendControlSelection('/fan', this.value);
-    });
-
-    document.getElementById('error_reset_button').addEventListener('click', function () {
-        sendControlSelection('/error_reset',1);
-    });
+document.querySelector('.tablinks.active').click();
+enableHeatingTemp();
+enableFan();
