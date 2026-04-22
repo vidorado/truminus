@@ -32,7 +32,7 @@ if (-not (Test-Path $FontFile)) {
 #   0xF043  fa-tint             (gota de agua)
 #   0xF2C7  fa-thermometer-half (termómetro)
 Write-Host "[gen_symbols] Generando $OutFile ..."
-lv_font_conv `
+npx --yes lv_font_conv `
     --font $FontFile `
     -r 0xF043 `
     -r 0xF2C7 `
