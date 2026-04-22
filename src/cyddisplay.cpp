@@ -274,32 +274,22 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     lv_label_set_text(s_aguaLbl, "Agua: -- \xc2\xb0""C");
     lv_obj_set_pos(s_aguaLbl, 155, 7);
 
-    // Puntos de estado WiFi / MQTT
-    auto makeDot = [&](int x) -> lv_obj_t* {
-        lv_obj_t* dot = lv_obj_create(topBar);
-        lv_obj_remove_style_all(dot);
-        lv_obj_set_size(dot, 10, 10);
-        lv_obj_set_pos(dot, x, 9);
-        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_clear_flag(dot, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-        return dot;
-    };
-    s_wifiDot = makeDot(258);
-    lv_obj_set_style_bg_color(s_wifiDot, lv_color_hex(C_WIFI_NO), LV_PART_MAIN);
-    lv_obj_t* wLbl = lv_label_create(topBar);
-    lv_obj_set_style_text_font(wLbl, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(wLbl, lv_color_hex(C_LABEL), LV_PART_MAIN);
-    lv_label_set_text(wLbl, "W");
-    lv_obj_set_pos(wLbl, 271, 6);
+    // Iconos de estado WiFi / MQTT
+    // WiFi: LV_SYMBOL_WIFI (icono nativo LVGL)
+    // MQTT: LV_SYMBOL_UPLOAD (no existe icono MQTT en LVGL; ↑ representa publicar al broker)
+    s_wifiDot = lv_label_create(topBar);
+    lv_obj_set_style_text_font(s_wifiDot, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_wifiDot, lv_color_hex(C_WIFI_NO), LV_PART_MAIN);
+    lv_label_set_text(s_wifiDot, LV_SYMBOL_WIFI);
+    lv_obj_set_pos(s_wifiDot, 254, 6);
+    lv_obj_clear_flag(s_wifiDot, LV_OBJ_FLAG_CLICKABLE);
 
-    s_mqttDot = makeDot(287);
-    lv_obj_set_style_bg_color(s_mqttDot, lv_color_hex(C_MQTT_DIS), LV_PART_MAIN);
-    lv_obj_t* mLbl = lv_label_create(topBar);
-    lv_obj_set_style_text_font(mLbl, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(mLbl, lv_color_hex(C_LABEL), LV_PART_MAIN);
-    lv_label_set_text(mLbl, "M");
-    lv_obj_set_pos(mLbl, 300, 6);
+    s_mqttDot = lv_label_create(topBar);
+    lv_obj_set_style_text_font(s_mqttDot, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_mqttDot, lv_color_hex(C_MQTT_DIS), LV_PART_MAIN);
+    lv_label_set_text(s_mqttDot, LV_SYMBOL_UPLOAD);
+    lv_obj_set_pos(s_mqttDot, 285, 6);
+    lv_obj_clear_flag(s_mqttDot, LV_OBJ_FLAG_CLICKABLE);
 
     // ── Separadores ──────────────────────────────────────────────────────
     makeSep(s_scr, 0,     Y_SEP1, 320, 1);   // horizontal top
@@ -410,14 +400,14 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
         lv_color_t c = lv_color_hex(wifiok          ? C_WIFI_OK   :
                                      s_everConnected ? C_WIFI_NO   :
                                                        C_WIFI_CONN);
-        lv_obj_set_style_bg_color(s_wifiDot, c, LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_wifiDot, c, LV_PART_MAIN);
     }
 
-    // ── Punto MQTT ───────────────────────────────────────────────────────
+    // ── Icono MQTT ───────────────────────────────────────────────────────
     if (s_mqttDot) {
         lv_color_t c = lv_color_hex(!mqttEnabled ? C_MQTT_DIS :
                                      mqttok       ? C_MQTT_OK  : C_MQTT_NO);
-        lv_obj_set_style_bg_color(s_mqttDot, c, LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_mqttDot, c, LV_PART_MAIN);
     }
 
     // ── IP ───────────────────────────────────────────────────────────────
