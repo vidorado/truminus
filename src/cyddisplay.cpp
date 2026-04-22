@@ -276,9 +276,9 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     lv_obj_set_pos(s_aguaLbl, 155, 7);
 
     // Iconos de estado WiFi / MQTT / LIN bus — tres iconos en la esquina superior derecha
-    // WiFi: LV_SYMBOL_WIFI (icono nativo LVGL)
-    // MQTT: LV_SYMBOL_UPLOAD (↑ no existe icono MQTT en LVGL; representa publicar al broker)
-    // LIN:  "T" de Truma, coloreada según estado del bus
+    // WiFi:    LV_SYMBOL_WIFI    — icono nativo LVGL
+    // MQTT:    LV_SYMBOL_LOOP    — ciclo pub/sub
+    // LIN bus: LV_SYMBOL_SHUFFLE — comunicación bidireccional
     auto makeStatusIcon = [&](int x, const char* sym, uint32_t col) -> lv_obj_t* {
         lv_obj_t* lbl = lv_label_create(topBar);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, LV_PART_MAIN);
@@ -288,9 +288,9 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
         lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
         return lbl;
     };
-    s_wifiDot = makeStatusIcon(247, LV_SYMBOL_WIFI,   C_WIFI_NO);
-    s_mqttDot = makeStatusIcon(272, LV_SYMBOL_UPLOAD, C_MQTT_DIS);
-    s_linDot  = makeStatusIcon(300, "T",              C_WIFI_NO);
+    s_wifiDot = makeStatusIcon(247, LV_SYMBOL_WIFI,    C_WIFI_NO);
+    s_mqttDot = makeStatusIcon(272, LV_SYMBOL_LOOP,   C_MQTT_DIS);
+    s_linDot  = makeStatusIcon(300, LV_SYMBOL_SHUFFLE, C_WIFI_NO);
 
     // ── Separadores ──────────────────────────────────────────────────────
     makeSep(s_scr, 0,     Y_SEP1, 320, 1);   // horizontal top
