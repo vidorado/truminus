@@ -76,6 +76,7 @@ static lv_obj_t* s_ambLbl      = nullptr;
 static lv_obj_t* s_aguaLbl     = nullptr;
 static lv_obj_t* s_wifiDot     = nullptr;
 static lv_obj_t* s_mqttDot     = nullptr;
+static lv_obj_t* s_linDot      = nullptr;
 
 // Calefacción
 static lv_obj_t* s_heatBtn     = nullptr;
@@ -274,22 +275,22 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     lv_label_set_text(s_aguaLbl, "Agua: -- \xc2\xb0""C");
     lv_obj_set_pos(s_aguaLbl, 155, 7);
 
-    // Iconos de estado WiFi / MQTT
+    // Iconos de estado WiFi / MQTT / LIN bus — tres iconos en la esquina superior derecha
     // WiFi: LV_SYMBOL_WIFI (icono nativo LVGL)
-    // MQTT: LV_SYMBOL_UPLOAD (no existe icono MQTT en LVGL; ↑ representa publicar al broker)
-    s_wifiDot = lv_label_create(topBar);
-    lv_obj_set_style_text_font(s_wifiDot, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_wifiDot, lv_color_hex(C_WIFI_NO), LV_PART_MAIN);
-    lv_label_set_text(s_wifiDot, LV_SYMBOL_WIFI);
-    lv_obj_set_pos(s_wifiDot, 254, 6);
-    lv_obj_clear_flag(s_wifiDot, LV_OBJ_FLAG_CLICKABLE);
-
-    s_mqttDot = lv_label_create(topBar);
-    lv_obj_set_style_text_font(s_mqttDot, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_mqttDot, lv_color_hex(C_MQTT_DIS), LV_PART_MAIN);
-    lv_label_set_text(s_mqttDot, LV_SYMBOL_UPLOAD);
-    lv_obj_set_pos(s_mqttDot, 285, 6);
-    lv_obj_clear_flag(s_mqttDot, LV_OBJ_FLAG_CLICKABLE);
+    // MQTT: LV_SYMBOL_UPLOAD (↑ no existe icono MQTT en LVGL; representa publicar al broker)
+    // LIN:  "T" de Truma, coloreada según estado del bus
+    auto makeStatusIcon = [&](int x, const char* sym, uint32_t col) -> lv_obj_t* {
+        lv_obj_t* lbl = lv_label_create(topBar);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, LV_PART_MAIN);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(col), LV_PART_MAIN);
+        lv_label_set_text(lbl, sym);
+        lv_obj_set_pos(lbl, x, 6);
+        lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
+        return lbl;
+    };
+    s_wifiDot = makeStatusIcon(247, LV_SYMBOL_WIFI,   C_WIFI_NO);
+    s_mqttDot = makeStatusIcon(272, LV_SYMBOL_UPLOAD, C_MQTT_DIS);
+    s_linDot  = makeStatusIcon(300, "T",              C_WIFI_NO);
 
     // ── Separadores ──────────────────────────────────────────────────────
     makeSep(s_scr, 0,     Y_SEP1, 320, 1);   // horizontal top
@@ -408,6 +409,12 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
         lv_color_t c = lv_color_hex(!mqttEnabled ? C_MQTT_DIS :
                                      mqttok       ? C_MQTT_OK  : C_MQTT_NO);
         lv_obj_set_style_text_color(s_mqttDot, c, LV_PART_MAIN);
+    }
+
+    // ── Icono LIN bus (T de Truma) ────────────────────────────────────────
+    if (s_linDot) {
+        lv_obj_set_style_text_color(s_linDot,
+            lv_color_hex(trumaok ? C_WIFI_OK : C_WIFI_NO), LV_PART_MAIN);
     }
 
     // ── IP ───────────────────────────────────────────────────────────────
