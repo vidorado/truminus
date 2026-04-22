@@ -438,6 +438,8 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
         }
     } else if (!mqttok && mqttEnabled) {
         msg = "Sin MQTT";                  msgC = C_MQTT_NO;
+    } else if (!trumaok) {
+        msg = "Sin LIN bus";               msgC = C_WIFI_NO;
     }
 
     if (s_statusLbl) {
