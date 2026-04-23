@@ -652,7 +652,11 @@ static void linBusTask(void*) {
       }
       AssignFrameRanges(!extraFramesOk);
 
-      trumaok=Frame16->getDataOk();
+      // LIN OK if ANY readable frame responds — frame16 may be silent when
+      // the Truma is in certain states even while the bus is fully active.
+      trumaok = Frame16->getDataOk();
+      for (int i = 1; i < FRAMES_TO_READ && !trumaok; i++)
+          trumaok = frames_to_read[i]->getDataOk();
 
       // Aplicar modo de energía — CYD tiene prioridad local; web sincroniza vía WS
       {
