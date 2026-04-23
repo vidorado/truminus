@@ -170,7 +170,7 @@ static bool      s_screenDimmed = false;  // en aviso de apagado (brillo 30 %)
 static lv_obj_t* s_wakeOverlay  = nullptr;
 static lv_obj_t* s_settingsScr  = nullptr;
 static lv_obj_t* s_displayScr   = nullptr;
-static lv_obj_t* s_dispOptBtn[3] = {};
+static lv_obj_t* s_dispOptBtn[TIMEOUT_N] = {};
 
 // Declaraciones adelantadas (se llaman mutuamente entre callbacks)
 static void showSettingsMenu();
