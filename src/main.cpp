@@ -18,7 +18,6 @@
 #include "wifisetup.hpp"
 #include "cyddisplay.hpp"
 #include <DHTesp.h>
-#include "driver/gpio.h"   // gpio_reset_pin() para desconectar IO21 del LEDC
 #endif
 #include "globals.hpp"
 #include "trumaframes.hpp"
@@ -84,17 +83,20 @@ static uint32_t s_lastDhtMs  = 0;        // millis() de la última lectura
 
 // Desconecta LEDC de IO21, lee AM2301, reconecta LEDC al canal de backlight.
 static void readExtSensor() {
-    // Guardar duty actual (100%, 30% o 0%) para restaurarlo después.
-    // La función leerá el sensor sólo cuando la pantalla esté encendida
-    // (IO21 HIGH en 100% = sensor alimentado vía LEDC).
+    // 1) Forzar IO21 a OUTPUT HIGH (estado idle del bus DHT de 1 hilo).
+    //    pinMode(OUTPUT) reconfigura el GPIO matrix de LEDC→GPIO, desconectando
+    //    el LEDC sin necesidad de gpio_reset_pin().  La línea queda en HIGH
+    //    (mismo nivel que el pull-up del sensor) antes de que DHTesp tome el mando.
+    pinMode(DHT_DATA_PIN, OUTPUT);
+    digitalWrite(DHT_DATA_PIN, HIGH);
+    delay(2);   // 2 ms: el pull-up del sensor necesita ver HIGH antes de responder
 
-    // 1) Desconectar IO21 del periférico LEDC.
-    //    gpio_reset_pin() resetea el pin a estado por defecto (entrada, sin pulls,
-    //    sin periférico), funcionando en todas las versiones del framework.
-    gpio_reset_pin((gpio_num_t)GPIO_BCKL);
+    // 2) Re-inicializar DHTesp para que reconfigure su estado interno con el pin
+    //    ya en modo correcto (necesario tras el cambio de función del GPIO matrix).
+    s_dht.setup(DHT_DATA_PIN, DHTesp::AM2302);
 
-    // 2) Leer sensor (DHTesp gestiona internamente los cambios de dirección
-    //    de IO21 OUTPUT→INPUT durante la comunicación de 1 cable)
+    // 3) Leer sensor. DHTesp gestiona internamente OUTPUT LOW (1 ms start pulse)
+    //    → INPUT_PULLUP (escucha respuesta) → lectura de 40 bits.
     TempAndHumidity result = s_dht.getTempAndHumidity();
 
     // 3) Reconectar IO21 al canal LEDC de backlight y restaurar brillo máximo.
