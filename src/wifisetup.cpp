@@ -283,7 +283,6 @@ static lv_obj_t* s_spinner        = nullptr;
 static bool      s_done           = false;
 static bool      s_cancelled      = false;
 static bool      s_passVis        = false;
-static bool      s_scanning       = false;
 static int       s_netCount       = 0;
 
 static void wifiSetStatus(const char* msg) {
@@ -291,37 +290,36 @@ static void wifiSetStatus(const char* msg) {
     lvRun(20);
 }
 
-static void startAsyncScan() {
-    s_scanning = true;
+// Synchronous scan: blocks ~2-3 s but guarantees results even when queued
+// WiFi events (STA_DISCONNECTED from a previous reconnect loop) would
+// corrupt the async _scanStarted flag mid-flight.
+static void doScan() {
     s_netCount = 0;
     lv_obj_remove_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_dropdown, LV_OBJ_FLAG_HIDDEN);
     wifiSetStatus("Buscando redes WiFi...");
-    // Full WiFi reset so no queued reconnect events can abort the scan.
-    // setAutoReconnect(false) first so the fresh STA start doesn't auto-connect.
+
+    // Reset WiFi to a clean STA state with no auto-reconnect.
     WiFi.setAutoReconnect(false);
-    WiFi.disconnect(true);   // stop WiFi stack completely
-    lvRun(300);              // drain pending events while LVGL stays alive
-    WiFi.mode(WIFI_STA);     // fresh restart
-    lvRun(500);              // wait for esp_wifi_start() to finish
+    WiFi.disconnect(true);
+    lvRun(300);          // drain pending events while LVGL stays alive
+    WiFi.mode(WIFI_STA);
+    lvRun(500);          // wait for esp_wifi_start()
+
     WiFi.scanDelete();
-    int16_t ret = WiFi.scanNetworks(/*async=*/true);
-    Serial.printf("[wifisetup] scanNetworks()=%d\n", (int)ret);
-}
+    // Synchronous scan: blocks until SCAN_DONE semaphore fires — immune to
+    // _scanStarted being reset early by unrelated WiFi events.
+    int n = WiFi.scanNetworks(/*async=*/false);
+    Serial.printf("[wifisetup] scanNetworks(sync)=%d\n", n);
 
-static void checkScanResult() {
-    int16_t n = WiFi.scanComplete();
-    if (n == WIFI_SCAN_RUNNING) return; // still going
-    Serial.printf("[wifisetup] scanComplete() = %d\n", (int)n);
-
-    s_scanning = false;
     lv_obj_add_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_dropdown, LV_OBJ_FLAG_HIDDEN);
 
-    s_netCount = (n < 0) ? 0 : (int)n;
+    s_netCount = (n < 0) ? 0 : n;
     if (s_netCount <= 0) {
         lv_dropdown_set_options(s_dropdown, "---");
         wifiSetStatus("No se encontraron redes.");
+        lvRun(20);
         return;
     }
 
@@ -340,13 +338,10 @@ static void checkScanResult() {
     char msg[40];
     snprintf(msg, sizeof(msg), "%d redes encontradas", s_netCount);
     wifiSetStatus(msg);
+    lvRun(20);
 }
 
 static void connectCb(lv_event_t*) {
-    if (s_scanning) {
-        wifiSetStatus("Espera, buscando redes...");
-        return;
-    }
     if (s_netCount <= 0) {
         wifiSetStatus("No hay redes disponibles");
         return;
@@ -553,8 +548,8 @@ bool runWifiSetup(String& ssid, String& pass) {
     lv_obj_add_event_cb(s_kb,     wifiKbHide,   LV_EVENT_READY,   NULL);
     lv_obj_add_event_cb(s_kb,     wifiKbHide,   LV_EVENT_CANCEL,  NULL);
 
-    // Start network scan automatically
-    startAsyncScan();
+    // Synchronous scan (blocks ~2-3 s, spinner shown before the call)
+    doScan();
 
     // Event loop
     while (!s_done) {
@@ -562,7 +557,6 @@ bool runWifiSetup(String& ssid, String& pass) {
         lv_tick_inc(now - s_lvLastTick);
         s_lvLastTick = now;
         lv_timer_handler();
-        if (s_scanning) checkScanResult();
         delay(5);
     }
 
