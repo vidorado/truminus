@@ -18,8 +18,9 @@ void runTouchCalibration();
 bool loadWifiCredentials(String& ssid, String& pass);
 void saveWifiCredentials(const String& ssid, const String& pass);
 
-// Show WiFi setup screen. Blocks until connected. Fills ssid and pass.
-void runWifiSetup(String& ssid, String& pass);
+// Show WiFi setup screen. Blocks until connected or cancelled.
+// Returns true if connected+saved, false if cancelled/skipped.
+bool runWifiSetup(String& ssid, String& pass);
 
 // -----------------------------------------------------------------------
 // MQTT config (NVS)
@@ -28,8 +29,9 @@ bool loadMqttConfig(String& host, String& port, String& user, String& pass);
 void saveMqttConfig(const String& host, const String& port,
                     const String& user, const String& pass);
 
-// Show MQTT setup screen. Blocks until saved.
-// Returns assembled uri ("mqtt://host:port"), user and pass.
-void runMqttSetup(String& uri, String& user, String& pass);
+// Show MQTT setup screen. Blocks until saved or cancelled.
+// Returns true if saved (new config), false if cancelled/skipped.
+// Fills uri/user/pass only when returning true.
+bool runMqttSetup(String& uri, String& user, String& pass);
 
 #endif // CYD

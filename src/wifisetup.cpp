@@ -281,6 +281,7 @@ static lv_obj_t* s_connectLbl     = nullptr;   // label inside connect btn
 static lv_obj_t* s_connectSpinner = nullptr;   // spinner inside connect btn
 static lv_obj_t* s_spinner        = nullptr;
 static bool      s_done           = false;
+static bool      s_cancelled      = false;
 static bool      s_passVis        = false;
 static bool      s_scanning       = false;
 static int       s_netCount       = 0;
@@ -377,6 +378,11 @@ static void connectCb(lv_event_t*) {
     }
 }
 
+static void wifiCancelCb(lv_event_t*) {
+    s_cancelled = true;
+    s_done      = true;
+}
+
 static void eyeCb(lv_event_t*) {
     s_passVis = !s_passVis;
     lv_textarea_set_password_mode(s_passTA, !s_passVis);
@@ -400,11 +406,16 @@ static void wifiKbHide(lv_event_t*) {
 
 static void passFocusCb(lv_event_t*) { wifiKbShow(s_passTA); }
 
-void runWifiSetup(String& ssid, String& pass) {
-    s_done     = false;
-    s_netCount = 0;
-    s_passVis  = false;
+bool runWifiSetup(String& ssid, String& pass) {
+    s_done      = false;
+    s_cancelled = false;
+    s_netCount  = 0;
+    s_passVis   = false;
     s_lvLastTick = millis();
+
+    // Determinar si ya hay credenciales guardadas (para el label del botón)
+    String existSSID, existPass;
+    bool hasConfig = loadWifiCredentials(existSSID, existPass);
 
     // --- Root screen (non-scrollable) ---
     lv_obj_t* scr = lv_obj_create(NULL);
@@ -476,10 +487,23 @@ void runWifiSetup(String& ssid, String& pass) {
     lv_label_set_text(s_passEyeLbl, LV_SYMBOL_EYE_OPEN);
     lv_obj_center(s_passEyeLbl);
 
-    // Connect button (ancho completo)
+    // Fila de botones: [Omitir/Cancelar]  [Conectar]
+    // W=302, mitad = 149, gap = 4
+    const int halfW = (W - 4) / 2;   // 149 px
+
+    lv_obj_t* cancelBtn = lv_btn_create(s_panel);
+    lv_obj_set_size(cancelBtn, halfW, 34);
+    lv_obj_set_pos(cancelBtn, 0, 144);
+    lv_obj_set_style_bg_color(cancelBtn, lv_color_make(60, 60, 60), LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(cancelBtn, lv_color_make(90, 90, 90), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(cancelBtn, wifiCancelCb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* cancelLbl = lv_label_create(cancelBtn);
+    lv_label_set_text(cancelLbl, hasConfig ? "Cancelar" : "Omitir");
+    lv_obj_center(cancelLbl);
+
     s_connectBtn = lv_btn_create(s_panel);
-    lv_obj_set_size(s_connectBtn, W, 36);
-    lv_obj_set_pos(s_connectBtn, 0, 144);
+    lv_obj_set_size(s_connectBtn, halfW, 34);
+    lv_obj_set_pos(s_connectBtn, halfW + 4, 144);
     lv_obj_add_event_cb(s_connectBtn, connectCb, LV_EVENT_CLICKED, NULL);
     s_connectLbl = lv_label_create(s_connectBtn);
     lv_label_set_text(s_connectLbl, "Conectar");
@@ -531,11 +555,16 @@ void runWifiSetup(String& ssid, String& pass) {
         delay(5);
     }
 
-    uint16_t idx = lv_dropdown_get_selected(s_dropdown);
-    ssid = WiFi.SSID(idx);
-    pass = String(lv_textarea_get_text(s_passTA));
+    bool saved = false;
+    if (!s_cancelled) {
+        uint16_t idx = lv_dropdown_get_selected(s_dropdown);
+        ssid  = WiFi.SSID(idx);
+        pass  = String(lv_textarea_get_text(s_passTA));
+        saved = true;
+    }
 
     lv_obj_delete(scr);
+    return saved;
 }
 
 // =======================================================================
@@ -549,7 +578,8 @@ static lv_obj_t* sm_passTA    = nullptr;
 static lv_obj_t* sm_kb        = nullptr;
 static lv_obj_t* sm_statusLbl = nullptr;
 static bool      sm_done      = false;
-static bool      sm_skipped   = false;
+static bool      sm_skipped   = false;   // Omitir (sin config previa → guarda _skip_)
+static bool      sm_cancelled = false;   // Cancelar (config previa → no hace nada)
 
 static void mqttSetStatus(const char* msg) {
     lv_label_set_text(sm_statusLbl, msg);
@@ -559,6 +589,11 @@ static void mqttSetStatus(const char* msg) {
 static void mqttSkipCb(lv_event_t*) {
     sm_skipped = true;
     sm_done    = true;
+}
+
+static void mqttCancelCb(lv_event_t*) {
+    sm_cancelled = true;
+    sm_done      = true;
 }
 
 static void mqttSaveCb(lv_event_t*) {
@@ -600,10 +635,15 @@ static void mqttHideKbCb(lv_event_t*) {
     lv_obj_add_flag(sm_kb, LV_OBJ_FLAG_HIDDEN);
 }
 
-void runMqttSetup(String& uri, String& user, String& pass) {
+bool runMqttSetup(String& uri, String& user, String& pass) {
     sm_done      = false;
     sm_skipped   = false;
+    sm_cancelled = false;
     s_lvLastTick = millis();
+
+    // Determinar si ya hay configuración guardada (para el label del botón)
+    String existHost, existPort, existUser, existPass;
+    bool hasMqttConfig = loadMqttConfig(existHost, existPort, existUser, existPass);
 
     lv_obj_t* scr = lv_obj_create(NULL);
     lv_obj_set_style_pad_all(scr, 5, LV_PART_MAIN);
@@ -651,15 +691,19 @@ void runMqttSetup(String& uri, String& user, String& pass) {
     lv_textarea_set_placeholder_text(sm_passTA, "contrasena (opcional)...");
     lv_obj_align(sm_passTA, LV_ALIGN_TOP_LEFT, 0, 134);
 
-    // "Omitir" (izquierda, gris oscuro)
+    // "Omitir" / "Cancelar" (izquierda, gris oscuro)
+    // · Sin config previa → "Omitir"  → guarda sentinel _skip_
+    // · Con config previa → "Cancelar" → cierra sin cambios
     lv_obj_t* skipBtn = lv_btn_create(scr);
     lv_obj_set_size(skipBtn, 148, 34);
     lv_obj_align(skipBtn, LV_ALIGN_TOP_LEFT, 0, 172);
     lv_obj_set_style_bg_color(skipBtn, lv_color_make(60, 60, 60), LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(skipBtn, lv_color_make(80, 80, 80), LV_STATE_PRESSED);
-    lv_obj_add_event_cb(skipBtn, mqttSkipCb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(skipBtn,
+        hasMqttConfig ? mqttCancelCb : mqttSkipCb,
+        LV_EVENT_CLICKED, NULL);
     lv_obj_t* skipLbl = lv_label_create(skipBtn);
-    lv_label_set_text(skipLbl, "Omitir");
+    lv_label_set_text(skipLbl, hasMqttConfig ? "Cancelar" : "Omitir");
     lv_obj_set_style_text_color(skipLbl, lv_color_white(), LV_STATE_DEFAULT);
     lv_obj_center(skipLbl);
 
@@ -699,23 +743,25 @@ void runMqttSetup(String& uri, String& user, String& pass) {
         delay(5);
     }
 
-    if (sm_skipped) {
-        // Fuera del callback LVGL ya es seguro escribir NVS.
-        // Guardamos host vacío para que loadMqttConfig() devuelva true
-        // en el siguiente arranque y no vuelva a mostrar esta pantalla.
-        saveMqttConfig("_skip_", "1883", "", ""); // sentinel: MQTT omitido
-        uri  = "";
-        user = "";
-        pass = "";
+    bool saved = false;
+    if (sm_cancelled) {
+        // Config previa existe — no tocamos NVS, no reiniciamos.
+        uri = user = pass = "";
+    } else if (sm_skipped) {
+        // Sin config previa — guardamos sentinel para no volver a preguntar.
+        saveMqttConfig("_skip_", "1883", "", "");
+        uri = user = pass = "";
     } else {
         String host = String(lv_textarea_get_text(sm_hostTA));
         String port = String(lv_textarea_get_text(sm_portTA));
-        user = String(lv_textarea_get_text(sm_userTA));
-        pass = String(lv_textarea_get_text(sm_passTA));
-        uri  = "mqtt://" + host + ":" + port;
+        user  = String(lv_textarea_get_text(sm_userTA));
+        pass  = String(lv_textarea_get_text(sm_passTA));
+        uri   = "mqtt://" + host + ":" + port;
+        saved = true;
     }
 
     lv_obj_delete(scr);
+    return saved;
 }
 
 #endif // CYD
