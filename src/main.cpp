@@ -550,14 +550,10 @@ static void linBusTask(void*) {
 
     //determines operating mode
     if (!LocHeatingOn) {
-       if (LocWaterSetpoint<=0.0) {
-         if (LocFanMode>0) {
-          PumpOrFan = 0x10 | LocFanMode;
-         } else {
-          PumpOrFan = 0x10;
-         }
+       if (LocFanMode>0) {
+         PumpOrFan = 0x10 | LocFanMode;
        } else {
-        PumpOrFan=0;
+         PumpOrFan = 0x10;
        }
     } else {
       LocSetPointTemp = LocRoomSetpoint;

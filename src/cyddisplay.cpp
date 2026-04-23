@@ -323,9 +323,7 @@ static void refreshControls() {
         lv_obj_add_flag(s_fanHeatingRow, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(s_fanOffRow,  LV_OBJ_FLAG_HIDDEN);
 
-        // Standalone fan is blocked when boiler is active (linBusTask forces PumpOrFan=0)
-        bool boilerActive = (s_waterSp->getStringValue() != "off");
-        bool fanOn = (fanVal != 0) && !boilerActive;
+        bool fanOn = (fanVal != 0);   // cualquier valor ≠ 0 = ventilación activa
 
         // Sincronizar s_fanLevel si el valor actual es numérico
         if (fanVal > 0) s_fanLevel = fanVal;
@@ -386,9 +384,6 @@ static void boilerCb(lv_event_t* e) {
     if (!s_waterSp) return;
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
     s_waterSp->setValue(String(BOILER_STR[idx]));
-    // Boiler active → standalone fan unavailable (linBusTask sets PumpOrFan=0)
-    if (idx != 0 && s_fanMode && s_fanMode->getIntValue() != 0)
-        s_fanMode->setValue(String("off"));
     refreshControls();
 }
 
@@ -402,8 +397,7 @@ static void fanHeatCb(lv_event_t* e) {
 
 // Ventilador — modo apagado
 static void fanOnCb(lv_event_t*) {
-    if (!s_fanMode || !s_waterSp) return;
-    if (s_waterSp->getStringValue() != "off") return;   // boiler active, fan unavailable
+    if (!s_fanMode) return;
     s_fanMode->setValue(String(s_fanLevel));
     refreshControls();
 }
@@ -415,8 +409,7 @@ static void fanOffCb(lv_event_t*) {
 }
 
 static void fanLevelDownCb(lv_event_t*) {
-    if (!s_fanMode || !s_waterSp) return;
-    if (s_waterSp->getStringValue() != "off") return;   // boiler active, fan unavailable
+    if (!s_fanMode) return;
     if (s_fanLevel > 1) {
         s_fanLevel--;
         if (s_fanMode->getIntValue() > 0)   // solo actualiza si el ventilador está on
@@ -426,8 +419,7 @@ static void fanLevelDownCb(lv_event_t*) {
 }
 
 static void fanLevelUpCb(lv_event_t*) {
-    if (!s_fanMode || !s_waterSp) return;
-    if (s_waterSp->getStringValue() != "off") return;   // boiler active, fan unavailable
+    if (!s_fanMode) return;
     if (s_fanLevel < 10) {
         s_fanLevel++;
         if (s_fanMode->getIntValue() > 0)
