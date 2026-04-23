@@ -97,6 +97,7 @@ static lv_obj_t* s_scr          = nullptr;
 // Barra superior
 static lv_obj_t* s_ambLbl       = nullptr;
 static lv_obj_t* s_aguaLbl      = nullptr;
+static lv_obj_t* s_extLbl       = nullptr;   // temperatura exterior (AM2301)
 static lv_obj_t* s_wifiDot      = nullptr;
 static lv_obj_t* s_mqttDot      = nullptr;
 static lv_obj_t* s_linDot       = nullptr;
@@ -644,6 +645,15 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     lv_label_set_text(s_aguaLbl, MY_SYMBOL_TINT " -- \xc2\xb0""C");
     lv_obj_set_pos(s_aguaLbl, 85, 7);
 
+    // Temperatura exterior (AM2301 en P3 IO21) — casita+flecha = exterior
+    // Icono: LV_SYMBOL_HOME LV_SYMBOL_RIGHT  (casa con flecha hacia la derecha)
+    s_extLbl = lv_label_create(topBar);
+    lv_obj_set_style_text_font(s_extLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_extLbl, lv_color_hex(0xffcc88), LV_PART_MAIN);
+    lv_label_set_text(s_extLbl, LV_SYMBOL_HOME LV_SYMBOL_RIGHT " --\xc2\xb0""C");
+    lv_obj_set_pos(s_extLbl, 148, 7);
+    lv_obj_clear_flag(s_extLbl, LV_OBJ_FLAG_CLICKABLE);
+
     auto makeStatusIcon = [&](int x, const char* sym, uint32_t col) -> lv_obj_t* {
         lv_obj_t* lbl = lv_label_create(topBar);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, LV_PART_MAIN);
@@ -653,13 +663,13 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
         lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
         return lbl;
     };
-    // Botón engranaje (ajustes) — blend con topbar, presionado usa C_BTN_ON
-    lv_obj_t* gearBtn = makeBtn(topBar, 215, 2, 24, 24, LV_SYMBOL_SETTINGS, gearCb);
+    // Botón engranaje — desplazado a x=222 para dejar hueco al label exterior
+    lv_obj_t* gearBtn = makeBtn(topBar, 222, 2, 24, 24, LV_SYMBOL_SETTINGS, gearCb);
     lv_obj_set_style_bg_color(gearBtn, lv_color_hex(C_TOPBAR), LV_PART_MAIN);
 
-    s_wifiDot = makeStatusIcon(247, LV_SYMBOL_WIFI,    C_WIFI_NO);
+    s_wifiDot = makeStatusIcon(250, LV_SYMBOL_WIFI,    C_WIFI_NO);
     s_mqttDot = makeStatusIcon(272, LV_SYMBOL_LOOP,    C_MQTT_DIS);
-    s_linDot  = makeStatusIcon(300, LV_SYMBOL_SHUFFLE, C_WIFI_NO);
+    s_linDot  = makeStatusIcon(296, LV_SYMBOL_SHUFFLE, C_WIFI_NO);
 
     // ── Separadores ──────────────────────────────────────────────────────
     makeSep(s_scr, 0,     Y_SEP1, 320, 1);    // horizontal top
@@ -797,7 +807,8 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
 // ═══════════════════════════════════════════════════════════════════════════
 void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
                       bool truma_reset, bool inota, bool mqttEnabled,
-                      float roomTemp, float waterTemp, bool waterHeating) {
+                      float roomTemp, float waterTemp, bool waterHeating,
+                      float extTemp) {
 
     // ── Apagado automático de pantalla ───────────────────────────────────
     // Tres estados: brillo 100 % → aviso 50 % (5 s antes) → apagado.
@@ -861,6 +872,17 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
         lv_obj_set_style_text_color(s_aguaLbl,
             blinkVisible ? lv_color_hex(0xaaccff) : lv_color_hex(C_TOPBAR),
             LV_PART_MAIN);
+    }
+
+    // ── Temperatura exterior (AM2301) ────────────────────────────────────
+    if (s_extLbl) {
+        char buf[28];
+        if (extTemp > -200.0f)
+            snprintf(buf, sizeof(buf),
+                     LV_SYMBOL_HOME LV_SYMBOL_RIGHT " %.1f\xc2\xb0""C", extTemp);
+        else
+            strcpy(buf, LV_SYMBOL_HOME LV_SYMBOL_RIGHT " --\xc2\xb0""C");
+        lv_label_set_text(s_extLbl, buf);
     }
 
     // ── Icono WiFi ───────────────────────────────────────────────────────

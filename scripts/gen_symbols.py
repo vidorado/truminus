@@ -28,6 +28,7 @@ except ImportError:
 GLYPHS = [
     (0xF043, "fa-tint"),
     (0xF015, "fa-home"),
+    (0xF2C9, "fa-thermometer-half"),   # temperatura exterior
 ]
 SIZE      = 14          # px — must match what cyddisplay.cpp uses
 BPP       = 4           # bits per pixel

@@ -17,6 +17,7 @@
 #include <esp32_smartdisplay.h>
 #include "wifisetup.hpp"
 #include "cyddisplay.hpp"
+#include <DHTesp.h>
 #endif
 #include "globals.hpp"
 #include "trumaframes.hpp"
@@ -69,6 +70,45 @@
 // LIN bus UART: TX=27, RX=22 (available on CN2/P3 connectors, not used by display/touch/SD)
 #define TX_PIN 27
 #define RX_PIN 22
+
+// ── Sensor exterior AM2301 (P3: GND + IO21=DATA, VCC=3.3V externo) ──────────
+// IO21 es también el pin de backlight (LEDC).  Antes de cada lectura se
+// desconecta el LEDC del pin (ledcDetach), se lee el sensor (~5 ms con
+// interrupciones deshabilitadas internamente por DHTesp), y se reconecta LEDC.
+// Efecto visual: parpadeo imperceptible de ~5 ms cada 30 s.
+#define DHT_DATA_PIN   21              // IO21 (P3)
+static DHTesp   s_dht;
+static float    s_extTemp    = -273.0f;  // -273 = sin lectura válida
+static uint32_t s_lastDhtMs  = 0;        // millis() de la última lectura
+
+// Desconecta LEDC de IO21, lee AM2301, reconecta LEDC al canal de backlight.
+static void readExtSensor() {
+    // Guardar duty actual (100%, 30% o 0%) para restaurarlo después.
+    // La función leerá el sensor sólo cuando la pantalla esté encendida
+    // (IO21 HIGH en 100% = sensor alimentado vía LEDC).
+
+    // 1) Desconectar IO21 del periférico LEDC (API Arduino ESP32 3.x)
+    ledcDetach(GPIO_BCKL);
+
+    // 2) Leer sensor (DHTesp gestiona internamente los cambios de dirección
+    //    de IO21 OUTPUT→INPUT durante la comunicación de 1 cable)
+    TempAndHumidity result = s_dht.getTempAndHumidity();
+
+    // 3) Reconectar IO21 al canal LEDC de backlight y restaurar brillo máximo.
+    //    (Si la pantalla estaba en aviso de apagado o apagada, el siguiente
+    //     llamado a cydDisplayUpdate corregirá el brillo al valor correcto.)
+    ledcAttach(GPIO_BCKL, PWM_FREQ_BCKL, PWM_BITS_BCKL);
+    ledcWrite(GPIO_BCKL, PWM_MAX_BCKL);   // brillo 100% mientras cydDisplayUpdate rectifica
+
+    if (s_dht.getStatus() == DHTesp::ERROR_NONE &&
+        result.temperature > -40.0f && result.temperature < 80.0f) {
+        s_extTemp = result.temperature;
+        Serial.printf("[am2301] %.1f °C  %.0f %%RH\n",
+                      result.temperature, result.humidity);
+    } else {
+        Serial.printf("[am2301] read error: %s\n", s_dht.getStatusString());
+    }
+}
 
 // ── LVGL task (Core 1) ────────────────────────────────────────────────────
 // lv_timer_handler() must be called every few ms for smooth touch response.
@@ -222,6 +262,8 @@ void setup() {
 
   #ifdef CYD
   smartdisplay_init();
+  // Inicializar sensor AM2301 en IO21 (DATA).  VCC viene del raíl 3.3 V externo.
+  s_dht.setup(DHT_DATA_PIN, DHTesp::AM2302);
   s_lvglMutex = xSemaphoreCreateMutex();
   auto disp = lv_display_get_default();
   // LV_DISPLAY_ROTATION_270 gives MV=1,MX=0,MY=0 on the ILI9341 = correct
@@ -691,12 +733,27 @@ void loop() {
       if (changed) ESP.restart();   // solo reinicia si se guardaron credenciales nuevas
     }
   }
+  // ── Sensor AM2301: leer cada 30 s (mínimo 2 s entre lecturas para el sensor)
+  {
+    uint32_t now = millis();
+    // Primera lectura: esperar 2 s desde el arranque para que el sensor se estabilice.
+    // Lecturas siguientes: cada 30 s.
+    bool firstRead = (s_lastDhtMs == 0 && now > 2000);
+    bool periodic  = (s_lastDhtMs > 0 && now - s_lastDhtMs >= 30000);
+    if (firstRead || periodic) {
+      s_lastDhtMs = now;
+      lvglLock();          // pausar lvglTask durante los ~5 ms de lectura
+      readExtSensor();
+      lvglUnlock();
+    }
+  }
+
   // lv_timer_handler() runs in lvglTask (Core 1) every 5 ms.
   // We only need to update display state; grab the mutex briefly.
   if (xSemaphoreTake(s_lvglMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
     cydDisplayUpdate(wifiok, mqttok, trumaok, truma_reset, inota, mqttEnabled,
                      (float)Frame16->getRoomTemp(), (float)Frame16->getWaterTemp(),
-                     Frame16->getWaterDemand());
+                     Frame16->getWaterDemand(), s_extTemp);
     xSemaphoreGive(s_lvglMutex);
   }
   #endif

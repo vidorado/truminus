@@ -15,7 +15,8 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
                       bool mqttEnabled,
                       float roomTemp     = -273.0f,
                       float waterTemp    = -273.0f,
-                      bool  waterHeating = false);
+                      bool  waterHeating = false,
+                      float extTemp      = -273.0f);   // temperatura exterior AM2301
 
 // Índice del modo de energía seleccionado en pantalla (0-4).
 // Mapea a TEnergySelection: 0=EsGasDiesel, 1=EsMixed900, 2=EsMixed800,
