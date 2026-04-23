@@ -355,6 +355,8 @@ void setup() {
 
   //starts the wifi (loop will check if it's connected)
   WiFi.mode(WIFI_STA);
+  Serial.print("WiFi MAC: ");
+  Serial.println(WiFi.macAddress());
   #ifdef CYD
   {
     String wifiSSID, wifiPass;
