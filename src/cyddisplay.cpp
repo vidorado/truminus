@@ -127,7 +127,7 @@ static lv_obj_t* s_ipLbl        = nullptr;
 
 // ── Backlight fade (tarea FreeRTOS dedicada) ─────────────────────────────
 // blFadeTo() se puede llamar desde cualquier contexto; la tarea mueve el
-// brillo actual hacia el objetivo a 0.02 por tick (20 ms) → fade de 1 s
+// brillo actual hacia el objetivo a 0.04 por tick (20 ms) → fade de 500 ms
 // para el rango completo 0→1 ó 1→0.
 static volatile float s_blCurrent = 1.0f;
 static volatile float s_blTarget  = 1.0f;
@@ -137,9 +137,9 @@ static void blFadeTo(float target) {
 }
 
 static void backlightTask(void* /*arg*/) {
-    // 50 pasos × 20 ms = 1 000 ms para recorrer el rango completo (0.0 → 1.0)
+    // 25 pasos × 20 ms = 500 ms para recorrer el rango completo (0.0 → 1.0)
     const TickType_t TICK    = pdMS_TO_TICKS(20);
-    const float      STEP    = 1.0f / 50.0f;   // 0.02 por tick
+    const float      STEP    = 1.0f / 25.0f;   // 0.04 por tick
     for (;;) {
         float cur = s_blCurrent;
         float tgt = s_blTarget;
