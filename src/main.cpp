@@ -750,6 +750,16 @@ void loop() {
       lvglLock();          // pausar lvglTask durante los ~5 ms de lectura
       readExtSensor();
       lvglUnlock();
+      // Difundir temperatura exterior a clientes WS
+      #ifdef WEBSERVER
+      {
+        JsonDocument d;
+        d["command"] = "status";
+        d["id"]      = "outdoor_temp";
+        d["value"]   = (s_extTemp > -200.0f) ? String(s_extTemp, 1) : "--";
+        ws.textAll(d.as<String>());
+      }
+      #endif
     }
   }
 
@@ -928,12 +938,27 @@ void wsConnected() {
     d["value"]   = String((int)s_energyIdx);
     ws.textAll(d.as<String>());
   }
-  // Enviar estado MQTT
+  // Enviar estado MQTT y si está habilitado
   {
     JsonDocument d;
     d["command"] = "status";
     d["id"]      = "mqttok";
     d["value"]   = mqttok ? "1" : "0";
+    ws.textAll(d.as<String>());
+  }
+  {
+    JsonDocument d;
+    d["command"] = "status";
+    d["id"]      = "mqttEnabled";
+    d["value"]   = mqttEnabled ? "1" : "0";
+    ws.textAll(d.as<String>());
+  }
+  // Enviar temperatura exterior si hay lectura válida
+  if (s_extTemp > -200.0f) {
+    JsonDocument d;
+    d["command"] = "status";
+    d["id"]      = "outdoor_temp";
+    d["value"]   = String(s_extTemp, 1);
     ws.textAll(d.as<String>());
   }
   //force publish the next received data

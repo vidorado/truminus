@@ -3,8 +3,10 @@
 // ── WebSocket ─────────────────────────────────────────────────────────────
 var gateway = 'ws://' + window.location.hostname +
               (window.location.port ? ':' + window.location.port : '') + '/ws';
-var wserror  = true;
-var linerror = false;
+var wserror      = true;
+var linerror     = false;
+var s_mqttOk     = false;
+var s_mqttEnabled = true;
 
 // ── Estado de la aplicación ───────────────────────────────────────────────
 var s_temp       = 20.0;
@@ -48,6 +50,7 @@ ws.onopen = function () {
 };
 ws.onclose = function () {
     wserror = true;
+    s_mqttOk = false;
     updateStatusBar();
     setDot('dot-wifi', 'err');
     setDot('dot-mqtt', 'dis');
@@ -71,6 +74,10 @@ function send(id, value) {
 function setDot(id, state) {
     var el = document.getElementById(id);
     if (el) el.className = 'sdot sdot-' + state;
+}
+
+function updateMqttDot() {
+    setDot('dot-mqtt', !s_mqttEnabled ? 'dis' : (s_mqttOk ? 'ok' : 'err'));
 }
 
 // ── Settings recibidos del dispositivo ────────────────────────────────────
@@ -107,7 +114,13 @@ function applyStatus(id, value) {
     }
 
     if (id === 'mqttok') {
-        setDot('dot-mqtt', parseInt(value) === 1 ? 'ok' : 'err');
+        s_mqttOk = parseInt(value) === 1;
+        updateMqttDot();
+    }
+
+    if (id === 'mqttEnabled') {
+        s_mqttEnabled = parseInt(value) === 1;
+        updateMqttDot();
     }
 
     if (id === 'error_code') {
