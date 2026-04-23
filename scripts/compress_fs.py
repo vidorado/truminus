@@ -1,43 +1,49 @@
 """
-compress_fs.py — PlatformIO extra script
+compress_fs.py — PlatformIO extra script  (pre:scripts/compress_fs.py)
 
-Gzip-compresses every file in data/ into a temporary directory
-(.pio/build/<env>/gz_data/) and redirects the LittleFS image build
-to use that directory instead of data/.
+Runs at *configuration* time (before any build targets are set up) so
+that when PlatformIO's ESP32 platform scripts create the buildfs target
+they pick up the compressed directory instead of data/.
 
-ESPAsyncWebServer (mathieucarbou fork) automatically detects .gz files
-in LittleFS and serves them with:
+What it does
+------------
+1. Reads every file from $PROJECT_DATA_DIR  (data/).
+2. Gzip-compresses them (level 9) into
+       .pio/build/<env>/gz_data/<file>.gz
+3. Replaces PROJECT_DATA_DIR with that folder so mklittlefs
+   builds the image from the .gz files.
+
+Why this works on the browser side
+-----------------------------------
+ESPAsyncWebServer (mathieucarbou fork) checks for <name>.gz in LittleFS
+when serving static files.  If found, and the browser sent
+Accept-Encoding: gzip (all modern browsers do), it replies with the
+compressed body and adds:
     Content-Encoding: gzip
     Content-Type: <mime-type-of-original>
-when the browser sends Accept-Encoding: gzip (all modern browsers do).
-No server-side code changes are needed.
-
-Result: the flash image contains only .gz files; the browser receives
-compressed content transparently.  Typical saving: 60-75 % per file.
-
-Add to platformio.ini [env] section:
-    extra_scripts = pre:scripts/compress_fs.py
+The browser decompresses transparently — no server code changes needed.
 """
 
-Import("env")  # noqa: F821  (SCons injects this)
+Import("env")  # noqa: F821  (injected by SCons / PlatformIO)
 
 import gzip
 import shutil
 from pathlib import Path
 
+# ── Resolve paths ──────────────────────────────────────────────────────────
+src = Path(env.subst("$PROJECT_DATA_DIR"))   # normally  <project>/data
+dst = Path(env.subst("$BUILD_DIR")) / "gz_data"
 
-def compress_data(source, target, env):  # noqa: ARG001
-    src = Path(env.subst("$PROJECT_DATA_DIR"))
-    dst = Path(env.subst("$BUILD_DIR")) / "gz_data"
-
-    if not src.is_dir():
-        print(f"[compress_fs] data dir not found: {src} — skipping")
-        return
-
+if not src.is_dir():
+    # data/ doesn't exist for this env — nothing to do.
+    pass
+else:
+    # ── (Re)create output directory ────────────────────────────────────────
     if dst.exists():
         shutil.rmtree(dst)
     dst.mkdir(parents=True)
 
+    # ── Compress every file ────────────────────────────────────────────────
     total_in = total_out = 0
     for f in sorted(src.rglob("*")):
         if not f.is_file():
@@ -46,21 +52,20 @@ def compress_data(source, target, env):  # noqa: ARG001
         out  = dst / (str(rel) + ".gz")
         out.parent.mkdir(parents=True, exist_ok=True)
         raw  = f.read_bytes()
-        data = gzip.compress(raw, compresslevel=9)
-        out.write_bytes(data)
+        gz   = gzip.compress(raw, compresslevel=9)
+        out.write_bytes(gz)
         total_in  += len(raw)
-        total_out += len(data)
-        pct = 100 * (1 - len(data) / len(raw)) if raw else 0
-        print(f"  [compress_fs]  {rel:<40}  {len(raw):>6} → {len(data):>5} B  ({pct:.0f} % smaller)")
+        total_out += len(gz)
+        pct = 100 * (1 - len(gz) / len(raw)) if raw else 0
+        print(f"  [compress_fs]  {str(rel):<42}  {len(raw):>7} → {len(gz):>6} B  ({pct:.0f}%)")
 
-    pct_total = 100 * (1 - total_out / total_in) if total_in else 0
-    print(f"  [compress_fs]  Total: {total_in} B → {total_out} B  ({pct_total:.0f} % saved)")
+    if total_in:
+        pct_t = 100 * (1 - total_out / total_in)
+        print(f"  [compress_fs]  Total  {total_in:>7} → {total_out:>6} B  ({pct_t:.0f}% saved)")
 
-    # Redirect mklittlefs / mkspiffs to the compressed directory.
-    # PROJECT_DATA_DIR is expanded at action-execution time (SCons lazy eval),
-    # so replacing it here, before mklittlefs runs, takes effect correctly.
-    env["PROJECT_DATA_DIR"] = str(dst)
+    # ── Redirect the FS build to the compressed folder ─────────────────────
+    # This must happen HERE (config time), not inside AddPreAction, because
+    # the ESP32 platform bakes PROJECT_DATA_DIR into the mklittlefs command
+    # string during target setup — too early for a pre-action callback.
+    env.Replace(PROJECT_DATA_DIR=str(dst))
     print(f"  [compress_fs]  FS image will be built from {dst}")
-
-
-env.AddPreAction("buildfs", compress_data)
