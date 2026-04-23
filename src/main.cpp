@@ -18,6 +18,7 @@
 #include "wifisetup.hpp"
 #include "cyddisplay.hpp"
 #include <DHTesp.h>
+#include "driver/gpio.h"   // gpio_reset_pin() para desconectar IO21 del LEDC
 #endif
 #include "globals.hpp"
 #include "trumaframes.hpp"
@@ -87,8 +88,10 @@ static void readExtSensor() {
     // La función leerá el sensor sólo cuando la pantalla esté encendida
     // (IO21 HIGH en 100% = sensor alimentado vía LEDC).
 
-    // 1) Desconectar IO21 del periférico LEDC (API Arduino ESP32 3.x)
-    ledcDetach(GPIO_BCKL);
+    // 1) Desconectar IO21 del periférico LEDC.
+    //    gpio_reset_pin() resetea el pin a estado por defecto (entrada, sin pulls,
+    //    sin periférico), funcionando en todas las versiones del framework.
+    gpio_reset_pin((gpio_num_t)GPIO_BCKL);
 
     // 2) Leer sensor (DHTesp gestiona internamente los cambios de dirección
     //    de IO21 OUTPUT→INPUT durante la comunicación de 1 cable)
