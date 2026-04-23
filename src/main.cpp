@@ -98,10 +98,15 @@ static void readExtSensor() {
     TempAndHumidity result = s_dht.getTempAndHumidity();
 
     // 3) Reconectar IO21 al canal LEDC de backlight y restaurar brillo máximo.
-    //    (Si la pantalla estaba en aviso de apagado o apagada, el siguiente
-    //     llamado a cydDisplayUpdate corregirá el brillo al valor correcto.)
+    //    Mismo patrón de versión que usa esp32_smartdisplay internamente.
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
     ledcAttach(GPIO_BCKL, PWM_FREQ_BCKL, PWM_BITS_BCKL);
-    ledcWrite(GPIO_BCKL, PWM_MAX_BCKL);   // brillo 100% mientras cydDisplayUpdate rectifica
+    ledcWrite(GPIO_BCKL, PWM_MAX_BCKL);
+#else
+    ledcSetup(PWM_CHANNEL_BCKL, PWM_FREQ_BCKL, PWM_BITS_BCKL);
+    ledcAttachPin(GPIO_BCKL, PWM_CHANNEL_BCKL);
+    ledcWrite(PWM_CHANNEL_BCKL, PWM_MAX_BCKL);
+#endif
 
     if (s_dht.getStatus() == DHTesp::ERROR_NONE &&
         result.temperature > -40.0f && result.temperature < 80.0f) {
