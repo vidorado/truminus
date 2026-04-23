@@ -78,14 +78,22 @@ static float    s_extTemp   = -273.0f;  // -273 = sin lectura válida
 static uint32_t s_lastDhtMs = 0;
 
 static void readExtSensor() {
+    // Diagnóstico: el pull-up del módulo (5.1 kΩ a VCC) debe mantener DATA en HIGH.
+    // Si está en LOW → VCC no llega al sensor o hay un cortocircuito.
+    pinMode(DHT_DATA_PIN, INPUT_PULLUP);
+    delayMicroseconds(200);
+    bool idle = digitalRead(DHT_DATA_PIN);
+    Serial.printf("[am2301] IO17 idle=%s  ", idle ? "HIGH" : "LOW(!)");
+    if (!idle) { Serial.println("VCC/cableado KO"); return; }
+
     TempAndHumidity result = s_dht.getTempAndHumidity();
     if (s_dht.getStatus() == DHTesp::ERROR_NONE &&
         result.temperature > -40.0f && result.temperature < 80.0f) {
         s_extTemp = result.temperature;
-        Serial.printf("[am2301] %.1f °C  %.0f %%RH\n",
+        Serial.printf("→ %.1f °C  %.0f %%RH\n",
                       result.temperature, result.humidity);
     } else {
-        Serial.printf("[am2301] read error: %s\n", s_dht.getStatusString());
+        Serial.printf("→ error: %s\n", s_dht.getStatusString());
     }
 }
 
