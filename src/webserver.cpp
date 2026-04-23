@@ -116,6 +116,9 @@ void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
                    wf_reconnecting_websocket_min_js_size, "application/javascript",
                    wf_reconnecting_websocket_min_js_gzipped);
   });
+  server.on("/fa-subset.woff", HTTP_GET, [](AsyncWebServerRequest* r) {
+    sendMemFile(r, wf_fa_subset_woff, wf_fa_subset_woff_size, "font/woff", wf_fa_subset_woff_gzipped);
+  });
   server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* r) {
     sendMemFile(r, wf_favicon_ico, wf_favicon_ico_size, "image/x-icon", wf_favicon_ico_gzipped);
   });

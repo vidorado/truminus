@@ -152,6 +152,11 @@ TFrameSetControlElements *ControlElementsFrame;
 //the setpoints
 #define SETPOINTS 5
 TMqttSetting * MqttSetpoint[SETPOINTS];
+
+// ── Modo de energía — fuente de verdad compartida entre CYD y web ─────────
+// CYD escribe vía cydGetEnergyMode(), web vía /energy_idx WebSocket.
+static volatile int s_energyIdx     = 0;
+static          int s_lastEnergyIdx = -1;  // para detectar cambio desde CYD
 TTempSetting *SimulatedTemp;
 TTempSetting *RoomSetpoint;
 TBoilerSetting *WaterSetpoint;
@@ -194,6 +199,8 @@ TCommandReader CommandReader;
 TPubBool PublishReset("/reset");
 //publish to the mqtt broker/websocket client that the lin bus comm is ok
 TPubBool PublishLinOk("/linok");
+//publish mqtt connection state to websocket clients
+TPubBool PublishMqttOk("/mqttok");
 //heartbeat (for the mqtt clients to detect this program is working)
 TPubBool PublishHeartBeat("/heartbeat");
 
@@ -647,14 +654,32 @@ static void linBusTask(void*) {
 
       trumaok=Frame16->getDataOk();
 
-      // Aplicar modo de energía seleccionado en pantalla CYD
-      #ifdef CYD
+      // Aplicar modo de energía — CYD tiene prioridad local; web sincroniza vía WS
       {
-        auto em = (TEnergySelection)cydGetEnergyMode();
+        #ifdef CYD
+        // Si el dropdown CYD cambió, propagar a s_energyIdx y broadcast WS
+        int cydEm = cydGetEnergyMode();
+        if (cydEm != s_lastEnergyIdx && s_lastEnergyIdx >= 0) {
+          s_energyIdx = cydEm;
+          #ifdef WEBSERVER
+          {
+            JsonDocument d;
+            d["command"] = "setting";
+            d["id"]      = "/energy_idx";
+            d["value"]   = String(s_energyIdx);
+            ws.textAll(d.as<String>());
+          }
+          #endif
+        }
+        if (cydEm != s_lastEnergyIdx) {
+          s_lastEnergyIdx = cydEm;
+          s_energyIdx     = cydEm;
+        }
+        #endif
+        auto em = (TEnergySelection)s_energyIdx;
         EnergySelect->setEnergySelection(em);
         SetPowerLimit->setPowerLimit(em);
       }
-      #endif
 
       for (int i=0; i<FRAMES_TO_WRITE; i++) {
         frames_to_write[i]->getData((uint8_t*)&(LinBus.LinMessage));
@@ -679,6 +704,7 @@ static void linBusTask(void*) {
 
     PublishReset.setValue(truma_reset);
     PublishLinOk.setValue(trumaok);
+    PublishMqttOk.setValue(mqttok);
     PublishHeartBeat.setValue(true);
 
     vTaskDelay(pdMS_TO_TICKS(1));
@@ -818,7 +844,35 @@ void handleSetting(const String& topic, const String& payload, boolean local)  {
     if (topic=="truma/set/error_reset" && payload=="1") {
       HandleCommandReset();
       return;
-    }   
+    }
+
+    // Modo de energía (índice 0-4 unificado para WS y MQTT)
+    if (topic=="truma/set/energy_idx") {
+      int idx = payload.toInt();
+      if (idx >= 0 && idx <= 4) {
+        s_energyIdx     = idx;
+        s_lastEnergyIdx = idx;   // evitar re-broadcast desde el CYD
+        auto em = (TEnergySelection)idx;
+        EnergySelect->setEnergySelection(em);
+        SetPowerLimit->setPowerLimit(em);
+        #ifdef CYD
+        lvglLock();
+        cydSetEnergyIdx(idx);
+        lvglUnlock();
+        #endif
+        #ifdef WEBSERVER
+        {
+          JsonDocument d;
+          d["command"] = "setting";
+          d["id"]      = "/energy_idx";
+          d["value"]   = String(idx);
+          ws.textAll(d.as<String>());
+        }
+        #endif
+      }
+      return;
+    }
+
 
     //keep the truma on (to refresh values)
     if (topic=="truma/set/ping") {
@@ -865,6 +919,22 @@ void wsConnected() {
   //sends the current settings
   for (int i=0; i<SETPOINTS ;i++) {
     MqttSetpoint[i]->PublishValue(false);
+  }
+  // Enviar modo de energía actual
+  {
+    JsonDocument d;
+    d["command"] = "setting";
+    d["id"]      = "/energy_idx";
+    d["value"]   = String((int)s_energyIdx);
+    ws.textAll(d.as<String>());
+  }
+  // Enviar estado MQTT
+  {
+    JsonDocument d;
+    d["command"] = "status";
+    d["id"]      = "mqttok";
+    d["value"]   = mqttok ? "1" : "0";
+    ws.textAll(d.as<String>());
   }
   //force publish the next received data
   doforcesend=true;

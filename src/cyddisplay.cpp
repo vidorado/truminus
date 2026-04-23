@@ -441,6 +441,14 @@ static void energyDdCb(lv_event_t* e) {
 // ═══════════════════════════════════════════════════════════════════════════
 int cydGetEnergyMode() { return s_energyMode; }
 
+// Actualiza el dropdown desde fuera (llamar bajo mutex de LVGL).
+void cydSetEnergyIdx(int idx) {
+    if (idx < 0 || idx > 4) return;
+    s_energyMode = idx;
+    if (s_energyDd)
+        lv_dropdown_set_selected(s_energyDd, (uint16_t)idx);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // NVS — índice de tiempo de apagado
 // ═══════════════════════════════════════════════════════════════════════════
@@ -963,7 +971,7 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
     } else if (!mqttok && mqttEnabled) {
         msg = "Sin MQTT";                  msgC = C_MQTT_NO;
     } else if (!trumaok) {
-        msg = "Sin LIN bus";               msgC = C_WIFI_NO;
+        msg = LV_SYMBOL_WARNING " Sin LIN bus"; msgC = C_WIFI_NO;
     }
 
     if (s_statusLbl) {

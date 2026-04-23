@@ -7,21 +7,31 @@ var wserror  = true;
 var linerror = false;
 
 // ── Estado de la aplicación ───────────────────────────────────────────────
-var s_temp     = 20.0;
-var s_heat     = false;
-var s_boiler   = 'off';
-var s_fan      = 'off';
-var s_energy   = 'gas';
-var s_elpower  = 0;
-var s_fanLevel = 5;
+var s_temp       = 20.0;
+var s_heat       = false;
+var s_boiler     = 'off';
+var s_fan        = 'off';
+var s_energyIdx  = 0;
+var s_fanLevel   = 5;
 
 // ── Barra de estado ───────────────────────────────────────────────────────
 function updateStatusBar() {
     var msg = document.getElementById('statusMsg');
+    var ip  = document.getElementById('deviceIp');
     if (!msg) return;
-    if      (wserror)  { msg.textContent = '⚠ Conectando…'; msg.style.color = '#ffaa00'; }
-    else if (linerror) { msg.textContent = '⚠ Sin LIN bus';      msg.style.color = '#ff4444'; }
-    else               { msg.textContent = ''; msg.style.color = ''; }
+    if (wserror) {
+        msg.textContent  = '⚠ Conectando…';
+        msg.style.color  = '#ffaa00';
+        if (ip) { ip.textContent = ''; }
+    } else if (linerror) {
+        msg.textContent  = '⚠ Sin LIN bus';
+        msg.style.color  = '#ff4444';
+        if (ip) { ip.textContent = window.location.hostname; }
+    } else {
+        msg.textContent  = '';
+        msg.style.color  = '';
+        if (ip) { ip.textContent = window.location.hostname; }
+    }
 }
 updateStatusBar();
 
@@ -40,6 +50,8 @@ ws.onclose = function () {
     wserror = true;
     updateStatusBar();
     setDot('dot-wifi', 'err');
+    setDot('dot-mqtt', 'dis');
+    setDot('dot-lin',  'err');
 };
 ws.onmessage = function (event) {
     var d = JSON.parse(event.data);
@@ -55,7 +67,7 @@ function send(id, value) {
         ws.send(JSON.stringify({ id: id, value: String(value) }));
 }
 
-// ── Dot de estado (WiFi / LIN) ────────────────────────────────────────────
+// ── Dot de estado ─────────────────────────────────────────────────────────
 function setDot(id, state) {
     var el = document.getElementById(id);
     if (el) el.className = 'sdot sdot-' + state;
@@ -77,12 +89,9 @@ function applySetting(id, value) {
         var n = parseInt(value);
         if (!isNaN(n) && n > 0) s_fanLevel = n;
         refreshFan();
-    } else if (id === 'energy') {
-        s_energy = value;
-        refreshEnergy();
-    } else if (id === 'elpower') {
-        s_elpower = parseInt(value) || 0;
-        refreshEnergy();
+    } else if (id === 'energy_idx') {
+        s_energyIdx = parseInt(value) || 0;
+        refreshEnergyCombo();
     }
 }
 
@@ -95,6 +104,10 @@ function applyStatus(id, value) {
         linerror = parseInt(value) !== 1;
         updateStatusBar();
         setDot('dot-lin', linerror ? 'err' : 'ok');
+    }
+
+    if (id === 'mqttok') {
+        setDot('dot-mqtt', parseInt(value) === 1 ? 'ok' : 'err');
     }
 
     if (id === 'error_code') {
@@ -118,7 +131,7 @@ function cls(id, cssClass, on) {
 }
 
 function refreshSetpoint() {
-    document.getElementById('spVal').textContent = s_temp.toFixed(1) + ' °C';
+    document.getElementById('spVal').textContent = s_temp.toFixed(1) + ' °C';
 }
 
 function refreshHeat() {
@@ -154,11 +167,8 @@ function refreshBoiler() {
     });
 }
 
-function refreshEnergy() {
-    var idx = 0;
-    if      (s_energy === 'mix')         idx = (s_elpower >= 1800) ? 2 : 1;
-    else if (s_energy === 'electricity') idx = (s_elpower >= 1800) ? 4 : 3;
-    document.getElementById('energyCombo').value = idx;
+function refreshEnergyCombo() {
+    document.getElementById('energyCombo').value = s_energyIdx;
 }
 
 // ── Acciones del usuario ──────────────────────────────────────────────────
@@ -212,24 +222,14 @@ function setBoiler(value) {
     refreshBoiler();
 }
 
-var energyMap = [
-    { e: 'gas',         p: '0'    },
-    { e: 'mix',         p: '900'  },
-    { e: 'mix',         p: '1800' },
-    { e: 'electricity', p: '900'  },
-    { e: 'electricity', p: '1800' }
-];
 function setEnergyCombo(idx) {
-    var m = energyMap[parseInt(idx)];
-    if (!m) return;
-    s_energy  = m.e;
-    s_elpower = parseInt(m.p);
-    send('/energy',  m.e);
-    send('/elpower', m.p);
+    s_energyIdx = parseInt(idx);
+    send('/energy_idx', String(s_energyIdx));
+    refreshEnergyCombo();
 }
 
 // ── Inicialización ────────────────────────────────────────────────────────
 refreshSetpoint();
 refreshHeat();
 refreshBoiler();
-refreshEnergy();
+refreshEnergyCombo();

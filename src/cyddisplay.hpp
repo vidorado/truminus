@@ -21,10 +21,9 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
 // Índice del modo de energía seleccionado en pantalla (0-4).
 // Mapea a TEnergySelection: 0=EsGasDiesel, 1=EsMixed900, 2=EsMixed800,
 //                           3=EsElectro900, 4=EsElectro1800
-// En main.cpp, usar así:
-//   energySelectFrame.setEnergySelection((TEnergySelection)cydGetEnergyMode());
-//   powerLimitFrame.setPowerLimit((TEnergySelection)cydGetEnergyMode());
-int cydGetEnergyMode();
+int  cydGetEnergyMode();
+// Sincroniza el dropdown con un índice recibido de WS/MQTT (llamar bajo mutex LVGL).
+void cydSetEnergyIdx(int idx);
 
 // ── Configuración / navegación ─────────────────────────────────────────────
 // Los botones de la pantalla de ajustes fijan este flag desde callbacks de LVGL.
