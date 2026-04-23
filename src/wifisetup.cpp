@@ -297,6 +297,8 @@ static void startAsyncScan() {
     lv_obj_remove_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_dropdown, LV_OBJ_FLAG_HIDDEN);
     wifiSetStatus("Buscando redes WiFi...");
+    WiFi.scanDelete();       // clear stale results from any previous scan
+    WiFi.disconnect(false);  // drop current AP connection so scan isn't blocked
     WiFi.mode(WIFI_STA);
     WiFi.scanNetworks(/*async=*/true);
 }
