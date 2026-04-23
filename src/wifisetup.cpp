@@ -297,17 +297,16 @@ static void startAsyncScan() {
     lv_obj_remove_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_dropdown, LV_OBJ_FLAG_HIDDEN);
     wifiSetStatus("Buscando redes WiFi...");
+    // Full WiFi reset so no queued reconnect events can abort the scan.
+    // setAutoReconnect(false) first so the fresh STA start doesn't auto-connect.
+    WiFi.setAutoReconnect(false);
+    WiFi.disconnect(true);   // stop WiFi stack completely
+    lvRun(300);              // drain pending events while LVGL stays alive
+    WiFi.mode(WIFI_STA);     // fresh restart
+    lvRun(500);              // wait for esp_wifi_start() to finish
     WiFi.scanDelete();
-    WiFi.setAutoReconnect(false); // prevent auto-reconnect putting station in CONNECTING state
-    WiFi.disconnect(false);       // drop AP connection, keep WiFi STA stack up
-    // Wait for disconnect to complete before scanning.
-    {
-        uint32_t t = millis();
-        while (WiFi.status() == WL_CONNECTED && millis() - t < 2000) lvRun(50);
-    }
-    Serial.printf("[wifisetup] status after disconnect: %d\n", (int)WiFi.status());
     int16_t ret = WiFi.scanNetworks(/*async=*/true);
-    Serial.printf("[wifisetup] scanNetworks() = %d  (RUNNING=-1 FAILED=-2)\n", (int)ret);
+    Serial.printf("[wifisetup] scanNetworks()=%d\n", (int)ret);
 }
 
 static void checkScanResult() {
