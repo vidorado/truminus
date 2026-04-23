@@ -626,6 +626,15 @@ static void linBusTask(void*) {
 
       trumaok=Frame16->getDataOk();
 
+      // Aplicar modo de energía seleccionado en pantalla CYD
+      #ifdef CYD
+      {
+        auto em = (TEnergySelection)cydGetEnergyMode();
+        EnergySelect->setEnergySelection(em);
+        SetPowerLimit->setPowerLimit(em);
+      }
+      #endif
+
       for (int i=0; i<FRAMES_TO_WRITE; i++) {
         frames_to_write[i]->getData((uint8_t*)&(LinBus.LinMessage));
         LinBus.writeFrame(frames_to_write[i]->frameid(),8);
@@ -660,11 +669,34 @@ void loop() {
   esp_task_wdt_reset();
   delay(1);
   #ifdef CYD
+  // ── Nav request: pantallas de config bloqueantes ─────────────────────
+  // Se comprueban ANTES del mutex. runWifiSetup/runMqttSetup gestionan LVGL
+  // por sí mismas; tomamos el mutex para que lvglTask no interfiera y lo
+  // liberamos antes de ESP.restart().
+  {
+    CydNavRequest nav = cydGetNavRequest();
+    if (nav != CydNavRequest::None) {
+      cydClearNavRequest();
+      lvglLock();
+      bool changed = false;
+      if (nav == CydNavRequest::WifiSetup) {
+        String ss, pp;
+        changed = runWifiSetup(ss, pp);
+      } else if (nav == CydNavRequest::MqttSetup) {
+        String u, us, pp;
+        changed = runMqttSetup(u, us, pp);
+      }
+      cydReloadScreen();
+      lvglUnlock();
+      if (changed) ESP.restart();   // solo reinicia si se guardaron credenciales nuevas
+    }
+  }
   // lv_timer_handler() runs in lvglTask (Core 1) every 5 ms.
   // We only need to update display state; grab the mutex briefly.
   if (xSemaphoreTake(s_lvglMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
     cydDisplayUpdate(wifiok, mqttok, trumaok, truma_reset, inota, mqttEnabled,
-                     (float)Frame16->getRoomTemp(), (float)Frame16->getWaterTemp());
+                     (float)Frame16->getRoomTemp(), (float)Frame16->getWaterTemp(),
+                     Frame16->getWaterDemand());
     xSemaphoreGive(s_lvglMutex);
   }
   #endif
