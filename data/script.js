@@ -7,35 +7,23 @@ var wserror  = true;
 var linerror = false;
 
 // ── Estado de la aplicación ───────────────────────────────────────────────
-var s_temp     = 20.0;   // setpoint temperatura habitación
-var s_heat     = false;  // calefacción encendida
-var s_boiler   = 'off';  // off | eco | high | boost
-var s_fan      = 'off';  // eco | high | off | '1'-'10'
-var s_energy   = 'gas';  // gas | electricity | mix
-var s_elpower  = 0;      // 0 | 900 | 1800
-var s_fanLevel = 5;      // último nivel numérico de ventilador (1-10)
+var s_temp     = 20.0;
+var s_heat     = false;
+var s_boiler   = 'off';
+var s_fan      = 'off';
+var s_energy   = 'gas';
+var s_elpower  = 0;
+var s_fanLevel = 5;
 
-// ── Modal ─────────────────────────────────────────────────────────────────
-var modal      = document.getElementById('modal');
-var modal_text = document.getElementById('modal-text');
-
-function showModal() {
-    if (wserror) {
-        modal_text.textContent = 'Conectando, espera\u2026';
-        modal.style.display = 'flex';
-    } else if (linerror) {
-        modal_text.textContent = 'Error LIN \u2013 Truma no responde';
-        modal.style.display = 'flex';
-    } else {
-        modal.style.display = 'none';
-    }
+// ── Barra de estado ───────────────────────────────────────────────────────
+function updateStatusBar() {
     var msg = document.getElementById('statusMsg');
     if (!msg) return;
-    if      (wserror)  { msg.textContent = '\u26a0 Conectando\u2026'; msg.style.color = '#ffaa00'; }
-    else if (linerror) { msg.textContent = '\u26a0 Sin LIN bus';      msg.style.color = '#ff4444'; }
-    else               { msg.textContent = ''; }
+    if      (wserror)  { msg.textContent = '⚠ Conectando…'; msg.style.color = '#ffaa00'; }
+    else if (linerror) { msg.textContent = '⚠ Sin LIN bus';      msg.style.color = '#ff4444'; }
+    else               { msg.textContent = ''; msg.style.color = ''; }
 }
-showModal();
+updateStatusBar();
 
 // ── WebSocket ─────────────────────────────────────────────────────────────
 var ws = new ReconnectingWebSocket(gateway);
@@ -44,13 +32,13 @@ setTimeout(ping, 10000);
 
 ws.onopen = function () {
     wserror = false;
-    showModal();
+    updateStatusBar();
     setDot('dot-wifi', 'ok');
     ws.send('settings');
 };
 ws.onclose = function () {
     wserror = true;
-    showModal();
+    updateStatusBar();
     setDot('dot-wifi', 'err');
 };
 ws.onmessage = function (event) {
@@ -100,13 +88,12 @@ function applySetting(id, value) {
 
 // ── Status recibido del dispositivo ──────────────────────────────────────
 function applyStatus(id, value) {
-    // Actualizar spans con id coincidente (room_temp, water_temp, current_state…)
     var el = document.getElementById(id);
     if (el) el.textContent = value;
 
     if (id === 'linok') {
         linerror = parseInt(value) !== 1;
-        showModal();
+        updateStatusBar();
         setDot('dot-lin', linerror ? 'err' : 'ok');
     }
 
@@ -117,22 +104,10 @@ function applyStatus(id, value) {
             line.textContent = '';
         } else {
             var desc = (typeof errors !== 'undefined' && errors[code])
-                        ? errors[code] : 'C\u00f3digo ' + value;
-            line.textContent = '\u26a0 ' + desc;
+                        ? errors[code] : 'Código ' + value;
+            line.textContent = '⚠ ' + desc;
         }
     }
-
-    // Tabla de diagnóstico: actualizar fila existente o añadir nueva
-    var table = document.getElementById('detailsTable');
-    for (var i = 1; i < table.rows.length; i++) {
-        if (table.rows[i].cells[0].textContent === id) {
-            table.rows[i].cells[1].textContent = value;
-            return;
-        }
-    }
-    var row = table.insertRow(-1);
-    row.insertCell(0).textContent = id;
-    row.insertCell(1).textContent = value;
 }
 
 // ── Funciones de refresco de UI ───────────────────────────────────────────
@@ -143,7 +118,7 @@ function cls(id, cssClass, on) {
 }
 
 function refreshSetpoint() {
-    document.getElementById('spVal').textContent = s_temp.toFixed(1) + '\u00a0\u00b0C';
+    document.getElementById('spVal').textContent = s_temp.toFixed(1) + ' °C';
 }
 
 function refreshHeat() {
@@ -151,25 +126,19 @@ function refreshHeat() {
     btn.textContent = s_heat ? 'ENCENDIDO' : 'APAGADO';
     btn.classList.toggle('btn-heat-on', s_heat);
     btn.classList.toggle('btn-off',    !s_heat);
-
-    // Setpoint visible sólo con calefacción ON
     cls('spRow',      'vis-hidden', !s_heat);
-    // Fila ventilador: alternar entre modo calefacción y modo standby
     cls('fanHeatRow', 'vis-hidden', !s_heat);
     cls('fanSbyRow',  'vis-hidden',  s_heat);
     if (s_heat) cls('fanLvlRow', 'vis-hidden', true);
-
     refreshFan();
 }
 
 function refreshFan() {
     if (s_heat) {
-        // Modo calefacción: Eco | Alto | Apag.
         cls('fhEco',  'btn-sel', s_fan === 'eco');
         cls('fhHigh', 'btn-sel', s_fan === 'high');
         cls('fhOff',  'btn-sel', s_fan === 'off');
     } else {
-        // Modo standby: On | Off + nivel
         var fanOn = (s_fan !== 'off' && s_fan !== '0' && s_fan !== '');
         cls('fsBtnOn',  'btn-sel',  fanOn);
         cls('fsBtnOff', 'btn-sel', !fanOn);
@@ -194,7 +163,6 @@ function refreshEnergy() {
 
 // ── Acciones del usuario ──────────────────────────────────────────────────
 
-// Temperatura: se aplica con 400 ms de debounce para no saturar el WS
 var tempTimer;
 function changeTemp(delta) {
     clearTimeout(tempTimer);
@@ -205,7 +173,6 @@ function changeTemp(delta) {
     tempTimer = setTimeout(function () { send('/temp', s_temp.toFixed(1)); }, 400);
 }
 
-// Toggle calefacción
 function toggleHeating() {
     s_heat = !s_heat;
     if (!s_heat) { s_fan = 'off'; send('/fan', 'off'); }
@@ -213,14 +180,12 @@ function toggleHeating() {
     refreshHeat();
 }
 
-// Ventilador modo calefacción (eco / high / off)
 function setFan(value) {
     s_fan = value;
     send('/fan', value);
     refreshFan();
 }
 
-// Ventilador modo standby (on activa el último nivel, off apaga)
 function setFanSby(mode) {
     if (mode === 'on') {
         s_fan = String(s_fanLevel);
@@ -232,7 +197,6 @@ function setFanSby(mode) {
     refreshFan();
 }
 
-// Ajuste de nivel de ventilador 1-10
 function changeFanLvl(delta) {
     s_fanLevel = Math.min(10, Math.max(1, s_fanLevel + delta));
     if (s_fan !== 'off') {
@@ -242,14 +206,12 @@ function changeFanLvl(delta) {
     document.getElementById('fanLvlVal').textContent = s_fanLevel;
 }
 
-// Modo de caldera
 function setBoiler(value) {
     s_boiler = value;
     send('/boiler', value);
     refreshBoiler();
 }
 
-// Combo energía → envía /energy y /elpower por separado
 var energyMap = [
     { e: 'gas',         p: '0'    },
     { e: 'mix',         p: '900'  },
@@ -264,13 +226,6 @@ function setEnergyCombo(idx) {
     s_elpower = parseInt(m.p);
     send('/energy',  m.e);
     send('/elpower', m.p);
-}
-
-// Portal de configuración WiFi
-function openPortal() {
-    if (!confirm('El dispositivo abrir\u00e1 el portal de configuraci\u00f3n y dejar\u00e1 de responder.\n' +
-                 'Con\u00e9ctate a la red Wi-Fi \u201cTruMinus-Setup\u201d y ve a 192.168.4.1')) return;
-    send('/portal', '1');
 }
 
 // ── Inicialización ────────────────────────────────────────────────────────

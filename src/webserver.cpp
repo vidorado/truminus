@@ -1,87 +1,35 @@
 #include "webserver.hpp"
 #ifdef WEBSERVER
 
-#include <memory>   // std::shared_ptr
+// Static web files are embedded in flash as const uint8_t arrays generated
+// by scripts/compress_fs.py.  Each response uses ~100 B of heap (the
+// AsyncCallbackResponse object) instead of ~1500 B (AsyncFileResponse read
+// buffer) or the full file size (old malloc approach).  This eliminates the
+// OOM crashes that occurred when 6 concurrent HTTP requests exhausted the
+// ESP32 heap shared with LVGL, WiFi, MQTT and WebSocket.
+#include "webfiles.h"
 
-// ═════════════════════════════════════════════════════════════════════════
-// Mutex para acceso exclusivo a LittleFS
-// ─────────────────────────────────────────────────────────────────────────
-// LittleFS no es seguro para acceso concurrente desde la tarea AsyncTCP.
-// Un único mutex FreeRTOS garantiza que sólo una petición abre/lee un
-// fichero a la vez.  La lectura es rápida (< 10 ms para ficheros pequeños),
-// por lo que el impacto en la latencia TCP es mínimo.
-//
-// Flujo por petición:
-//   1. xSemaphoreTake  → acceso exclusivo a LittleFS
-//   2. open + readBytes → todo en un buffer temporal (malloc)
-//   3. close + xSemaphoreGive  → LittleFS libre inmediatamente
-//   4. La respuesta HTTP se sirve desde el buffer usando AwsResponseFiller
-//   5. El shared_ptr libera el buffer en cuanto la respuesta termina
-//
-// Así el RAM dinámico es el máximo de ficheros en vuelo simultáneamente,
-// que en la práctica es 1-2 (WiFi local es rápido y el mutex serializa
-// las lecturas).
-// ═════════════════════════════════════════════════════════════════════════
-static SemaphoreHandle_t s_lfsMutex = NULL;
-
-static void sendFile(AsyncWebServerRequest* req,
-                     const char* gzPath,
-                     const char* ct)
+static void sendMemFile(AsyncWebServerRequest* req,
+                        const uint8_t* data, size_t size,
+                        const char* ct, bool gzipped)
 {
-    // ── 1. Esperar turno ──────────────────────────────────────────────────
-    if (xSemaphoreTake(s_lfsMutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
-        Serial.printf("[webfs] timeout esperando mutex para %s\n", gzPath);
-        req->send(503, "text/plain", "Servidor ocupado, reintenta");
-        return;
-    }
-
-    // ── 2. Abrir y leer ───────────────────────────────────────────────────
-    File f = LittleFS.open(gzPath, "r");
-    if (!f || f.size() == 0) {
-        xSemaphoreGive(s_lfsMutex);
-        Serial.printf("[webfs] no encontrado: %s\n", gzPath);
-        req->send(404, "text/plain", "Not found");
-        return;
-    }
-
-    size_t n = f.size();
-    auto buf = std::shared_ptr<uint8_t>((uint8_t*)malloc(n), free);
-    if (!buf) {
-        f.close();
-        xSemaphoreGive(s_lfsMutex);
-        Serial.printf("[webfs] OOM para %s (%u B)\n", gzPath, (unsigned)n);
-        req->send(503, "text/plain", "Sin memoria");
-        return;
-    }
-
-    f.readBytes((char*)buf.get(), n);
-    f.close();
-
-    // ── 3. Liberar LittleFS cuanto antes ─────────────────────────────────
-    xSemaphoreGive(s_lfsMutex);
-    Serial.printf("[webfs] %s → %u B servidos\n", gzPath, (unsigned)n);
-
-    // ── 4. Servir desde RAM (sin acceso adicional a LittleFS) ────────────
-    // El lambda captura buf por valor (shared_ptr): mientras el filler
-    // exista, el buffer no se libera.  Al destruirse la respuesta se
-    // destruye el filler y el shared_ptr decrementa el ref-count → free().
     AsyncWebServerResponse* r = req->beginResponse(
-        ct, n,
-        [buf, n](uint8_t* dst, size_t maxLen, size_t idx) -> size_t {
-            if (idx >= n) return 0;
-            size_t chunk = (maxLen < n - idx) ? maxLen : (n - idx);
-            memcpy(dst, buf.get() + idx, chunk);
+        ct, size,
+        [data, size](uint8_t* dst, size_t maxLen, size_t idx) -> size_t {
+            if (idx >= size) return 0;
+            size_t chunk = (maxLen < size - idx) ? maxLen : (size - idx);
+            memcpy(dst, data + idx, chunk);
             return chunk;
-        }
-    );
-    r->addHeader("Content-Encoding", "gzip");
-    r->addHeader("Cache-Control",    "max-age=86400");
+        });
+    if (!r) { req->send(503); return; }
+    if (gzipped) r->addHeader("Content-Encoding", "gzip");
+    r->addHeader("Cache-Control", "max-age=86400");
     req->send(r);
 }
 
-// ═════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 // WebSocket
-// ═════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
   AwsFrameInfo *info = (AwsFrameInfo*)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
@@ -139,74 +87,48 @@ void initWebSocket() {
   server.addHandler(&ws);
 }
 
-// ═════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 // StartServer
-// ═════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
   wsCb   = cb;
   wsConn = conn;
 
-  // Crear mutex antes de montar LittleFS
-  s_lfsMutex = xSemaphoreCreateMutex();
-  if (!s_lfsMutex) {
-    Serial.println("**** cannot create LittleFS mutex");
-    return;
-  }
-
-  if (!LittleFS.begin(false)) {
-    Serial.println("**** cannot start LittleFS");
-    return;
-  }
-
-  // Mostrar espacio libre en LittleFS
-  Serial.printf("[webfs] LittleFS OK — heap libre: %u B\n", ESP.getFreeHeap());
-
   initWebSocket();
 
-  // ── Ficheros estáticos (servidos uno a la vez por el mutex) ───────────
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendFile(r, "/index.html.gz", "text/html");
+    sendMemFile(r, wf_index_html, wf_index_html_size, "text/html", wf_index_html_gzipped);
   });
   server.on("/index.html", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendFile(r, "/index.html.gz", "text/html");
+    sendMemFile(r, wf_index_html, wf_index_html_size, "text/html", wf_index_html_gzipped);
   });
   server.on("/styles.css", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendFile(r, "/styles.css.gz", "text/css");
+    sendMemFile(r, wf_styles_css, wf_styles_css_size, "text/css", wf_styles_css_gzipped);
   });
   server.on("/script.js", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendFile(r, "/script.js.gz", "application/javascript");
+    sendMemFile(r, wf_script_js, wf_script_js_size, "application/javascript", wf_script_js_gzipped);
   });
   server.on("/errors.js", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendFile(r, "/errors.js.gz", "application/javascript");
+    sendMemFile(r, wf_errors_js, wf_errors_js_size, "application/javascript", wf_errors_js_gzipped);
   });
   server.on("/reconnecting-websocket.min.js", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendFile(r, "/reconnecting-websocket.min.js.gz", "application/javascript");
+    sendMemFile(r, wf_reconnecting_websocket_min_js,
+                   wf_reconnecting_websocket_min_js_size, "application/javascript",
+                   wf_reconnecting_websocket_min_js_gzipped);
   });
   server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendFile(r, "/favicon.ico.gz", "image/x-icon");
+    sendMemFile(r, wf_favicon_ico, wf_favicon_ico_size, "image/x-icon", wf_favicon_ico_gzipped);
   });
   server.on("/truminus-logo.png", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendFile(r, "/truminus-logo.png.gz", "image/png");
+    sendMemFile(r, wf_truminus_logo_png, wf_truminus_logo_png_size, "image/png", wf_truminus_logo_png_gzipped);
   });
 
-  // ── Diagnóstico ────────────────────────────────────────────────────────
   server.on("/fscheck", HTTP_GET, [](AsyncWebServerRequest* req) {
-    String r = "Heap libre: " + String(ESP.getFreeHeap()) + " B\n\nFicheros en LittleFS:\n";
-    File root = LittleFS.open("/");
-    if (root) {
-      File file = root.openNextFile();
-      while (file) {
-        r += "  ";
-        r += file.name();
-        r += String("                         ").substring(0, 25 - strlen(file.name()));
-        r += String(file.size()) + " B\n";
-        file = root.openNextFile();
-      }
-    }
-    req->send(200, "text/plain", r);
+    req->send(200, "text/plain",
+              "Heap libre: " + String(ESP.getFreeHeap()) + " B\n"
+              "Web files served from flash (no LittleFS needed for HTTP).\n");
   });
 
-  // ── 404 para todo lo demás ─────────────────────────────────────────────
   server.onNotFound([](AsyncWebServerRequest* req) {
     Serial.printf("[404] %s\n", req->url().c_str());
     req->send(404, "text/plain", "Not found");

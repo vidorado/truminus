@@ -9,6 +9,7 @@
   --heat-on: #1a8a3a;
   --txt:     #ffffff;
   --temp-c:  #aaccff;
+  --amber:   #ffaa00;
   --ok:      #44ff44;
   --warn:    #ffaa00;
   --err:     #ff4444;
@@ -46,8 +47,6 @@ body {
   z-index: 20;
 }
 
-.logo { height: 28px; flex-shrink: 0; }
-
 .topbar-temps {
   flex: 1;
   display: flex;
@@ -60,16 +59,18 @@ body {
   font-size: .83em;
   white-space: nowrap;
 }
+.tbadge-ext  { color: var(--amber); }
 
-.topbar-icons { display: flex; gap: 6px; flex-shrink: 0; }
+.topbar-icons { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
 
-/* Estado WiFi / LIN */
+/* Estado WiFi / LIN — iconos SVG */
 .sdot {
-  font-size: .7em;
-  font-weight: 700;
-  letter-spacing: .04em;
-  padding: 2px 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
   border-radius: 3px;
+  line-height: 0;
 }
 .sdot-ok   { color: var(--ok); }
 .sdot-warn { color: var(--warn); }
@@ -81,12 +82,11 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1px;
-  background: var(--sep);   /* el gap de 1px se convierte en el separador */
+  background: var(--sep);
   max-width: 700px;
   margin: 0 auto;
 }
 
-/* En vertical: paneles apilados */
 @media (max-width: 480px) {
   .panels { grid-template-columns: 1fr; }
 }
@@ -117,14 +117,13 @@ body {
   text-transform: uppercase;
 }
 
-/* Separador horizontal dentro del panel */
 .p-sep {
   height: 1px;
   background: var(--sep);
   margin: 0 -2px;
 }
 
-/* ── Botón grande calefacción (toggle ON/OFF) ─────────────────────────── */
+/* ── Botón grande calefacción ─────────────────────────────────────────── */
 .btn-heat {
   width: 100%;
   padding: 16px;
@@ -140,7 +139,7 @@ body {
 .btn-off     { background: var(--off); }
 .btn-heat-on { background: var(--heat-on); }
 
-/* ── Fila de setpoint / nivel ventilador ──────────────────────────────── */
+/* ── Fila setpoint / nivel ventilador ────────────────────────────────── */
 .sp-row {
   display: flex;
   align-items: center;
@@ -167,7 +166,7 @@ body {
 }
 .btn-step:active { background: var(--on); }
 
-/* ── Fila de botones de ventilador ───────────────────────────────────── */
+/* ── Fila botones ventilador ─────────────────────────────────────────── */
 .btn-row { display: flex; gap: 6px; }
 
 .btn-fan {
@@ -183,7 +182,7 @@ body {
 }
 .btn-fan.btn-sel { background: var(--on); }
 
-/* ── Rejilla 2×2 botones de caldera ──────────────────────────────────── */
+/* ── Rejilla 2×2 caldera ─────────────────────────────────────────────── */
 .boiler-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -236,39 +235,6 @@ body {
 .state-txt { font-size: .82em; color: var(--lbl); }
 .err-txt   { font-size: .82em; color: var(--err); font-weight: 600; }
 
-/* ── Diagnóstico colapsable ──────────────────────────────────────────── */
-.diag-wrap {
-  max-width: 700px;
-  margin: 0 auto;
-  padding: 6px 12px;
-  background: var(--bg);
-  border-top: 1px solid var(--sep);
-}
-.diag-wrap summary {
-  font-size: .78em;
-  color: var(--lbl);
-  cursor: pointer;
-  padding: 4px 0;
-  user-select: none;
-  list-style: none;
-}
-.diag-wrap summary::before { content: '▶ '; }
-.diag-wrap[open] summary::before { content: '▼ '; }
-
-.diag-wrap table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 8px;
-  font-size: .78em;
-}
-.diag-wrap th,
-.diag-wrap td {
-  border: 1px solid var(--sep);
-  padding: 5px 8px;
-  text-align: left;
-}
-.diag-wrap th { background: var(--off); color: var(--lbl); }
-
 /* ── Barra inferior fija ─────────────────────────────────────────────── */
 .statusbar {
   position: fixed;
@@ -283,28 +249,12 @@ body {
   z-index: 20;
 }
 .sb-msg { font-size: .8em; color: var(--warn); }
-.statusbar a { font-size: .8em; color: var(--lbl); text-decoration: none; }
-.statusbar a:hover { color: var(--txt); }
 
-/* ── Modal ───────────────────────────────────────────────────────────── */
-.modal {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,.65);
-  z-index: 100;
-  align-items: center;
-  justify-content: center;
+.footer-logo {
+  height: 24px;
+  opacity: 0.75;
+  flex-shrink: 0;
 }
-.modal-box {
-  background: var(--off);
-  border: 1px solid var(--sep);
-  border-radius: 10px;
-  padding: 28px 32px;
-  width: min(80%, 360px);
-  text-align: center;
-}
-.modal-box p { font-size: 1.05em; color: var(--warn); }
 
 /* ── Utilidades ──────────────────────────────────────────────────────── */
 .vis-hidden { display: none !important; }
