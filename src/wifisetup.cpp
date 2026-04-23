@@ -298,9 +298,13 @@ static void startAsyncScan() {
     lv_obj_add_flag(s_dropdown, LV_OBJ_FLAG_HIDDEN);
     wifiSetStatus("Buscando redes WiFi...");
     WiFi.scanDelete();
-    WiFi.disconnect(true);   // full WiFi stop (clears connected state)
-    WiFi.mode(WIFI_STA);     // restart stack in STA mode
-    lvRun(300);              // let esp_wifi_start() finish before scanning
+    WiFi.disconnect(false);  // drop AP connection, keep WiFi STA stack up
+    // Wait for disconnect to complete before scanning (usually <300 ms).
+    // Calling scanNetworks() mid-disconnect returns ESP_ERR_WIFI_STATE.
+    {
+        uint32_t t = millis();
+        while (WiFi.status() == WL_CONNECTED && millis() - t < 2000) lvRun(50);
+    }
     WiFi.scanNetworks(/*async=*/true);
 }
 
