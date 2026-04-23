@@ -297,9 +297,10 @@ static void startAsyncScan() {
     lv_obj_remove_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_dropdown, LV_OBJ_FLAG_HIDDEN);
     wifiSetStatus("Buscando redes WiFi...");
-    WiFi.scanDelete();       // clear stale results from any previous scan
-    WiFi.disconnect(false);  // drop current AP connection so scan isn't blocked
-    WiFi.mode(WIFI_STA);
+    WiFi.scanDelete();
+    WiFi.disconnect(true);   // full WiFi stop (clears connected state)
+    WiFi.mode(WIFI_STA);     // restart stack in STA mode
+    lvRun(300);              // let esp_wifi_start() finish before scanning
     WiFi.scanNetworks(/*async=*/true);
 }
 
@@ -458,8 +459,10 @@ bool runWifiSetup(String& ssid, String& pass) {
     // Spinner — visible mientras escanea, luego se oculta
     s_spinner = lv_spinner_create(s_panel);
     lv_spinner_set_anim_params(s_spinner, 1000, 60);
-    lv_obj_set_size(s_spinner, 30, 30);
-    lv_obj_set_pos(s_spinner, 0, 38);
+    lv_obj_set_size(s_spinner, 20, 20);
+    lv_obj_set_style_arc_width(s_spinner, 2, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_spinner, 2, LV_PART_INDICATOR);
+    lv_obj_set_pos(s_spinner, 0, 44);
 
     // Dropdown — oculto mientras escanea, visible al terminar
     s_dropdown = lv_dropdown_create(s_panel);
