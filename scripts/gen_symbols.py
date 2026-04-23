@@ -2,8 +2,9 @@
 """
 gen_symbols.py — Generate src/symbols_14.c for LVGL (v8/v9)
 
-Renders fa-tint (U+F043) and fa-thermometer-half (U+F2C7) from the
-FontAwesome WOFF that gen_symbols.ps1 already downloaded.
+Renders FA icons from the FontAwesome WOFF at 14 px / 4 bpp.
+Glyphs that overflow LINE_H are automatically clipped so they always
+fit within the label's line box (avoids LVGL rendering artifacts).
 
 Requirements (install once):
     pip install freetype-py
@@ -12,7 +13,7 @@ Usage (from the project root):
     python scripts/gen_symbols.py
 """
 
-import sys, os, math
+import sys
 from pathlib import Path
 
 try:
@@ -26,20 +27,21 @@ except ImportError:
 # ── Config ────────────────────────────────────────────────────────────────────
 GLYPHS = [
     (0xF043, "fa-tint"),
-    (0xF2C9, "fa-thermometer-half"),
+    (0xF015, "fa-home"),
 ]
 SIZE      = 14          # px — must match what cyddisplay.cpp uses
 BPP       = 4           # bits per pixel
 LINE_H    = SIZE        # total line height in px
 BASE_LINE = 3           # px below baseline included in line height
-WOFF      = Path("scripts/fonts/FontAwesome5-Solid+Brands+Regular.woff")
+WOFF      = Path("scripts/fonts/FontAwesome5-Solid.woff")
 OUT       = Path("src/symbols_14.c")
 # ─────────────────────────────────────────────────────────────────────────────
 
-def to4bpp(buf: bytes, w: int, h: int, pitch: int) -> bytes:
-    """Convert FreeType 8bpp grayscale bitmap to 4bpp packed (LVGL format)."""
+def to4bpp(buf: bytes, w: int, h: int, pitch: int, row_start: int = 0) -> bytes:
+    """Convert FreeType 8bpp grayscale bitmap to 4bpp packed (LVGL format).
+    row_start lets you skip leading rows (used when clipping top overflow)."""
     out = []
-    for row in range(h):
+    for row in range(row_start, row_start + h):
         base = row * pitch
         nibbles = [buf[base + col] >> 4 for col in range(w)]
         for i in range(0, w, 2):
@@ -49,16 +51,32 @@ def to4bpp(buf: bytes, w: int, h: int, pitch: int) -> bytes:
     return bytes(out)
 
 def render(face: freetype.Face, cp: int):
-    """Render one glyph. Returns (bitmap_4bpp, box_w, box_h, adv_w_q4, ofs_x, ofs_y)."""
+    """Render one glyph and clip any rows that fall outside [0, LINE_H).
+    Returns (bitmap_4bpp, box_w, box_h, adv_w_q4, ofs_x, ofs_y)."""
     face.set_pixel_sizes(0, SIZE)
     face.load_char(cp, freetype.FT_LOAD_RENDER)
-    g   = face.glyph
-    bm  = g.bitmap
-    w, h = bm.width, bm.rows
+    g  = face.glyph
+    bm = g.bitmap
+    w, h     = bm.width, bm.rows
     adv_w_q4 = round((g.advance.x >> 6) * 16)   # pixels → 8.4 fixed-point
     ofs_x    = g.bitmap_left
-    ofs_y    = g.bitmap_top - h                   # bottom of bbox from baseline
-    return to4bpp(bytes(bm.buffer), w, h, bm.pitch), w, h, adv_w_q4, ofs_x, ofs_y
+    ofs_y    = g.bitmap_top - h                   # LVGL: bottom of bbox from baseline
+
+    # ── Auto-clip rows that overflow the line box ────────────────────────────
+    # baseline is LINE_H - BASE_LINE pixels from the top of the line box.
+    baseline  = LINE_H - BASE_LINE                # = 11 for 14px/3px config
+    glyph_top = baseline - g.bitmap_top           # glyph top from line-top (can be <0)
+    clip_top  = max(0, -glyph_top)                # rows hanging above the line
+    clip_bot  = max(0, glyph_top + h - LINE_H)    # rows hanging below the line
+    if clip_top or clip_bot:
+        print(f"    [clip] {w}x{h} → {w}x{h - clip_top - clip_bot} "
+              f"(removed {clip_top} top + {clip_bot} bottom rows)")
+        # ofs_y = bitmap_top - h; after clipping bottom rows ofs_y shifts up
+        ofs_y = ofs_y + clip_bot
+        h    -= clip_top + clip_bot
+
+    bm4 = to4bpp(bytes(bm.buffer), w, h, bm.pitch, row_start=clip_top)
+    return bm4, w, h, adv_w_q4, ofs_x, ofs_y
 
 def main():
     if not WOFF.exists():
@@ -68,7 +86,6 @@ def main():
         )
 
     print(f"[gen_symbols] Loading {WOFF.name}...")
-    # Modern FreeType (shipped with freetype-py wheels) reads WOFF natively.
     face = freetype.Face(str(WOFF))
 
     rendered = []
@@ -76,6 +93,22 @@ def main():
         bm, w, h, adv, ox, oy = render(face, cp)
         rendered.append((cp, name, bm, w, h, adv, ox, oy))
         print(f"  U+{cp:04X}  {name:30s}  {w}x{h}  adv={adv/16:.1f}px  ofs=({ox},{oy})")
+        # ASCII preview (re-render to get raw 8bpp buffer)
+        face.set_pixel_sizes(0, SIZE)
+        face.load_char(cp, freetype.FT_LOAD_RENDER)
+        raw   = bytes(face.glyph.bitmap.buffer)
+        pitch = face.glyph.bitmap.pitch
+        shades = " .:-=+*#%@"
+        for row in range(h):
+            # account for top clip offset
+            baseline  = LINE_H - BASE_LINE
+            glyph_top = baseline - face.glyph.bitmap_top
+            clip_top  = max(0, -glyph_top)
+            line = ""
+            for col in range(w):
+                v = raw[(row + clip_top) * pitch + col]
+                line += shades[v * (len(shades) - 1) // 255]
+            print("    |" + line + "|")
 
     # ── Build C file ──────────────────────────────────────────────────────────
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -107,7 +140,7 @@ def main():
         bitmap_offsets.append(offset)
         a(f"    /* U+{cp:04X}  {name} */")
         for i in range(0, len(bm), 16):
-            chunk = bm[i:i+16]
+            chunk = bm[i:i + 16]
             a("    " + ", ".join(f"0x{b:02x}" for b in chunk) + ",")
         offset += len(bm)
     a("};")
@@ -147,7 +180,7 @@ def main():
     a("};")
     a()
 
-    # Font object (extern so LV_FONT_DECLARE can reference it)
+    # Font object
     a("const lv_font_t symbols_14 = {")
     a("    .get_glyph_dsc    = lv_font_get_glyph_dsc_fmt_txt,")
     a("    .get_glyph_bitmap = lv_font_get_bitmap_fmt_txt,")
