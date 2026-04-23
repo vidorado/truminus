@@ -788,13 +788,38 @@ void loop() {
        Serial.println("Available commands:");
        Serial.println("lindebug on|off");
        Serial.println("mqttdebug on|off");
+       Serial.println("busindex             estado del bus LIN (frames + raw bytes)");
        Serial.println("reset");
        Serial.println("simultemp -273.0 (off)..30.0");
        Serial.println("temp 5.0..30.0");
        Serial.println("heating 0|1");
        Serial.println("boiler off|eco|high|boost");
-       Serial.println("fan off|eco|high|1..10");   
-       found=true;   
+       Serial.println("fan off|eco|high|1..10");
+       found=true;
+    } else if (cmd=="busindex") {
+      found=true;
+      uint8_t buf[8];
+      Serial.println("=== LIN bus index ===");
+      Serial.printf("  trumaok : %s\n", trumaok ? "ok" : "sin respuesta");
+      Serial.printf("  onOff   : req=%u cur=%u  (%s)\n",
+                    onOff->getRequestedState(), onOff->getCurrentState(),
+                    onOff->GetOn() ? "on" : "off");
+      for (int i = 0; i < FRAMES_TO_READ; i++) {
+        uint8_t fid = frames_to_read[i]->frameid();
+        bool    ok  = frames_to_read[i]->getDataOk();
+        Serial.printf("  RX %02Xh : %s", fid, ok ? "OK  " : "---  ");
+        if (ok) {
+          frames_to_read[i]->getData(buf);
+          for (int j = 0; j < 8; j++) Serial.printf(" %02X", buf[j]);
+          if (fid == 0x16)
+            Serial.printf("  room:%.1f° agua:%.1f°",
+                          Frame16->getRoomTemp(), Frame16->getWaterTemp());
+          if (fid == 0x3b)
+            Serial.printf("  SW:%u errT:%02Xh errH:%02Xh",
+                          buf[0], buf[1], buf[2]);
+        }
+        Serial.println();
+      }
     } else if (cmd=="lindebug") {
       if (param=="on") {
         LinBus.verboseMode=1;
