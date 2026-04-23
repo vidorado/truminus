@@ -124,7 +124,7 @@ body {
   font-size: 1.08em;
   font-weight: 700;
   color: var(--lbl);
-  letter-spacing: .09em;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--sep);
@@ -133,7 +133,7 @@ body {
 .sec-lbl {
   font-size: 1.02em;
   color: var(--lbl);
-  letter-spacing: .07em;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
 }
 
