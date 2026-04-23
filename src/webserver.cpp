@@ -120,6 +120,7 @@ void StartServer(WebsocketCallback cb,  WebsocketConnected conn) {
       if (LittleFS.exists(gzPath)) {
         AsyncWebServerResponse *r =
             request->beginResponse(LittleFS, gzPath, mimeFor(path));
+        r->addHeader("Content-Encoding", "gzip");
         r->addHeader("Cache-Control", "max-age=86400");
         request->send(r);
         return;
