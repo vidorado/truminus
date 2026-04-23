@@ -71,9 +71,40 @@ void StartServer(WebsocketCallback cb,  WebsocketConnected conn) {
 
     initWebSocket();
 
-    server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+    // ── Handlers explícitos para ficheros con doble extensión (.min.js) ───
+    // serveStatic falla en detectar el MIME correcto para .min.js.gz;
+    // beginResponse() con la ruta .gz auto-añade Content-Encoding: gzip.
+    server.on("/reconnecting-websocket.min.js", HTTP_GET, [](AsyncWebServerRequest *req) {
+      AsyncWebServerResponse *r = req->beginResponse(
+          LittleFS, "/reconnecting-websocket.min.js.gz", "application/javascript");
+      r->addHeader("Cache-Control", "max-age=86400");
+      req->send(r);
+    });
+
+    server.serveStatic("/", LittleFS, "/")
+          .setDefaultFile("index.html")
+          .setCacheControl("max-age=86400");   // 24 h — estáticos no cambian en campo
+
+    // ── Diagnóstico: GET /fscheck ──────────────────────────────────────────
+    server.on("/fscheck", HTTP_GET, [](AsyncWebServerRequest *request) {
+      static const char* files[] = {
+        "/index.html",                      "/index.html.gz",
+        "/styles.css",                      "/styles.css.gz",
+        "/script.js",                       "/script.js.gz",
+        "/errors.js",                       "/errors.js.gz",
+        "/reconnecting-websocket.min.js",   "/reconnecting-websocket.min.js.gz",
+        "/favicon.ico",                     "/favicon.ico.gz",
+        "/truminus-logo.png",               "/truminus-logo.png.gz",
+      };
+      String r;
+      for (auto& f : files)
+        r += (LittleFS.exists(f) ? "[Y] " : "[N] ") + String(f) + "\n";
+      r += "\nFree heap: " + String(ESP.getFreeHeap()) + " bytes\n";
+      request->send(200, "text/plain", r);
+    });
 
     server.onNotFound([](AsyncWebServerRequest *request) {
+      Serial.printf("[404] %s\n", request->url().c_str());
       request->send(404, "text/plain", "Not found");
     });
 
