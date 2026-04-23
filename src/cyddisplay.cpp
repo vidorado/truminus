@@ -643,7 +643,7 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     lv_obj_set_style_text_font(s_aguaLbl, &symbols_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_aguaLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
     lv_label_set_text(s_aguaLbl, MY_SYMBOL_TINT " -- \xc2\xb0""C");
-    lv_obj_set_pos(s_aguaLbl, 85, 7);
+    lv_obj_set_pos(s_aguaLbl, 80, 7);
 
     // Temperatura exterior (AM2301 en P3 IO21) — casita+flecha = exterior
     // Icono: LV_SYMBOL_HOME LV_SYMBOL_RIGHT  (casa con flecha hacia la derecha)
