@@ -71,11 +71,11 @@ void StartServer(WebsocketCallback cb,  WebsocketConnected conn) {
 
     initWebSocket();
 
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-      request->send(LittleFS, "/index.html", "text/html");
-    });
+    server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 
-    server.serveStatic("/", LittleFS, "/");
+    server.onNotFound([](AsyncWebServerRequest *request) {
+      request->send(404, "text/plain", "Not found");
+    });
 
     server.begin();
   } else {
