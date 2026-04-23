@@ -1,141 +1,120 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Combi D</title>
+<title>TruMinus</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
+<!-- ── Barra superior ─────────────────────────────────────────────────── -->
 <header class="topbar">
-  <img src="truminus-logo.png" alt="TruMinus">
+  <img src="truminus-logo.png" alt="TruMinus" class="logo">
+  <div class="topbar-temps">
+    <span class="tbadge">&#127777; <span id="room_temp">--</span>&nbsp;°C</span>
+    <span class="tbadge tbadge-agua">&#128167; <span id="water_temp">--</span>&nbsp;°C</span>
+  </div>
+  <div class="topbar-icons">
+    <span id="dot-wifi" class="sdot sdot-err" title="WiFi">W</span>
+    <span id="dot-lin"  class="sdot sdot-err" title="LIN">L</span>
+  </div>
 </header>
 
-<div class="container">
+<!-- ── Paneles principales ────────────────────────────────────────────── -->
+<main class="panels">
 
-  <!-- Tabs -->
-  <div class="tab">
-    <button class="tablinks active" onclick="openTab(event, 'Controls')">Controls</button>
-    <button class="tablinks" onclick="openTab(event, 'Details')">Details</button>
-  </div>
+  <!-- Panel izquierdo — CALEFACCIÓN -->
+  <section class="panel">
+    <div class="p-title">CALEFACCIÓN</div>
 
-  <!-- Controls Tab -->
-  <div id="Controls" class="tabcontent active">
+    <button id="heatBtn" class="btn-heat btn-off" onclick="toggleHeating()">APAGADO</button>
 
-    <table class="settings-table">
-      <tr>
-        <td><label for="temp">Room temp:</label></td>
-        <td class="vert-center">
-          <span class="number-input">
-            <button onclick="changeTemp(-0.5)"></button>
-            <input class="quantity" min="5.0" max="30.0" step="0.5" name="temp" id="temp" value="5.0" type="number">
-            <button onclick="changeTemp(0.5)" class="plus"></button>
-          </span>
-          <span style="margin-left:5px;font-size:1.3em;">°C</span>
-        </td>
-      </tr>
-      <tr>
-        <td><label for="heating">Heating:</label></td>
-        <td>
-          <select id="heating" class="select">
-            <option value="0">Off</option>
-            <option value="1">On</option>
-          </select>
-        </td>
-      </tr>
-      <tr>
-        <td><label for="boiler">Boiler:</label></td>
-        <td>
-          <select id="boiler" class="select">
-            <option value="off">Off</option>
-            <option value="eco">Eco</option>
-            <option value="high">High</option>
-            <option value="boost">Boost</option>
-          </select>
-        </td>
-      </tr>
-      <tr>
-        <td><label for="fan">Fan:</label></td>
-        <td>
-          <select id="fan" class="select">
-            <option value="eco">Eco</option>
-            <option value="high">High</option>
-            <option value="off">Off</option>
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="3">3</option>
-            <option value="4">4</option>
-            <option value="5">5</option>
-            <option value="6">6</option>
-            <option value="7">7</option>
-            <option value="8">8</option>
-            <option value="9">9</option>
-            <option value="10">10</option>
-          </select>
-        </td>
-      </tr>
-      <tr>
-        <td><label for="elpower">Electric power:</label></td>
-        <td>
-          <select id="elpower" class="select">
-            <option value="0">Off (0 W)</option>
-            <option value="900">900 W</option>
-            <option value="1800">1800 W</option>
-          </select>
-        </td>
-      </tr>
-      <tr style="display:none;">
-        <td><label for="energy">Energy:</label></td>
-        <td>
-          <select id="energy" class="select">
-            <option value="gas">Gas</option>
-            <option value="electricity">Electricity</option>
-            <option value="mix">Mix</option>
-          </select>
-        </td>
-      </tr>
-    </table>
-
-    <table class="status-table" style="margin-top:12px;">
-      <tr>
-        <td>Temp. amb.</td>
-        <td>Agua</td>
-        <td>Estado</td>
-      </tr>
-      <tr class="status">
-        <td><span id="room_temp">--</span> °C</td>
-        <td><span id="water_temp">--</span> °C</td>
-        <td><span id="current_state">--</span></td>
-      </tr>
-    </table>
-
-    <div class="status-line">
-      <p id="error_line" class="error"></p>
+    <!-- Setpoint temperatura (visible sólo cuando heat ON) -->
+    <div id="spRow" class="sp-row vis-hidden">
+      <button class="btn-step" onclick="changeTemp(-0.5)">&#9660;</button>
+      <span id="spVal" class="sp-val">20.0&nbsp;°C</span>
+      <button class="btn-step" onclick="changeTemp(0.5)">&#9650;</button>
     </div>
 
-  </div>
+    <div class="p-sep"></div>
+    <div class="sec-lbl">VENTILADOR</div>
 
-  <!-- Details Tab -->
-  <div id="Details" class="tabcontent">
-    <table id="detailsTable">
-      <tr><th>Item</th><th>Value</th></tr>
-    </table>
-  </div>
+    <!-- Ventilador modo calefacción: Eco | Alto | Apag. (heat ON) -->
+    <div id="fanHeatRow" class="btn-row vis-hidden">
+      <button id="fhEco"  class="btn-fan" onclick="setFan('eco')">Eco</button>
+      <button id="fhHigh" class="btn-fan" onclick="setFan('high')">Alto</button>
+      <button id="fhOff"  class="btn-fan" onclick="setFan('off')">Apag.</button>
+    </div>
 
+    <!-- Ventilador modo standby: Off | On (heat OFF) -->
+    <div id="fanSbyRow" class="btn-row">
+      <button id="fsBtnOff" class="btn-fan btn-sel" onclick="setFanSby('off')">Off</button>
+      <button id="fsBtnOn"  class="btn-fan"         onclick="setFanSby('on')">On</button>
+    </div>
+    <!-- Control nivel 1-10 (visible cuando standby + fan On) -->
+    <div id="fanLvlRow" class="sp-row vis-hidden">
+      <button class="btn-step" onclick="changeFanLvl(-1)">&#9660;</button>
+      <span id="fanLvlVal" class="sp-val">5</span>
+      <button class="btn-step" onclick="changeFanLvl(1)">&#9650;</button>
+    </div>
+  </section>
+
+  <!-- Panel derecho — AGUA CALIENTE -->
+  <section class="panel">
+    <div class="p-title">AGUA CALIENTE</div>
+
+    <!-- 4 botones de caldera en rejilla 2×2 -->
+    <div class="boiler-grid">
+      <button id="bOff"   class="btn-boiler" onclick="setBoiler('off')">Apag.</button>
+      <button id="bEco"   class="btn-boiler" onclick="setBoiler('eco')">40&nbsp;°C</button>
+      <button id="bHigh"  class="btn-boiler" onclick="setBoiler('high')">60&nbsp;°C</button>
+      <button id="bBoost" class="btn-boiler" onclick="setBoiler('boost')">60&nbsp;°C&nbsp;&#9889;</button>
+    </div>
+
+    <div class="p-sep"></div>
+    <div class="sec-lbl">ENERGÍA</div>
+
+    <select id="energyCombo" class="sel-dark" onchange="setEnergyCombo(this.value)">
+      <option value="0">Gas</option>
+      <option value="1">Gas + Elec. 850 W</option>
+      <option value="2">Gas + Elec. 1700 W</option>
+      <option value="3">Elec. 850 W</option>
+      <option value="4">Elec. 1700 W</option>
+    </select>
+  </section>
+
+</main>
+
+<!-- ── Tira de estado / error ─────────────────────────────────────────── -->
+<div class="info-strip">
+  <span id="current_state" class="state-txt"></span>
+  <span id="error_line"    class="err-txt"></span>
 </div>
 
-<div class="statusbar">
+<!-- ── Diagnóstico colapsable ─────────────────────────────────────────── -->
+<details class="diag-wrap">
+  <summary>Diagnóstico</summary>
+  <table id="detailsTable">
+    <tr><th>Campo</th><th>Valor</th></tr>
+  </table>
+</details>
+
+<!-- ── Barra inferior fija ────────────────────────────────────────────── -->
+<footer class="statusbar">
+  <span id="statusMsg" class="sb-msg"></span>
   <a href="#" onclick="openPortal(); return false;">Config portal</a>
-</div>
+</footer>
 
+<!-- ── Modal (conexión / error LIN) ──────────────────────────────────── -->
 <div id="modal" class="modal">
-  <div class="modal-content">
+  <div class="modal-box">
     <p id="modal-text"></p>
   </div>
 </div>
 
 <script src="reconnecting-websocket.min.js"></script>
+<script src="errors.js"></script>
 <script src="script.js"></script>
 </body>
 </html>

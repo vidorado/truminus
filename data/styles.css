@@ -1,316 +1,310 @@
-body {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  margin: 0;
-  padding: 60px 0 44px 0;
-  background-color: #fff;
+/* ── Variables de color (paleta CYD) ──────────────────────────────────── */
+:root {
+  --bg:      #1a1a2e;
+  --bar:     #0f0f22;
+  --sep:     #444466;
+  --lbl:     #8888aa;
+  --off:     #2a2a4a;
+  --on:      #3a7bd5;
+  --heat-on: #1a8a3a;
+  --txt:     #ffffff;
+  --temp-c:  #aaccff;
+  --ok:      #44ff44;
+  --warn:    #ffaa00;
+  --err:     #ff4444;
+
+  --bar-h:   48px;
+  --foot-h:  44px;
+  --radius:  6px;
+  --gap:     10px;
 }
 
+/* ── Reset ────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--txt);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 16px;
+  padding-top: var(--bar-h);
+  padding-bottom: var(--foot-h);
+  min-height: 100vh;
+}
+
+/* ── Barra superior ───────────────────────────────────────────────────── */
 .topbar {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  background-color: #005aaa;
-  padding: 10px 20px;
+  top: 0; left: 0; right: 0;
+  height: var(--bar-h);
+  background: var(--bar);
+  border-bottom: 1px solid var(--sep);
   display: flex;
   align-items: center;
-  z-index: 2;
+  gap: 10px;
+  padding: 0 12px;
+  z-index: 20;
 }
 
-.topbar img {
-  height: 40px;
+.logo { height: 28px; flex-shrink: 0; }
+
+.topbar-temps {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  gap: 14px;
 }
 
-.container {
-  max-width: 600px;
+.tbadge {
+  color: var(--temp-c);
+  font-size: .83em;
+  white-space: nowrap;
+}
+
+.topbar-icons { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* Estado WiFi / LIN */
+.sdot {
+  font-size: .7em;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+.sdot-ok   { color: var(--ok); }
+.sdot-warn { color: var(--warn); }
+.sdot-err  { color: var(--err); }
+.sdot-dis  { color: var(--lbl); }
+
+/* ── Cuadrícula de dos paneles ────────────────────────────────────────── */
+.panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--sep);   /* el gap de 1px se convierte en el separador */
+  max-width: 700px;
   margin: 0 auto;
-  padding: 20px;
 }
 
-.settings-table {
-  width: fit-content;
-  white-space: nowrap;
+/* En vertical: paneles apilados */
+@media (max-width: 480px) {
+  .panels { grid-template-columns: 1fr; }
 }
 
-.settings-table td {
-  border: none;
-  max-width: 1%;
-  white-space: nowrap;
-}
-
-.settings-table label {
-  /* margin-right: 10px;*/
-  font-weight: bold;
-  color: #555;
-  font-size: 1em;
-}
-
-h1 {
-  text-align: center;
-  color: #333;
-}
-
-.select,
-input[type="number"] {
-  /* flex: 3; */
+/* ── Panel ────────────────────────────────────────────────────────────── */
+.panel {
+  background: var(--bg);
   padding: 12px;
-  border-radius: 8px;
-  background-color: #f9f9f9;
-  border: 1px solid #ccc;
-  font-size: 1.5em;
-}
-
-
-.temperature-control {
-  width: 80px;
-}
-
-span {
-  font-size: 1.2em;
-}
-
-input[type="checkbox"] {
-  margin-left: 10px;
-  transform: scale(1.5);
-}
-
-.status {
-  font-size: 2em;
-}
-
-.status td {
-  width: 33%;
-}
-
-.status-line {
-  text-align: center;
-}
-
-.reset_msg {
-  color: #ff5555;
-}
-
-.reset_button {
-  background-color: #f44336;
-  font-size: 1.5em;
-  color: white;
-  border-radius: 5px;
-  padding: 5px;
-}
-  /* Additional CSS for tab styles */
-  .tab {
-    overflow: hidden;
-    border: 1px solid #ccc;
-    background-color: #f1f1f1;
-  }
-
-  /* Style the buttons inside the tab */
-  .tab button {
-    background-color: inherit;
-    float: left;
-    border: none;
-    outline: none;
-    cursor: pointer;
-    padding: 14px 16px;
-    transition: 0.3s;
-  }
-
-  /* Change background color of buttons on hover */
-  .tab button:hover {
-    background-color: #ddd;
-  }
-
-  /* Create an active/current tablink class */
-  .tab button.active {
-    background-color: #ccc;
-  }
-
-  /* Style the tab content */
-  .tabcontent {
-    display: none;
-    padding: 6px 12px;
-    border: 1px solid #ccc;
-    border-top: none;
-  }
-
-  .tabcontent.active {
-    display: block;
-  }
-
-  /* Additional CSS for table */
-  table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  th, td {
-    border: 1px solid #ddd;
-    padding: 8px;
-    text-align: left;
-  }
-
-  th {
-    background-color: #f2f2f2;
-  }
-
-  .status-table td {
-    width: 33%;
-  }
-
-  .visually-hidden {
-    position: absolute;
-    left: -100vw;
- }
-
- .room-demand::after {
-  content: "🔥";
-  font-size: 20px;
-}
-#roomdemand:not(:checked) ~ .room-demand::after {
-  content: "🔥";
-  font-size: 20px;
-  color: transparent;
-  text-shadow: 0 0 0 #d0d0d0;
-}
-.water-demand::after {
-  content: "🔥";
-  font-size: 20px;
-}
-
-#waterdemand:not(:checked) ~ .water-demand::after {
-  content: "🔥";
-  font-size: 20px;
-  color: transparent;
-  text-shadow: 0 0 0 #d0d0d0;
-}
-
-.window::after {
-  content: "closed";
-  font-size: 20px;
-}
-
-#window:not(:checked) ~ .window::after {
-  content: "open";
-  font-size: 20px;
-  color: red;
-}
-
-input[type="number"] {
-  -webkit-appearance: textfield;
-  -moz-appearance: textfield;
-  appearance: textfield;
-}
-
-
-input[type=number]::-webkit-inner-spin-button,
-input[type=number]::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-}
-
-
-.number-input {
- /* border: 0; */
-  display: inline-flex;
-}
-
-.number-input,
-.number-input * {
-  box-sizing: border-box;
-}
-
-.number-input button {
-  outline:none;
-  -webkit-appearance: none;
-  background-color: transparent;
-  border: none;
-  align-items: center;
-  justify-content: center;
-  width: 3rem;
-  height: 3rem;
-  cursor: pointer;
-  margin: 0;
-  position: relative;
-  box-shadow: 0px 0px 1px #474747;
-  border-radius: 8px;
-}
-
-.number-input button:before,
-.number-input button:after {
-  display: inline-block;
-  position: absolute;
-  content: '';
-  width: 1rem;
-  height: 2px;
-  background-color: #212121;
-  transform: translate(-50%, -50%);
-}
-.number-input button.plus:after {
-  transform: translate(-50%, -50%) rotate(90deg);
-}
-
-.number-input input[type=number] {
-  max-width: 5rem;
-  padding: .5rem;
-  font-size: 1.5rem;
-  height: 3rem;
-  text-align: center;
-}
-
-.vert-center {
-  align-items: center;
   display: flex;
+  flex-direction: column;
+  gap: var(--gap);
 }
 
-/* The Modal (background) */
-.modal {
-  display: none; /* Hidden by default */
-  position: fixed; /* Stay in place */
-  z-index: 1; /* Sit on top */
-  left: 0;
-  top: 0;
-  width: 100%; /* Full width */
-  height: 100%; /* Full height */
-  background-color: rgba(0,0,0,0.4);
+.p-title {
+  font-size: .72em;
+  font-weight: 700;
+  color: var(--lbl);
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--sep);
+}
+
+.sec-lbl {
+  font-size: .68em;
+  color: var(--lbl);
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+/* Separador horizontal dentro del panel */
+.p-sep {
+  height: 1px;
+  background: var(--sep);
+  margin: 0 -2px;
+}
+
+/* ── Botón grande calefacción (toggle ON/OFF) ─────────────────────────── */
+.btn-heat {
+  width: 100%;
+  padding: 16px;
+  font-size: .95em;
+  font-weight: 700;
+  letter-spacing: .07em;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: var(--txt);
+  transition: background .2s;
+}
+.btn-off     { background: var(--off); }
+.btn-heat-on { background: var(--heat-on); }
+
+/* ── Fila de setpoint / nivel ventilador ──────────────────────────────── */
+.sp-row {
+  display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
 }
 
-/* Modal Content/Box */
-.modal-content {
-  background-color: #fefefe;
-  margin: 0;
-  padding: 20px;
-  border: 1px solid #888;
-  width: 80%; /* Could be more or less, depending on screen size */
-  color: red;
+.sp-val {
   font-size: 1.5em;
+  font-weight: 700;
+  min-width: 88px;
   text-align: center;
 }
 
-.error {
-  color: red;
+.btn-step {
+  width: 46px;
+  height: 46px;
+  font-size: 1em;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  background: var(--off);
+  color: var(--txt);
+}
+.btn-step:active { background: var(--on); }
+
+/* ── Fila de botones de ventilador ───────────────────────────────────── */
+.btn-row { display: flex; gap: 6px; }
+
+.btn-fan {
+  flex: 1;
+  padding: 13px 4px;
+  font-size: .88em;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  background: var(--off);
+  color: var(--txt);
+  transition: background .15s;
+}
+.btn-fan.btn-sel { background: var(--on); }
+
+/* ── Rejilla 2×2 botones de caldera ──────────────────────────────────── */
+.boiler-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
+.btn-boiler {
+  padding: 20px 8px;
+  font-size: .9em;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  background: var(--off);
+  color: var(--txt);
+  transition: background .15s;
+}
+.btn-boiler.btn-sel { background: var(--on); }
+
+/* ── Selector de energía ─────────────────────────────────────────────── */
+.sel-dark {
+  width: 100%;
+  padding: 11px 28px 11px 10px;
+  font-size: .9em;
+  border: 1px solid var(--sep);
+  border-radius: var(--radius);
+  background: var(--off);
+  color: var(--txt);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238888aa'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+.sel-dark option { background: #2a2a4a; }
+
+/* ── Tira de estado / error ──────────────────────────────────────────── */
+.info-strip {
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 7px 12px;
+  background: var(--bg);
+  border-top: 1px solid var(--sep);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+.state-txt { font-size: .82em; color: var(--lbl); }
+.err-txt   { font-size: .82em; color: var(--err); font-weight: 600; }
+
+/* ── Diagnóstico colapsable ──────────────────────────────────────────── */
+.diag-wrap {
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 6px 12px;
+  background: var(--bg);
+  border-top: 1px solid var(--sep);
+}
+.diag-wrap summary {
+  font-size: .78em;
+  color: var(--lbl);
+  cursor: pointer;
+  padding: 4px 0;
+  user-select: none;
+  list-style: none;
+}
+.diag-wrap summary::before { content: '▶ '; }
+.diag-wrap[open] summary::before { content: '▼ '; }
+
+.diag-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: .78em;
+}
+.diag-wrap th,
+.diag-wrap td {
+  border: 1px solid var(--sep);
+  padding: 5px 8px;
+  text-align: left;
+}
+.diag-wrap th { background: var(--off); color: var(--lbl); }
+
+/* ── Barra inferior fija ─────────────────────────────────────────────── */
 .statusbar {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 44px;
-  background-color: #005aaa;
-  z-index: 2;
+  bottom: 0; left: 0; right: 0;
+  height: var(--foot-h);
+  background: var(--bar);
+  border-top: 1px solid var(--sep);
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  padding: 0 15px;
+  justify-content: space-between;
+  padding: 0 14px;
+  z-index: 20;
 }
+.sb-msg { font-size: .8em; color: var(--warn); }
+.statusbar a { font-size: .8em; color: var(--lbl); text-decoration: none; }
+.statusbar a:hover { color: var(--txt); }
 
-.statusbar a {
-  font-size: 0.8em;
-  color: #fff;
-  text-decoration: none;
+/* ── Modal ───────────────────────────────────────────────────────────── */
+.modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.65);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
 }
+.modal-box {
+  background: var(--off);
+  border: 1px solid var(--sep);
+  border-radius: 10px;
+  padding: 28px 32px;
+  width: min(80%, 360px);
+  text-align: center;
+}
+.modal-box p { font-size: 1.05em; color: var(--warn); }
 
-.statusbar a:hover {
-  color: #cce0ff;
-}
+/* ── Utilidades ──────────────────────────────────────────────────────── */
+.vis-hidden { display: none !important; }
