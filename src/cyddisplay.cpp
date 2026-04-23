@@ -125,6 +125,39 @@ static lv_obj_t* s_energyDd      = nullptr;
 static lv_obj_t* s_statusLbl    = nullptr;
 static lv_obj_t* s_ipLbl        = nullptr;
 
+// ── Backlight fade (tarea FreeRTOS dedicada) ─────────────────────────────
+// blFadeTo() se puede llamar desde cualquier contexto; la tarea mueve el
+// brillo actual hacia el objetivo a 0.02 por tick (20 ms) → fade de 1 s
+// para el rango completo 0→1 ó 1→0.
+static volatile float s_blCurrent = 1.0f;
+static volatile float s_blTarget  = 1.0f;
+
+static void blFadeTo(float target) {
+    s_blTarget = target;
+}
+
+static void backlightTask(void* /*arg*/) {
+    // 50 pasos × 20 ms = 1 000 ms para recorrer el rango completo (0.0 → 1.0)
+    const TickType_t TICK    = pdMS_TO_TICKS(20);
+    const float      STEP    = 1.0f / 50.0f;   // 0.02 por tick
+    for (;;) {
+        float cur = s_blCurrent;
+        float tgt = s_blTarget;
+        if (cur != tgt) {
+            float delta = tgt - cur;
+            float step  = (delta > 0.0f)
+                          ? ((delta < STEP) ? delta :  STEP)
+                          : ((delta > -STEP) ? delta : -STEP);
+            cur += step;
+            if (cur < 0.0f) cur = 0.0f;
+            if (cur > 1.0f) cur = 1.0f;
+            s_blCurrent = cur;
+            smartdisplay_lcd_set_backlight(cur);
+        }
+        vTaskDelay(TICK);
+    }
+}
+
 // ── Configuración / apagado de pantalla ──────────────────────────────────
 static volatile CydNavRequest s_navRequest = CydNavRequest::None;
 
@@ -133,7 +166,7 @@ static const char*    TIMEOUT_LABEL[] = { "30 segundos", "1 minuto", "3 minutos"
 static const int      TIMEOUT_N       = 4;
 static int       s_timeoutIdx  = 0;       // índice activo (0 = 30 s)
 static bool      s_screenOff   = false;
-static bool      s_screenDimmed = false;  // en aviso de apagado (brillo 50 %)
+static bool      s_screenDimmed = false;  // en aviso de apagado (brillo 30 %)
 static lv_obj_t* s_wakeOverlay  = nullptr;
 static lv_obj_t* s_settingsScr  = nullptr;
 static lv_obj_t* s_displayScr   = nullptr;
@@ -429,7 +462,7 @@ static void saveTimeoutIdx() {
 // ═══════════════════════════════════════════════════════════════════════════
 static void wakeCb(lv_event_t*) {
     if (!s_screenOff) return;
-    smartdisplay_lcd_set_backlight(1.0f);
+    blFadeTo(1.0f);
     s_screenOff = false;
     if (s_wakeOverlay) {
         lv_obj_delete(s_wakeOverlay);
@@ -595,7 +628,7 @@ void cydReloadScreen() {
     // Llamar tras runWifiSetup / runMqttSetup para restaurar la pantalla principal.
     if (s_wakeOverlay) { lv_obj_delete(s_wakeOverlay); s_wakeOverlay = nullptr; }
     s_screenOff = false;
-    smartdisplay_lcd_set_backlight(1.0f);
+    blFadeTo(1.0f);
     if (s_scr) lv_screen_load(s_scr);
 }
 
@@ -800,6 +833,9 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
 
     refreshControls();
     placeLogoInStatusBar(s_scr);
+
+    // ── Tarea de fade de backlight ────────────────────────────────────────
+    xTaskCreatePinnedToCore(backlightTask, "bckl", 1536, nullptr, 1, nullptr, 1);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -821,7 +857,7 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
         if (to > 0 && !s_screenOff) {
             if (inactive >= to) {
                 // ── Apagar ────────────────────────────────────────────────
-                smartdisplay_lcd_set_backlight(0.0f);
+                blFadeTo(0.0f);
                 s_screenOff    = true;
                 s_screenDimmed = false;
                 if (!s_wakeOverlay) {
@@ -837,13 +873,13 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
             } else if (inactive + 5000 >= to) {
                 // ── Aviso: quedan ≤ 5 s ──────────────────────────────────
                 if (!s_screenDimmed) {
-                    smartdisplay_lcd_set_backlight(0.3f);
+                    blFadeTo(0.3f);
                     s_screenDimmed = true;
                 }
             } else {
                 // ── Brillo normal (o recuperación tras toque en aviso) ────
                 if (s_screenDimmed) {
-                    smartdisplay_lcd_set_backlight(1.0f);
+                    blFadeTo(1.0f);
                     s_screenDimmed = false;
                 }
             }
