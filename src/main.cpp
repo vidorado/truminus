@@ -71,45 +71,14 @@
 #define TX_PIN 27
 #define RX_PIN 22
 
-// ── Sensor exterior AM2301 (P3: GND + IO21=DATA, VCC=3.3V externo) ──────────
-// IO21 es también el pin de backlight (LEDC).  Antes de cada lectura se
-// desconecta el LEDC del pin (ledcDetach), se lee el sensor (~5 ms con
-// interrupciones deshabilitadas internamente por DHTesp), y se reconecta LEDC.
-// Efecto visual: parpadeo imperceptible de ~5 ms cada 30 s.
-#define DHT_DATA_PIN   21              // IO21 (P3)
+// ── Sensor exterior AM2301 (IO17 = LED1_BLUE, LED quitado) ───────────────────
+#define DHT_DATA_PIN   17
 static DHTesp   s_dht;
-static float    s_extTemp    = -273.0f;  // -273 = sin lectura válida
-static uint32_t s_lastDhtMs  = 0;        // millis() de la última lectura
+static float    s_extTemp   = -273.0f;  // -273 = sin lectura válida
+static uint32_t s_lastDhtMs = 0;
 
-// Desconecta LEDC de IO21, lee AM2301, reconecta LEDC al canal de backlight.
 static void readExtSensor() {
-    // 1) Forzar IO21 a OUTPUT HIGH (estado idle del bus DHT de 1 hilo).
-    //    pinMode(OUTPUT) reconfigura el GPIO matrix de LEDC→GPIO, desconectando
-    //    el LEDC sin necesidad de gpio_reset_pin().  La línea queda en HIGH
-    //    (mismo nivel que el pull-up del sensor) antes de que DHTesp tome el mando.
-    pinMode(DHT_DATA_PIN, OUTPUT);
-    digitalWrite(DHT_DATA_PIN, HIGH);
-    delay(2);   // 2 ms: el pull-up del sensor necesita ver HIGH antes de responder
-
-    // 2) Re-inicializar DHTesp para que reconfigure su estado interno con el pin
-    //    ya en modo correcto (necesario tras el cambio de función del GPIO matrix).
-    s_dht.setup(DHT_DATA_PIN, DHTesp::AM2302);
-
-    // 3) Leer sensor. DHTesp gestiona internamente OUTPUT LOW (1 ms start pulse)
-    //    → INPUT_PULLUP (escucha respuesta) → lectura de 40 bits.
     TempAndHumidity result = s_dht.getTempAndHumidity();
-
-    // 3) Reconectar IO21 al canal LEDC de backlight y restaurar brillo máximo.
-    //    Mismo patrón de versión que usa esp32_smartdisplay internamente.
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-    ledcAttach(GPIO_BCKL, PWM_FREQ_BCKL, PWM_BITS_BCKL);
-    ledcWrite(GPIO_BCKL, PWM_MAX_BCKL);
-#else
-    ledcSetup(PWM_CHANNEL_BCKL, PWM_FREQ_BCKL, PWM_BITS_BCKL);
-    ledcAttachPin(GPIO_BCKL, PWM_CHANNEL_BCKL);
-    ledcWrite(PWM_CHANNEL_BCKL, PWM_MAX_BCKL);
-#endif
-
     if (s_dht.getStatus() == DHTesp::ERROR_NONE &&
         result.temperature > -40.0f && result.temperature < 80.0f) {
         s_extTemp = result.temperature;
@@ -272,7 +241,7 @@ void setup() {
 
   #ifdef CYD
   smartdisplay_init();
-  // Inicializar sensor AM2301 en IO21 (DATA).  VCC viene del raíl 3.3 V externo.
+  // Sensor AM2301 en IO17 (LED azul desoldado).
   s_dht.setup(DHT_DATA_PIN, DHTesp::AM2302);
   s_lvglMutex = xSemaphoreCreateMutex();
   auto disp = lv_display_get_default();
