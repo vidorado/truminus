@@ -185,7 +185,9 @@ function refreshBoiler() {
 }
 
 function refreshIndicators() {
-    cls('ind-tint', 'ind-active', s_waterDemand);
+    var boilerOn = s_boiler !== 'off';
+    cls('ind-tint', 'ind-on',     boilerOn && !s_waterDemand);
+    cls('ind-tint', 'ind-active', boilerOn && s_waterDemand);
     cls('ind-fire', 'ind-active', s_heat);
 }
 
