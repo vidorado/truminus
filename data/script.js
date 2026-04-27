@@ -16,6 +16,9 @@ var s_boiler      = 'off';
 var s_fan         = 'off';
 var s_fanLevel    = 5;
 var s_waterDemand = false;
+var s_errClass    = 0;
+var s_errCode     = 0;
+var s_errAcked    = false;
 
 // ── Barra de estado ───────────────────────────────────────────────────────
 function updateStatusBar() {
@@ -132,16 +135,19 @@ function applyStatus(id, value) {
         refreshIndicators();
     }
 
-    if (id === 'error_code') {
-        var code = parseInt(value);
-        var line = document.getElementById('error_line');
-        if (code === 0) {
-            line.textContent = '';
-        } else {
-            var desc = (typeof errors !== 'undefined' && errors[code])
-                        ? errors[code] : 'Código ' + value;
-            line.textContent = '⚠ ' + desc;
+    if (id === 'err_class') {
+        var newClass = parseInt(value) || 0;
+        if (newClass !== s_errClass) { s_errClass = newClass; s_errAcked = false; }
+        updateErrorDisplay();
+    }
+
+    if (id === 'err_code') {
+        var newCode = parseInt(value) || 0;
+        if (newCode !== s_errCode) {
+            s_errCode = newCode;
+            if (newCode !== 0) s_errAcked = false;
         }
+        updateErrorDisplay();
     }
 }
 
@@ -255,6 +261,62 @@ function setBoiler(value) {
     s_boiler = value;
     send('/boiler', value);
     refreshBoiler();
+}
+
+// ── Error de Truma ────────────────────────────────────────────────────────
+function errSeverity(cls) {
+    if (cls === 0)              return 'none';
+    if (cls === 1 || cls === 2) return 'warn';
+    if (cls === 40)             return 'locked';
+    return 'error';
+}
+
+var ERR_COLOR = { none: '', warn: '#ffaa00', error: '#ff4444', locked: '#cc2222' };
+var ERR_LABEL = { none: '', warn: 'AVISO',   error: 'ERROR',   locked: 'BLOQUEADO' };
+
+function updateErrorDisplay() {
+    var line = document.getElementById('error_line');
+    if (!line) return;
+
+    if (s_errCode === 0) {
+        line.textContent = '';
+        line.style.color = '';
+        hideErrorModal();
+        s_errAcked = false;
+        return;
+    }
+
+    var sev  = errSeverity(s_errClass);
+    var col  = ERR_COLOR[sev];
+    var lbl  = ERR_LABEL[sev];
+    var desc = (typeof ErrText !== 'undefined' && ErrText[s_errCode])
+               ? ErrText[s_errCode] : 'Código ' + s_errCode;
+
+    line.textContent = lbl + '  (clase ' + s_errClass + ' / código ' + s_errCode + ')  ' + desc;
+    line.style.color = col;
+
+    if (!s_errAcked) showErrorModal(lbl, col, desc);
+}
+
+function showErrorModal(label, color, desc) {
+    var modal = document.getElementById('err-modal');
+    if (!modal) return;
+    document.getElementById('err-modal-title').textContent = label;
+    document.getElementById('err-modal-title').style.color = color;
+    document.getElementById('err-modal-sub').textContent   =
+        'Clase ' + s_errClass + ' / Código ' + s_errCode;
+    document.getElementById('err-modal-desc').textContent  = desc;
+    modal.classList.remove('hidden');
+}
+
+function hideErrorModal() {
+    var modal = document.getElementById('err-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function acknowledgeError() {
+    s_errAcked = true;
+    hideErrorModal();
 }
 
 // ── Inicialización ────────────────────────────────────────────────────────

@@ -31,6 +31,8 @@ LV_FONT_DECLARE(symbols_14);
 #define C_MQTT_OK    0x44ffaa
 #define C_MQTT_NO    0xff8800
 #define C_MQTT_DIS   0x666688
+#define C_WARN       0xffaa00
+#define C_ERR_LOCKED 0xcc2222
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Layout  (320×240 landscape)
@@ -92,6 +94,12 @@ static TFanSetting*    s_fanMode = nullptr;
 // ═══════════════════════════════════════════════════════════════════════════
 static int s_fanLevel   = 5;   // nivel numérico ventilación sin calefacción (1-10)
 static int s_energyMode = 0;   // índice TEnergySelection activo (0-4)
+
+// ── Error de Truma ─────────────────────────────────────────────────────────
+static uint8_t   s_lastErrClass = 0;
+static uint8_t   s_lastErrCode  = 0;
+static bool      s_errAcked     = false;
+static lv_obj_t* s_errorModal   = nullptr;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Handles de widgets
@@ -667,6 +675,61 @@ void cydReloadScreen() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Modal de error
+// ═══════════════════════════════════════════════════════════════════════════
+static void errModalOkCb(lv_event_t*) {
+    if (s_errorModal) { lv_obj_delete(s_errorModal); s_errorModal = nullptr; }
+    s_errAcked = true;
+}
+
+static void showErrorModal(uint8_t cls, uint8_t code) {
+    if (s_errorModal) { lv_obj_delete(s_errorModal); s_errorModal = nullptr; }
+
+    uint32_t    col;
+    const char* lbl;
+    if (cls == 1 || cls == 2)  { col = C_WARN;       lbl = "AVISO"; }
+    else if (cls == 40)         { col = C_ERR_LOCKED; lbl = "BLOQUEADO"; }
+    else                        { col = C_WIFI_NO;    lbl = "ERROR"; }
+
+    // Overlay semitransparente sobre s_scr (se crea al final → queda al frente)
+    s_errorModal = lv_obj_create(s_scr);
+    lv_obj_remove_style_all(s_errorModal);
+    lv_obj_set_pos(s_errorModal, 0, 0);
+    lv_obj_set_size(s_errorModal, 320, 240);
+    lv_obj_set_style_bg_color(s_errorModal, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_errorModal, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_clear_flag(s_errorModal, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Caja de diálogo centrada
+    lv_obj_t* box = lv_obj_create(s_errorModal);
+    lv_obj_set_size(box, 240, 110);
+    lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(box, lv_color_hex(C_TOPBAR), LV_PART_MAIN);
+    lv_obj_set_style_border_color(box, lv_color_hex(col), LV_PART_MAIN);
+    lv_obj_set_style_border_width(box, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(box, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(box, 8, LV_PART_MAIN);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* title = lv_label_create(box);
+    lv_label_set_text(title, lbl);
+    lv_obj_set_style_text_color(title, lv_color_hex(col), LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    char sub[36];
+    snprintf(sub, sizeof(sub), "Clase %02Xh  /  Codigo %d", cls, code);
+    lv_obj_t* sublbl = lv_label_create(box);
+    lv_label_set_text(sublbl, sub);
+    lv_obj_set_style_text_color(sublbl, lv_color_hex(C_LABEL), LV_PART_MAIN);
+    lv_obj_set_style_text_font(sublbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(sublbl, LV_ALIGN_TOP_MID, 0, 22);
+
+    lv_obj_t* btn = makeBtn(box, 0, 0, 100, 32, "Aceptar", errModalOkCb);
+    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // cydDisplayInit
 // ═══════════════════════════════════════════════════════════════════════════
 void cydDisplayInit(TTempSetting*   roomSetpoint,
@@ -887,7 +950,7 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
 void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
                       bool truma_reset, bool inota, bool mqttEnabled,
                       float roomTemp, float waterTemp, bool waterHeating,
-                      float extTemp) {
+                      float extTemp, uint8_t errClass, uint8_t errCode) {
 
     // ── Apagado automático de pantalla ───────────────────────────────────
     // Tres estados: brillo 100 % → aviso 50 % (5 s antes) → apagado.
@@ -933,7 +996,6 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
     {
         bool blinkPhase = (millis() % 1000) < 500;
         if (s_aguaLbl) {
-            bool boilerOn = s_waterSp && s_waterSp->getStringValue() != "off";
             lv_color_t c = !waterHeating ? lv_color_hex(C_LABEL)            // apagado o a temperatura: gris
                          : blinkPhase   ? lv_color_hex(0xaaccff)           // calentando: parpadea
                                        : lv_color_hex(C_TOPBAR);
@@ -998,6 +1060,7 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
     }
 
     // ── Mensaje de estado ────────────────────────────────────────────────
+    static char s_errBuf[48];
     const char* msg  = "";
     uint32_t    msgC = C_WIFI_OK;
     if (inota) {
@@ -1012,11 +1075,29 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
         msg = "Sin MQTT";                  msgC = C_MQTT_NO;
     } else if (!trumaok) {
         msg = LV_SYMBOL_WARNING " Sin LIN bus"; msgC = C_WIFI_NO;
+    } else if (errCode != 0) {
+        const char* errLbl;
+        if (errClass == 1 || errClass == 2)  { errLbl = LV_SYMBOL_WARNING " Aviso";     msgC = C_WARN; }
+        else if (errClass == 40)              { errLbl = LV_SYMBOL_WARNING " Bloqueado"; msgC = C_ERR_LOCKED; }
+        else                                  { errLbl = LV_SYMBOL_WARNING " Error";     msgC = C_WIFI_NO; }
+        snprintf(s_errBuf, sizeof(s_errBuf), "%s  Cl.%02Xh / Cod.%d", errLbl, errClass, errCode);
+        msg = s_errBuf;
     }
 
     if (s_statusLbl) {
         lv_label_set_text(s_statusLbl, msg);
         lv_obj_set_style_text_color(s_statusLbl, lv_color_hex(msgC), LV_PART_MAIN);
+    }
+
+    // ── Modal de error de Truma ──────────────────────────────────────────
+    if (errClass != s_lastErrClass || errCode != s_lastErrCode) {
+        s_lastErrClass = errClass;
+        s_lastErrCode  = errCode;
+        s_errAcked     = false;
+        if (s_errorModal) { lv_obj_delete(s_errorModal); s_errorModal = nullptr; }
+    }
+    if (errCode != 0 && !s_errAcked && !s_errorModal) {
+        showErrorModal(errClass, errCode);
     }
 
     // ── Refresco de controles (pueden cambiar por MQTT externo) ──────────

@@ -876,7 +876,9 @@ void loop() {
                        && (WaterSetpoint->getFloatValue() > 0.0);
     cydDisplayUpdate(wifiok, mqttok, trumaok, truma_reset, inota, mqttEnabled,
                      (float)Frame21->getRoomTemp(), (float)wTempDisp,
-                     wHeating, s_extTemp);
+                     wHeating, s_extTemp,
+                     getErrorInfo ? getErrorInfo->getErrorClass() : 0,
+                     getErrorInfo ? getErrorInfo->getErrorCode()  : 0);
     xSemaphoreGive(s_lvglMutex);
   }
   #endif

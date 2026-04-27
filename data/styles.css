@@ -292,5 +292,56 @@ body {
   flex-shrink: 0;
 }
 
+/* ── Modal de error ──────────────────────────────────────────────────── */
+.err-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.err-modal-overlay.hidden { display: none; }
+.err-modal-box {
+  background: var(--bar);
+  border: 1px solid var(--sep);
+  border-radius: var(--radius);
+  padding: 24px 20px 20px;
+  max-width: 380px;
+  width: 90%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.err-modal-title {
+  font-size: 1.35em;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+.err-modal-sub {
+  font-size: .85em;
+  color: var(--lbl);
+}
+.err-modal-desc {
+  font-size: .92em;
+  color: var(--txt);
+  line-height: 1.45;
+}
+.err-modal-btn {
+  margin-top: 6px;
+  padding: 12px 36px;
+  font-size: 1em;
+  font-weight: 700;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--on);
+  color: var(--txt);
+  cursor: pointer;
+  align-self: center;
+}
+.err-modal-btn:active { background: var(--heat-on); }
+
 /* ── Utilidades ──────────────────────────────────────────────────────── */
 .vis-hidden { display: none !important; }

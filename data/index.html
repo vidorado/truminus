@@ -77,6 +77,16 @@
 
 </main>
 
+<!-- ── Modal de error ─────────────────────────────────────────────────── -->
+<div id="err-modal" class="err-modal-overlay hidden">
+  <div class="err-modal-box">
+    <div id="err-modal-title" class="err-modal-title">ERROR</div>
+    <div id="err-modal-sub"   class="err-modal-sub"></div>
+    <div id="err-modal-desc"  class="err-modal-desc"></div>
+    <button class="err-modal-btn" onclick="acknowledgeError()">Aceptar</button>
+  </div>
+</div>
+
 <!-- ── Tira de estado / error ─────────────────────────────────────────── -->
 <div class="info-strip">
   <span id="error_line" class="err-txt"></span>
