@@ -120,7 +120,7 @@ function applyStatus(id, value) {
         updateMqttDot();
     }
 
-    if (id === 'waterdemand') {
+    if (id === 'water_heating') {
         s_waterDemand = parseInt(value) === 1;
         refreshIndicators();
     }

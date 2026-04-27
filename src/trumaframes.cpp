@@ -245,6 +245,10 @@ TFrame22::TFrame22() : TFrameBase() {
       ->setADIcon("mdi:water-thermometer")
       ->setADDevice_class("temperature")
       ->setADUnit("°C");
+    fpublishers.push_back(new TPubBool("/water_heating"));
+    fpublishers.back()->setADComponent(CKBinary_sensor)
+      ->setADName("Water heating active")
+      ->setADIcon("mdi:water-boiler");
 }
 
 void TFrame22::publishFrameData() {
@@ -254,6 +258,7 @@ void TFrame22::publishFrameData() {
     if (FWaterTemp < 0.0 || FWaterTemp > 100.0) FWaterTemp = -273.0;
     if (FWaterTemp > 0.0)
         fpublishers[0]->setValue((uint16_t)((FWaterTemp + 273.0) * 10.0));
+    fpublishers[1]->setValue(FWaterHeating ? 1u : 0u);
 }
 
 TFrameSetTemp::TFrameSetTemp(uint8_t frameid)
