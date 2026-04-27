@@ -25,10 +25,15 @@ except ImportError:
     )
 
 # ── Config ────────────────────────────────────────────────────────────────────
+# (codepoint, name, render_size)
+# render_size may be less than SIZE for tall icons that would lose their top
+# with clipping. Icons rendered smaller are top-aligned automatically.
 GLYPHS = [
-    (0xF043, "fa-tint"),
-    (0xF015, "fa-home"),
-    (0xF2C9, "fa-thermometer-half"),   # temperatura exterior
+    (0xF043, "fa-tint",              14),
+    (0xF06D, "fa-fire",              13),   # tall: 10px keeps the full flame tip
+    (0xF015, "fa-home",              14),
+    (0xF054, "fa-chevron-right",     13),   # short icon: fits at 14px without clip
+    (0xF2C9, "fa-thermometer-half",  12),   # 1-2 row clip at top is acceptable
 ]
 SIZE      = 14          # px — must match what cyddisplay.cpp uses
 BPP       = 4           # bits per pixel
@@ -51,33 +56,37 @@ def to4bpp(buf: bytes, w: int, h: int, pitch: int, row_start: int = 0) -> bytes:
             out.append((hi << 4) | lo)
     return bytes(out)
 
-def render(face: freetype.Face, cp: int):
-    """Render one glyph and clip any rows that fall outside [0, LINE_H).
-    Returns (bitmap_4bpp, box_w, box_h, adv_w_q4, ofs_x, ofs_y)."""
-    face.set_pixel_sizes(0, SIZE)
+def render(face: freetype.Face, cp: int, render_size: int = SIZE):
+    """Render one glyph at render_size and clip any rows that overflow LINE_H.
+    Icons rendered at render_size < SIZE are top-aligned in the line box so they
+    sit at the same vertical position as full-size icons (no vertical drift).
+    Returns (bitmap_4bpp, box_w, box_h, adv_w_q4, ofs_x, ofs_y, render_size, clip_top)."""
+    face.set_pixel_sizes(0, render_size)
     face.load_char(cp, freetype.FT_LOAD_RENDER)
-    g  = face.glyph
-    bm = g.bitmap
+    g        = face.glyph
+    bm       = g.bitmap
     w, h     = bm.width, bm.rows
     adv_w_q4 = round((g.advance.x >> 6) * 16)   # pixels → 8.4 fixed-point
     ofs_x    = g.bitmap_left
     ofs_y    = g.bitmap_top - h                   # LVGL: bottom of bbox from baseline
 
-    # ── Auto-clip rows that overflow the line box ────────────────────────────
-    # baseline is LINE_H - BASE_LINE pixels from the top of the line box.
     baseline  = LINE_H - BASE_LINE                # = 11 for 14px/3px config
-    glyph_top = baseline - g.bitmap_top           # glyph top from line-top (can be <0)
+    glyph_top = baseline - g.bitmap_top           # rows from line-top (negative = overflow above)
     clip_top  = max(0, -glyph_top)                # rows hanging above the line
     clip_bot  = max(0, glyph_top + h - LINE_H)    # rows hanging below the line
     if clip_top or clip_bot:
         print(f"    [clip] {w}x{h} → {w}x{h - clip_top - clip_bot} "
-              f"(removed {clip_top} top + {clip_bot} bottom rows)")
-        # ofs_y = bitmap_top - h; after clipping bottom rows ofs_y shifts up
-        ofs_y = ofs_y + clip_bot
-        h    -= clip_top + clip_bot
+              f"(removed {clip_top} top + {clip_bot} bottom rows at {render_size}px)")
+        ofs_y += clip_bot
+        h     -= clip_top + clip_bot
+
+    # Icons rendered at smaller sizes are top-aligned so they appear in the
+    # same vertical position as full-size icons (all hanging from line-top).
+    if render_size < SIZE:
+        ofs_y = baseline - h
 
     bm4 = to4bpp(bytes(bm.buffer), w, h, bm.pitch, row_start=clip_top)
-    return bm4, w, h, adv_w_q4, ofs_x, ofs_y
+    return bm4, w, h, adv_w_q4, ofs_x, ofs_y, render_size, clip_top
 
 def main():
     if not WOFF.exists():
@@ -90,24 +99,19 @@ def main():
     face = freetype.Face(str(WOFF))
 
     rendered = []
-    for cp, name in GLYPHS:
-        bm, w, h, adv, ox, oy = render(face, cp)
+    for cp, name, glyph_size in GLYPHS:
+        bm, w, h, adv, ox, oy, actual_size, ct = render(face, cp, render_size=glyph_size)
         rendered.append((cp, name, bm, w, h, adv, ox, oy))
-        print(f"  U+{cp:04X}  {name:30s}  {w}x{h}  adv={adv/16:.1f}px  ofs=({ox},{oy})")
-        # ASCII preview (re-render to get raw 8bpp buffer)
-        face.set_pixel_sizes(0, SIZE)
-        face.load_char(cp, freetype.FT_LOAD_RENDER)
+        size_tag = f"  (render={actual_size}px)" if actual_size != SIZE else ""
+        print(f"  U+{cp:04X}  {name:30s}  {w}x{h}  adv={adv/16:.1f}px  ofs=({ox},{oy}){size_tag}")
+        # ASCII preview (reads from the post-clip rows)
         raw   = bytes(face.glyph.bitmap.buffer)
         pitch = face.glyph.bitmap.pitch
         shades = " .:-=+*#%@"
         for row in range(h):
-            # account for top clip offset
-            baseline  = LINE_H - BASE_LINE
-            glyph_top = baseline - face.glyph.bitmap_top
-            clip_top  = max(0, -glyph_top)
             line = ""
             for col in range(w):
-                v = raw[(row + clip_top) * pitch + col]
+                v = raw[(row + ct) * pitch + col]
                 line += shades[v * (len(shades) - 1) // 255]
             print("    |" + line + "|")
 

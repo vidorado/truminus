@@ -10,6 +10,9 @@
 LV_FONT_DECLARE(symbols_14);
 #define MY_SYMBOL_THERMOMETER "\xEF\x80\x95"   // U+F015  fa-home (temperatura ambiente)
 #define MY_SYMBOL_TINT        "\xEF\x81\x83"   // U+F043  fa-tint
+#define MY_SYMBOL_FIRE        "\xEF\x81\xAD"   // U+F06D  fa-fire (calefacción activa)
+#define MY_SYMBOL_THERM_EXT   "\xEF\x8B\x89"   // U+F2C9  fa-thermometer-half (temperatura exterior)
+#define MY_SYMBOL_CHEVRON_R   "\xEF\x81\x94"   // U+F054  fa-chevron-right
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Paleta
@@ -61,7 +64,8 @@ static const int   BOILER_N = 4;
 static const char* BOILER_STR[BOILER_N] = {"off",   "eco",           "high",          "boost"};
 static const char* BOILER_LAB[BOILER_N] = {"Apag.", "40\xc2\xb0""C", "60\xc2\xb0""C", "60\xc2\xb0""C " LV_SYMBOL_CHARGE};
 
-static const int   FAN_N    = 3;
+static const int   FAN_N      = 3;
+static const int   FAN_HEAT_N = 2;  // sólo Eco/Alto con calefacción ON
 static const char* FAN_STR[FAN_N]  = {"eco", "high", "off"};
 static const char* FAN_LAB[FAN_N]  = {"Eco", "Alto", "Apag."};
 
@@ -97,6 +101,7 @@ static lv_obj_t* s_scr          = nullptr;
 // Barra superior
 static lv_obj_t* s_ambLbl       = nullptr;
 static lv_obj_t* s_aguaLbl      = nullptr;
+static lv_obj_t* s_fireLbl      = nullptr;   // icono llama — parpadea cuando calefacción activa
 static lv_obj_t* s_extLbl       = nullptr;   // temperatura exterior (AM2301)
 static lv_obj_t* s_wifiDot      = nullptr;
 static lv_obj_t* s_mqttDot      = nullptr;
@@ -313,7 +318,7 @@ static void refreshControls() {
         lv_obj_add_flag(s_fanLevelRow,  LV_OBJ_FLAG_HIDDEN);
 
         String fanStr = s_fanMode->getStringValue();
-        for (int i = 0; i < FAN_N; i++) {
+        for (int i = 0; i < FAN_HEAT_N; i++) {
             lv_obj_set_style_bg_color(s_fanBtn[i],
                 lv_color_hex((fanStr == FAN_STR[i]) ? C_BTN_ON : C_BTN_OFF),
                 LV_PART_MAIN);
@@ -324,14 +329,27 @@ static void refreshControls() {
         lv_obj_remove_flag(s_fanOffRow,  LV_OBJ_FLAG_HIDDEN);
 
         bool fanOn = (fanVal != 0);   // cualquier valor ≠ 0 = ventilación activa
+        // El Truma ignora comandos de ventilador mientras el boiler está calentando.
+        // Deshabilitar controles para evitar cambios accidentales que se aplicarían
+        // al siguiente ciclo del boiler.
+        bool boilerActive = (s_waterSp && s_waterSp->getStringValue() != "off");
 
         // Sincronizar s_fanLevel si el valor actual es numérico
         if (fanVal > 0) s_fanLevel = fanVal;
 
-        if (fanOn) {
+        // Mostrar fila de nivel sólo si ventilador está on Y boiler no activo
+        if (fanOn && !boilerActive) {
             lv_obj_remove_flag(s_fanLevelRow, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(s_fanLevelRow, LV_OBJ_FLAG_HIDDEN);
+        }
+
+        if (boilerActive) {
+            lv_obj_add_state(s_fanOnBtn,  LV_STATE_DISABLED);
+            lv_obj_add_state(s_fanOffBtn, LV_STATE_DISABLED);
+        } else {
+            lv_obj_remove_state(s_fanOnBtn,  LV_STATE_DISABLED);
+            lv_obj_remove_state(s_fanOffBtn, LV_STATE_DISABLED);
         }
 
         lv_obj_set_style_bg_color(s_fanOnBtn,
@@ -383,6 +401,10 @@ static void spUpCb(lv_event_t*) {
 static void boilerCb(lv_event_t* e) {
     if (!s_waterSp) return;
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    // Al activar el boiler forzar ventilador a off: el Truma aplica comandos
+    // de ventilador pendientes al ciclar, causando arranques inesperados.
+    if (idx != 0 && s_fanMode)
+        s_fanMode->setValue(String("off"));
     s_waterSp->setValue(String(BOILER_STR[idx]));
     refreshControls();
 }
@@ -398,21 +420,24 @@ static void fanHeatCb(lv_event_t* e) {
 // Ventilador — modo apagado
 static void fanOnCb(lv_event_t*) {
     if (!s_fanMode) return;
+    if (s_waterSp && s_waterSp->getStringValue() != "off") return;  // boiler activo
     s_fanMode->setValue(String(s_fanLevel));
     refreshControls();
 }
 
 static void fanOffCb(lv_event_t*) {
     if (!s_fanMode) return;
+    if (s_waterSp && s_waterSp->getStringValue() != "off") return;  // boiler activo
     s_fanMode->setValue(String("off"));
     refreshControls();
 }
 
 static void fanLevelDownCb(lv_event_t*) {
     if (!s_fanMode) return;
+    if (s_waterSp && s_waterSp->getStringValue() != "off") return;  // boiler activo
     if (s_fanLevel > 1) {
         s_fanLevel--;
-        if (s_fanMode->getIntValue() > 0)   // solo actualiza si el ventilador está on
+        if (s_fanMode->getIntValue() > 0)
             s_fanMode->setValue(String(s_fanLevel));
         refreshControls();
     }
@@ -420,6 +445,7 @@ static void fanLevelDownCb(lv_event_t*) {
 
 static void fanLevelUpCb(lv_event_t*) {
     if (!s_fanMode) return;
+    if (s_waterSp && s_waterSp->getStringValue() != "off") return;  // boiler activo
     if (s_fanLevel < 10) {
         s_fanLevel++;
         if (s_fanMode->getIntValue() > 0)
@@ -674,25 +700,33 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     lv_obj_set_style_bg_opa(topBar, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(topBar, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
 
+    // Icono tint (izquierda) — parpadea cuando el boiler está calentando
+    s_aguaLbl = lv_label_create(topBar);
+    lv_obj_set_style_text_font(s_aguaLbl, &symbols_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_aguaLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
+    lv_label_set_text(s_aguaLbl, MY_SYMBOL_TINT);
+    lv_obj_set_pos(s_aguaLbl, 5, 7);
+
+    // Icono llama — parpadea cuando la calefacción está activa
+    s_fireLbl = lv_label_create(topBar);
+    lv_obj_set_style_text_font(s_fireLbl, &symbols_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_fireLbl, lv_color_hex(0xff8844), LV_PART_MAIN);
+    lv_label_set_text(s_fireLbl, MY_SYMBOL_FIRE);
+    lv_obj_set_pos(s_fireLbl, 22, 7);
+
+    // Temperatura interior + exterior juntas tras los iconos de estado
     s_ambLbl = lv_label_create(topBar);
     lv_obj_set_style_text_font(s_ambLbl, &symbols_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ambLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
     lv_label_set_text(s_ambLbl, MY_SYMBOL_THERMOMETER " -- \xc2\xb0""C");
-    lv_obj_set_pos(s_ambLbl, 5, 7);
+    lv_obj_set_pos(s_ambLbl, 44, 7);
 
-    s_aguaLbl = lv_label_create(topBar);
-    lv_obj_set_style_text_font(s_aguaLbl, &symbols_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_aguaLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
-    lv_label_set_text(s_aguaLbl, MY_SYMBOL_TINT " -- \xc2\xb0""C");
-    lv_obj_set_pos(s_aguaLbl, 80, 7);
-
-    // Temperatura exterior (AM2301 en P3 IO21) — casita+flecha = exterior
-    // Icono: LV_SYMBOL_HOME LV_SYMBOL_RIGHT  (casa con flecha hacia la derecha)
+    // Temperatura exterior (AM2301 en P3 IO22) — mismo font que interior para tamaño idéntico
     s_extLbl = lv_label_create(topBar);
-    lv_obj_set_style_text_font(s_extLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_extLbl, &symbols_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_extLbl, lv_color_hex(0xffcc88), LV_PART_MAIN);
-    lv_label_set_text(s_extLbl, LV_SYMBOL_HOME LV_SYMBOL_RIGHT " --\xc2\xb0""C");
-    lv_obj_set_pos(s_extLbl, 148, 7);
+    lv_label_set_text(s_extLbl, MY_SYMBOL_THERM_EXT " " MY_SYMBOL_CHEVRON_R " --\xc2\xb0""C");
+    lv_obj_set_pos(s_extLbl, 122, 7);
     lv_obj_clear_flag(s_extLbl, LV_OBJ_FLAG_CLICKABLE);
 
     auto makeStatusIcon = [&](int x, const char* sym, uint32_t col) -> lv_obj_t* {
@@ -749,11 +783,11 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     // ── Ventilador ───────────────────────────────────────────────────────
     makeSecLabel(s_scr, lx, Y_CONT + 99, "VENTILADOR");
 
-    // Fila modo calefacción: Eco | Alto | Apag.  (visible cuando heat ON)
-    // Ancho 146px: 3 × 46px + 2 × 4px gap = 146px
-    const int fwh = (lw - 8) / 3;   // ≈ 46px
+    // Fila modo calefacción: Eco | Alto  (sin Apag., visible cuando heat ON)
+    // Ancho 146px: 2 × 71px + 1 × 4px gap = 146px
+    const int fwh = (lw - 4) / 2;   // ≈ 71px
     s_fanHeatingRow = makeRow(s_scr, lx, Y_CONT + 115, lw, 28);
-    for (int i = 0; i < FAN_N; i++) {
+    for (int i = 0; i < FAN_HEAT_N; i++) {
         s_fanBtn[i] = makeBtn(s_fanHeatingRow, i * (fwh + 4), 0, fwh, 28,
                                FAN_LAB[i], fanHeatCb, (void*)(intptr_t)i);
     }
@@ -894,7 +928,25 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
         }
     }
 
-    // ── Temperaturas barra superior ──────────────────────────────────────
+    // ── Indicadores de estado (iconos barra superior) ────────────────────
+    {
+        bool blinkPhase = (millis() % 1000) < 500;
+        // Tint: parpadea mientras el boiler calienta
+        if (s_aguaLbl) {
+            bool vis = !waterHeating || blinkPhase;
+            lv_obj_set_style_text_color(s_aguaLbl,
+                vis ? lv_color_hex(0xaaccff) : lv_color_hex(C_TOPBAR),
+                LV_PART_MAIN);
+        }
+        // Llama: parpadea mientras la calefacción está activada
+        if (s_fireLbl) {
+            bool heatActive = s_heatOn && (s_heatOn->getIntValue() != 0);
+            bool vis = !heatActive || blinkPhase;
+            lv_obj_set_style_text_color(s_fireLbl,
+                vis ? lv_color_hex(0xff8844) : lv_color_hex(C_TOPBAR),
+                LV_PART_MAIN);
+        }
+    }
     if (s_ambLbl) {
         char buf[32];
         if (trumaok && roomTemp > -200.0f)
@@ -903,29 +955,14 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
             strcpy(buf, MY_SYMBOL_THERMOMETER " -- \xc2\xb0""C");
         lv_label_set_text(s_ambLbl, buf);
     }
-    if (s_aguaLbl) {
-        char buf[24];
-        if (trumaok && waterTemp > -200.0f)
-            snprintf(buf, sizeof(buf), MY_SYMBOL_TINT " %.1f \xc2\xb0""C", waterTemp);
-        else
-            strcpy(buf, MY_SYMBOL_TINT " -- \xc2\xb0""C");
-        lv_label_set_text(s_aguaLbl, buf);
-
-        // Parpadeo a 1 Hz mientras el agua se está calentando
-        bool blinkVisible = !waterHeating || ((millis() % 1000) < 500);
-        lv_obj_set_style_text_color(s_aguaLbl,
-            blinkVisible ? lv_color_hex(0xaaccff) : lv_color_hex(C_TOPBAR),
-            LV_PART_MAIN);
-    }
 
     // ── Temperatura exterior (AM2301) ────────────────────────────────────
     if (s_extLbl) {
         char buf[28];
         if (extTemp > -200.0f)
-            snprintf(buf, sizeof(buf),
-                     LV_SYMBOL_HOME LV_SYMBOL_RIGHT " %.1f\xc2\xb0""C", extTemp);
+            snprintf(buf, sizeof(buf), MY_SYMBOL_THERM_EXT " " MY_SYMBOL_CHEVRON_R " %.1f\xc2\xb0""C", extTemp);
         else
-            strcpy(buf, LV_SYMBOL_HOME LV_SYMBOL_RIGHT " --\xc2\xb0""C");
+            strcpy(buf, MY_SYMBOL_THERM_EXT " " MY_SYMBOL_CHEVRON_R " --\xc2\xb0""C");
         lv_label_set_text(s_extLbl, buf);
     }
 
