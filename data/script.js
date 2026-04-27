@@ -221,14 +221,14 @@ function changeTemp(delta) {
 
 function toggleHeating() {
     s_heat = !s_heat;
-    if (!s_heat) { s_fan = 'off'; sendDebounced('/fan', 'off'); }
-    sendDebounced('/heating', s_heat ? '1' : '0');
+    if (!s_heat) { s_fan = 'off'; send('/fan', 'off'); }
+    send('/heating', s_heat ? '1' : '0');
     refreshHeat();
 }
 
 function setFan(value) {
     s_fan = value;
-    sendDebounced('/fan', value);
+    send('/fan', value);
     refreshFan();
 }
 
@@ -238,7 +238,7 @@ function setFanSby(mode) {
     } else {
         s_fan = 'off';
     }
-    sendDebounced('/fan', s_fan);
+    send('/fan', s_fan);
     refreshFan();
 }
 
@@ -253,7 +253,7 @@ function changeFanLvl(delta) {
 
 function setBoiler(value) {
     s_boiler = value;
-    sendDebounced('/boiler', value);
+    send('/boiler', value);
     refreshBoiler();
 }
 
