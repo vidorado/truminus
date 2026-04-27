@@ -941,10 +941,13 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
             lv_obj_set_style_text_color(s_aguaLbl, c, LV_PART_MAIN);
         }
         if (s_fireLbl) {
-            bool heatActive = s_heatOn && (s_heatOn->getIntValue() != 0);
-            lv_color_t c = !heatActive    ? lv_color_hex(C_LABEL)
-                         : blinkPhase     ? lv_color_hex(0xff8844)
-                                          : lv_color_hex(C_TOPBAR);
+            bool heatOn     = s_heatOn && (s_heatOn->getIntValue() != 0);
+            float sp        = (s_roomSp && heatOn) ? s_roomSp->getFloatValue() : 0.0f;
+            bool heatDemand = heatOn && trumaok && (roomTemp > -200.0f) && (roomTemp < sp - 0.3f);
+            lv_color_t c = !heatOn      ? lv_color_hex(C_LABEL)           // apagado: gris
+                         : !heatDemand  ? lv_color_hex(0xff8844)          // a temperatura: fijo
+                         : blinkPhase   ? lv_color_hex(0xff8844)          // calentando: parpadea
+                                       : lv_color_hex(C_TOPBAR);
             lv_obj_set_style_text_color(s_fireLbl, c, LV_PART_MAIN);
         }
     }

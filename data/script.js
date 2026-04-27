@@ -10,6 +10,7 @@ var s_mqttEnabled = true;
 
 // ── Estado de la aplicación ───────────────────────────────────────────────
 var s_temp        = 20.0;
+var s_roomTemp    = null;
 var s_heat        = false;
 var s_boiler      = 'off';
 var s_fan         = 'off';
@@ -85,6 +86,7 @@ function applySetting(id, value) {
     if (id === 'temp') {
         s_temp = parseFloat(value) || 20;
         refreshSetpoint();
+        refreshIndicators();
     } else if (id === 'heating') {
         s_heat = (value === '1');
         refreshHeat();
@@ -122,6 +124,11 @@ function applyStatus(id, value) {
 
     if (id === 'water_heating') {
         s_waterDemand = parseInt(value) === 1;
+        refreshIndicators();
+    }
+
+    if (id === 'room_temp') {
+        s_roomTemp = parseFloat(value);
         refreshIndicators();
     }
 
@@ -185,10 +192,13 @@ function refreshBoiler() {
 }
 
 function refreshIndicators() {
-    var boilerOn = s_boiler !== 'off';
+    var boilerOn   = s_boiler !== 'off';
     cls('ind-tint', 'ind-on',     boilerOn && !s_waterDemand);
     cls('ind-tint', 'ind-active', boilerOn && s_waterDemand);
-    cls('ind-fire', 'ind-active', s_heat);
+
+    var heatDemand = s_heat && s_roomTemp !== null && (s_roomTemp < s_temp - 0.3);
+    cls('ind-fire', 'ind-on',     s_heat && !heatDemand);
+    cls('ind-fire', 'ind-active', heatDemand);
 }
 
 // ── Acciones del usuario ──────────────────────────────────────────────────
