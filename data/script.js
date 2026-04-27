@@ -201,39 +201,44 @@ function refreshIndicators() {
     cls('ind-fire', 'ind-active', heatDemand);
 }
 
+// ── Envío con debounce (300 ms desde el último toque por topic) ───────────
+var _sendTimers = {};
+function sendDebounced(id, value) {
+    clearTimeout(_sendTimers[id]);
+    _sendTimers[id] = setTimeout(function () { send(id, value); }, 300);
+}
+
 // ── Acciones del usuario ──────────────────────────────────────────────────
 
-var tempTimer;
 function changeTemp(delta) {
-    clearTimeout(tempTimer);
     s_temp = Math.round((s_temp + delta) * 2) / 2;
     if (s_temp < 5)  s_temp = 5;
     if (s_temp > 30) s_temp = 30;
     refreshSetpoint();
-    tempTimer = setTimeout(function () { send('/temp', s_temp.toFixed(1)); }, 400);
+    refreshIndicators();
+    sendDebounced('/temp', s_temp.toFixed(1));
 }
 
 function toggleHeating() {
     s_heat = !s_heat;
-    if (!s_heat) { s_fan = 'off'; send('/fan', 'off'); }
-    send('/heating', s_heat ? '1' : '0');
+    if (!s_heat) { s_fan = 'off'; sendDebounced('/fan', 'off'); }
+    sendDebounced('/heating', s_heat ? '1' : '0');
     refreshHeat();
 }
 
 function setFan(value) {
     s_fan = value;
-    send('/fan', value);
+    sendDebounced('/fan', value);
     refreshFan();
 }
 
 function setFanSby(mode) {
     if (mode === 'on') {
         s_fan = String(s_fanLevel);
-        send('/fan', s_fan);
     } else {
         s_fan = 'off';
-        send('/fan', 'off');
     }
+    sendDebounced('/fan', s_fan);
     refreshFan();
 }
 
@@ -241,14 +246,14 @@ function changeFanLvl(delta) {
     s_fanLevel = Math.min(10, Math.max(1, s_fanLevel + delta));
     if (s_fan !== 'off') {
         s_fan = String(s_fanLevel);
-        send('/fan', s_fan);
+        sendDebounced('/fan', s_fan);
     }
     document.getElementById('fanLvlVal').textContent = s_fanLevel;
 }
 
 function setBoiler(value) {
     s_boiler = value;
-    send('/boiler', value);
+    sendDebounced('/boiler', value);
     refreshBoiler();
 }
 
