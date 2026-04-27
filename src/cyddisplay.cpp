@@ -835,8 +835,8 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
                                   BOILER_LAB[i], boilerCb, (void*)(intptr_t)i);
     }
 
-    // ── Energía ──────────────────────────────────────────────────────────
-    makeSecLabel(s_scr, rx, Y_CONT + 108, "ENERGIA");
+    // ── Energía — oculto (Combi D, sin opción eléctrica) ─────────────────
+    lv_obj_add_flag(makeSecLabel(s_scr, rx, Y_CONT + 108, "ENERGIA"), LV_OBJ_FLAG_HIDDEN);
 
     s_energyDd = lv_dropdown_create(s_scr);
     lv_obj_set_pos(s_energyDd, rx, Y_CONT + 124);
@@ -859,6 +859,7 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     lv_obj_set_style_text_font(ddList,    &lv_font_montserrat_14,    LV_PART_MAIN);
 
     lv_obj_add_event_cb(s_energyDd, energyDdCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_flag(s_energyDd, LV_OBJ_FLAG_HIDDEN);
 
     // ── Barra de estado ───────────────────────────────────────────────────
     s_statusLbl = lv_label_create(s_scr);

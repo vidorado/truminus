@@ -13,7 +13,6 @@ var s_temp       = 20.0;
 var s_heat       = false;
 var s_boiler     = 'off';
 var s_fan        = 'off';
-var s_energyIdx  = 0;
 var s_fanLevel   = 5;
 
 // ── Barra de estado ───────────────────────────────────────────────────────
@@ -96,9 +95,6 @@ function applySetting(id, value) {
         var n = parseInt(value);
         if (!isNaN(n) && n > 0) s_fanLevel = n;
         refreshFan();
-    } else if (id === 'energy_idx') {
-        s_energyIdx = parseInt(value) || 0;
-        refreshEnergyCombo();
     }
 }
 
@@ -157,6 +153,7 @@ function refreshHeat() {
     cls('fanSbyRow',  'vis-hidden',  s_heat);
     if (s_heat) cls('fanLvlRow', 'vis-hidden', true);
     refreshFan();
+    refreshIndicators();
 }
 
 function refreshFan() {
@@ -178,10 +175,12 @@ function refreshBoiler() {
     Object.keys(map).forEach(function (k) {
         cls(map[k], 'btn-sel', s_boiler === k);
     });
+    refreshIndicators();
 }
 
-function refreshEnergyCombo() {
-    document.getElementById('energyCombo').value = s_energyIdx;
+function refreshIndicators() {
+    cls('ind-tint', 'ind-active', s_boiler !== 'off');
+    cls('ind-fire', 'ind-active', s_heat);
 }
 
 // ── Acciones del usuario ──────────────────────────────────────────────────
@@ -235,14 +234,7 @@ function setBoiler(value) {
     refreshBoiler();
 }
 
-function setEnergyCombo(idx) {
-    s_energyIdx = parseInt(idx);
-    send('/energy_idx', String(s_energyIdx));
-    refreshEnergyCombo();
-}
-
 // ── Inicialización ────────────────────────────────────────────────────────
 refreshSetpoint();
 refreshHeat();
 refreshBoiler();
-refreshEnergyCombo();
