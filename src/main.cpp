@@ -129,15 +129,14 @@ TWaterBoost *WaterBoost;
 #define FRAMES_TO_WRITE 7
 #define MASTER_FRAMES 1
 #else
-#define FRAMES_TO_READ 5
-#define FRAMES_TO_WRITE 6
-#define MASTER_FRAMES 5
+#define FRAMES_TO_READ 2
+#define FRAMES_TO_WRITE 7
+#define MASTER_FRAMES 2
 #endif
 //the frames to be read
 TFrameBase * frames_to_read[FRAMES_TO_READ];
- //I only care about frame 16 content, the remaining frames will be 
- //directly allocated in frames_to_read
-TFrame16 *Frame16;
+TFrame21 *Frame21;
+TFrame22 *Frame22 = nullptr;
 //the frames to be written
 TFrameBase * frames_to_write[FRAMES_TO_WRITE];
 TFrameSetTemp *SimulateTempFrame;
@@ -146,6 +145,7 @@ TFrameSetTemp *WaterSetpointFrame;
 TFrameEnergySelect *EnergySelect;
 TFrameSetPowerLimit *SetPowerLimit;
 TFrameSetFan *FanFrame;
+TFrameSetControl20 *ControlFrame20;
 #ifdef COMBIGAS
 TFrameSetControlElements *ControlElementsFrame;
 #endif
@@ -208,6 +208,8 @@ TPubBool PublishHeartBeat("/heartbeat");
 void HandleCommandReset();
 // Forward declaration: linBusTask is defined after loop() but used in setup()
 static void linBusTask(void*);
+static volatile bool linSniff = false;  // passive sniffer mode (sniff on|off para diagnóstico)
+static bool linSniffUartOpen = false;
 //led in a separate task (not used on CYD)
 #ifndef CYD
 void LedLoop(void * pvParameters);
@@ -266,16 +268,12 @@ void setup() {
   }
   #endif
 
-  //frames to read
-  //frames 0x14 and 0x37 are defined but are useless for this model of combi D
-  //so they're not read
-  Frame16=new TFrame16();
-  frames_to_read[0] = Frame16;
+  //frames to read — CP Plus D protocol uses 0x21 and 0x22
+  Frame21=new TFrame21();
+  frames_to_read[0] = Frame21;
   #ifndef COMBIGAS
-  frames_to_read[1] = new TFrame34();
-  frames_to_read[2] = new TFrame39();
-  frames_to_read[3] = new TFrame35();
-  frames_to_read[4] = new TFrame3b();
+  Frame22 = new TFrame22();
+  frames_to_read[1] = Frame22;
   #endif
 
   //frames to write
@@ -286,12 +284,14 @@ void setup() {
   EnergySelect = new TFrameEnergySelect(0x05);
   SetPowerLimit = new TFrameSetPowerLimit(0x06);
   FanFrame = new TFrameSetFan(0x07);
+  ControlFrame20 = new TFrameSetControl20();
   frames_to_write[0] = SimulateTempFrame;
   frames_to_write[1] = RoomSetpointFrame;
   frames_to_write[2] = WaterSetpointFrame;
   frames_to_write[3] = EnergySelect;
   frames_to_write[4] = SetPowerLimit;
   frames_to_write[5] = FanFrame;
+  frames_to_write[6] = ControlFrame20;
   #ifdef COMBIGAS
   ControlElementsFrame = new TFrameSetControlElements(0x1D);
   frames_to_write[6] = ControlElementsFrame;
@@ -307,12 +307,11 @@ void setup() {
   */
   master_frames[0] = onOff;
   #else
-  master_frames[0] = new TAssignFrameRanges(0x09, {0x3b, 0x3a, 0x39, 0x38});
-  master_frames[1] = new TAssignFrameRanges(0x0d, {0x37, 0x36, 0x35, 0x34});
-  master_frames[2] = new TAssignFrameRanges(0x11, {0x33, 0x32, 0xff, 0xff});
-  master_frames[3] = onOff;
+  // CP-Plus never uses B7 (TAssignFrameRanges) — omitting it to avoid
+  // corrupting the Truma's frame table (confirmed via WomoLIN bus captures).
+  master_frames[0] = onOff;
   getErrorInfo = new TGetErrorInfo();
-  master_frames[4] = getErrorInfo;
+  master_frames[1] = getErrorInfo;
   #endif
 
   //setpoints
@@ -459,11 +458,8 @@ void setup() {
 
 //enable/disables the master frames to assign frame ranges
 void AssignFrameRanges(boolean on) {
-#ifndef COMBIGAS
-  for (int i=0; i<3; i++) {
-    master_frames[i]->setEnabled(on && !truma_reset);
-  }
-#endif
+  // No-op: B7 (TAssignFrameRanges) removed — CP-Plus never sends it.
+  (void)on;
 }
 
 // When performing a reset only enable the onOff master frame
@@ -540,8 +536,102 @@ void CheckWifi() {
 // All blocking serial I/O runs here so the main loop (Core 1) stays free
 // to service WiFi, MQTT, OTA, WebSocket and the LVGL display.
 static void linBusTask(void*) {
+  // ── Sniffer state ───────────────────────────────────────────────────────
+  enum SniffSt { S_IDLE, S_GOT_BREAK, S_GOT_SYNC, S_IN_FRAME } sniffSt = S_IDLE;
+  uint8_t sniffPid = 0, sniffBuf[12]; int sniffN = 0;
+  unsigned long sniffLastMs = 0;
+  // Dedup cache: print full frame when first seen, then only changed bytes as diff.
+  struct { uint8_t pid; uint8_t data[9]; bool seen; } sniffHistory[16];
+  int sniffHistoryN = 0;
+
   for (;;) {
     esp_task_wdt_reset();
+
+    // ── Modo sniff pasivo ─────────────────────────────────────────────────
+    if (linSniff) {
+      if (!linSniffUartOpen) {
+        Serial1.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
+        while (Serial1.available()) Serial1.read();
+        linSniffUartOpen = true;
+        sniffSt = S_IDLE; sniffN = 0;
+        sniffHistoryN = 0;
+        memset(sniffHistory, 0, sizeof(sniffHistory));
+        Serial.println("[sniff] escuchando LIN bus — 'sniff off' para parar");
+      }
+      while (Serial1.available()) {
+        uint8_t b = Serial1.read();
+        unsigned long now = millis();
+        // frame timeout: print partial frame and reset
+        if (sniffSt == S_IN_FRAME && sniffN > 0 && now - sniffLastMs > 8) {
+          Serial.printf("%7lu [%02X]", sniffLastMs, sniffPid);
+          for (int i = 0; i < sniffN; i++) Serial.printf(" %02X", sniffBuf[i]);
+          Serial.println(" TIMEOUT");
+          sniffSt = S_IDLE; sniffN = 0;
+        }
+        sniffLastMs = now;
+        switch (sniffSt) {
+          case S_IDLE:
+          case S_GOT_BREAK:
+            if      (b == 0x00)                              sniffSt = S_GOT_BREAK;
+            else if (b == 0x55 && sniffSt == S_GOT_BREAK)   sniffSt = S_GOT_SYNC;
+            else                                             sniffSt = S_IDLE;
+            break;
+          case S_GOT_SYNC:
+            sniffPid = b; sniffN = 0; sniffSt = S_IN_FRAME;
+            break;
+          case S_IN_FRAME:
+            if (sniffN < 12) sniffBuf[sniffN++] = b;
+            if (sniffN == 9) {
+              // 0x3C/0x7D = LIN transport layer (master req / slave resp) — siempre cambiantes, sin interés
+              if (sniffPid == 0x3C || sniffPid == 0x7D) { sniffSt = S_IDLE; sniffN = 0; break; }
+              int slot = -1;
+              for (int i = 0; i < sniffHistoryN; i++) {
+                if (sniffHistory[i].pid == sniffPid) { slot = i; break; }
+              }
+              bool isNew = (slot < 0);
+              if (isNew && sniffHistoryN < 16) slot = sniffHistoryN++;
+              if (slot >= 0) {
+                bool changed = isNew || !sniffHistory[slot].seen ||
+                               memcmp(sniffHistory[slot].data, sniffBuf, 9) != 0;
+                if (changed) {
+                  Serial.printf("%7lu [%02X]", now, sniffPid);
+                  if (!sniffHistory[slot].seen) {
+                    // Primera vez: frame completo
+                    for (int i = 0; i < 8; i++) Serial.printf(" %02X", sniffBuf[i]);
+                    Serial.printf(" cs=%02X\n", sniffBuf[8]);
+                  } else {
+                    // Sólo bytes que cambiaron: bN:viejo→nuevo
+                    for (int i = 0; i < 9; i++) {
+                      if (sniffHistory[slot].data[i] != sniffBuf[i])
+                        Serial.printf(" b%d:%02X→%02X", i, sniffHistory[slot].data[i], sniffBuf[i]);
+                    }
+                    Serial.println();
+                  }
+                  sniffHistory[slot].pid  = sniffPid;
+                  sniffHistory[slot].seen = true;
+                  memcpy(sniffHistory[slot].data, sniffBuf, 9);
+                }
+              }
+              sniffSt = S_IDLE; sniffN = 0;
+            }
+            break;
+        }
+      }
+      // frame timeout when no bytes available
+      if (sniffSt == S_IN_FRAME && sniffN > 0 && millis() - sniffLastMs > 8) {
+        Serial.printf("%7lu [%02X]", sniffLastMs, sniffPid);
+        for (int i = 0; i < sniffN; i++) Serial.printf(" %02X", sniffBuf[i]);
+        Serial.println(" TIMEOUT");
+        sniffSt = S_IDLE; sniffN = 0;
+      }
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+    // Saliendo de modo sniff: cerrar UART y dejar que LinBus lo retome
+    if (linSniffUartOpen) {
+      Serial1.end();
+      linSniffUartOpen = false;
+    }
 
     byte PumpOrFan;
     double LocSetPointTemp = 0.0;
@@ -552,8 +642,12 @@ static void linBusTask(void*) {
 
     //determines operating mode
     if (!LocHeatingOn) {
-       if (LocFanMode>0) {
+       if (LocFanMode > 0) {
          PumpOrFan = 0x10 | LocFanMode;
+       } else if (LocFanMode == -2) {
+         PumpOrFan = 0x12;  // high fan, no heating
+       } else if (LocFanMode == -1) {
+         PumpOrFan = 0x11;  // eco fan, no heating
        } else {
          PumpOrFan = 0x10;
        }
@@ -575,15 +669,18 @@ static void linBusTask(void*) {
       }
     }
 
-    //Water boost
-    if (LocWaterSetpoint>=60.0) {
-       WaterBoost->Start(Frame16->getWaterDemand());
-    } else {
-       WaterBoost->Stop();
-    }
-    if (WaterBoost->Active(Frame16->getWaterDemand()) && Frame16->getWaterTemp()<50.0) {
-        LocSetPointTemp=0.0;
-        PumpOrFan=0;
+    //Water boost — sólo para modo "boost", no para "high" aunque ambos sean 60°C
+    {
+      bool wHeat = Frame22 ? Frame22->getWaterHeating() : Frame21->getWaterDemand();
+      if (WaterSetpoint->getStringValue() == "boost") {
+         WaterBoost->Start(wHeat);
+      } else {
+         WaterBoost->Stop();
+      }
+      if (WaterBoost->Active(wHeat)) {
+          LocSetPointTemp=0.0;
+          PumpOrFan=0;
+      }
     }
 
     //prepare setpoint frames
@@ -591,6 +688,14 @@ static void linBusTask(void*) {
     RoomSetpointFrame->setTemperature(LocSetPointTemp);
     WaterSetpointFrame->setTemperature(LocWaterSetpoint);
     FanFrame->setPumpOrFan(PumpOrFan);
+    ControlFrame20->setRoomSetpoint(LocSetPointTemp);   // 0 when heating off → sends 0xAA 0xAA
+    ControlFrame20->setWaterSetpoint(LocWaterSetpoint); // K×10>>4 en byte2, 0xAA si apagado
+    {
+      // bm=1 para cualquier modo activo: confirmado del CP Plus real (siempre envía 1).
+      // El setpoint real lo controla byte2 (K×10>>4). bm=0 sólo cuando está apagado.
+      uint8_t bm = (LocWaterSetpoint > 0.0) ? 1 : 0;
+      ControlFrame20->setFanAndWater(PumpOrFan, bm);
+    }
 
     //truma reset requested, turn off and wait
     if (truma_reset) {
@@ -604,7 +709,7 @@ static void linBusTask(void*) {
         }
       }
     } else
-    if (LocHeatingOn || LocWaterSetpoint > 0.0 || LocFanMode > 0 || forceon) {
+    if (LocHeatingOn || LocWaterSetpoint > 0.0 || LocFanMode != 0 || forceon) {
       onOff->SetOn(true);
       forceon = false;
       off_delay = millis();
@@ -650,9 +755,8 @@ static void linBusTask(void*) {
       }
       AssignFrameRanges(!extraFramesOk);
 
-      // LIN OK if ANY readable frame responds — frame16 may be silent when
-      // the Truma is in certain states even while the bus is fully active.
-      trumaok = Frame16->getDataOk();
+      // LIN OK if frame 0x21 or 0x22 responds.
+      trumaok = Frame21->getDataOk();
       for (int i = 1; i < FRAMES_TO_READ && !trumaok; i++)
           trumaok = frames_to_read[i]->getDataOk();
 
@@ -768,9 +872,12 @@ void loop() {
   // lv_timer_handler() runs in lvglTask (Core 1) every 5 ms.
   // We only need to update display state; grab the mutex briefly.
   if (xSemaphoreTake(s_lvglMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    double wTempDisp = Frame22 ? Frame22->getWaterTemp()    : Frame21->getWaterTemp();
+    bool   wHeating  = (Frame22 ? Frame22->getWaterHeating(): Frame21->getWaterDemand())
+                       && (WaterSetpoint->getFloatValue() > 0.0);
     cydDisplayUpdate(wifiok, mqttok, trumaok, truma_reset, inota, mqttEnabled,
-                     (float)Frame16->getRoomTemp(), (float)Frame16->getWaterTemp(),
-                     Frame16->getWaterDemand(), s_extTemp);
+                     (float)Frame21->getRoomTemp(), (float)wTempDisp,
+                     wHeating, s_extTemp);
     xSemaphoreGive(s_lvglMutex);
   }
   #endif
@@ -786,6 +893,7 @@ void loop() {
   if (CommandReader.Available(&cmd, &param)) {
     if (cmd=="help") {
        Serial.println("Available commands:");
+       Serial.println("sniff on|off         escucha pasiva del bus LIN (splitter)");
        Serial.println("lindebug on|off");
        Serial.println("mqttdebug on|off");
        Serial.println("busindex             estado del bus LIN (frames + raw bytes)");
@@ -801,9 +909,32 @@ void loop() {
       uint8_t buf[8];
       Serial.println("=== LIN bus index ===");
       Serial.printf("  trumaok : %s\n", trumaok ? "ok" : "sin respuesta");
-      Serial.printf("  onOff   : req=%u cur=%u  (%s)\n",
-                    onOff->getRequestedState(), onOff->getCurrentState(),
-                    onOff->GetOn() ? "on" : "off");
+      {
+        bool b8ok = onOff->getDataOk();
+        Serial.printf("  B8 onOff: %s  req=%u cur=%u  (%s)\n",
+                      b8ok ? "OK" : "NO RESPONDE",
+                      onOff->getRequestedState(), onOff->getCurrentState(),
+                      onOff->GetOn() ? "on" : "off");
+        if (b8ok) {
+          uint8_t rb[8];
+          onOff->getRawReply(rb);
+          Serial.printf("            reply:");
+          for (int j = 0; j < 8; j++) Serial.printf(" %02X", rb[j]);
+          Serial.println();
+        }
+      }
+      {
+        bool b2ok = getErrorInfo->getDataOk();
+        Serial.printf("  B2 errInfo: %s\n", b2ok ? "OK" : "NO RESPONDE");
+        if (b2ok) {
+          uint8_t rb[8];
+          getErrorInfo->getRawReply(rb);
+          Serial.printf("              reply:");
+          for (int j = 0; j < 8; j++) Serial.printf(" %02X", rb[j]);
+          Serial.printf("  class:%02Xh code:%02Xh\n",
+                        getErrorInfo->getErrorClass(), getErrorInfo->getErrorCode());
+        }
+      }
       for (int i = 0; i < FRAMES_TO_READ; i++) {
         uint8_t fid = frames_to_read[i]->frameid();
         bool    ok  = frames_to_read[i]->getDataOk();
@@ -811,14 +942,25 @@ void loop() {
         if (ok) {
           frames_to_read[i]->getData(buf);
           for (int j = 0; j < 8; j++) Serial.printf(" %02X", buf[j]);
-          if (fid == 0x16)
-            Serial.printf("  room:%.1f° agua:%.1f°",
-                          Frame16->getRoomTemp(), Frame16->getWaterTemp());
-          if (fid == 0x3b)
-            Serial.printf("  SW:%u errT:%02Xh errH:%02Xh",
-                          buf[0], buf[1], buf[2]);
+          if (fid == 0x21)
+            Serial.printf("  room:%.1f°", Frame21->getRoomTemp());
+        else if (fid == 0x22 && Frame22)
+            Serial.printf("  agua:%.1f° heat:%d", Frame22->getWaterTemp(), Frame22->getWaterHeating());
         }
         Serial.println();
+      }
+      {
+        ControlFrame20->getData(buf);
+        Serial.printf("  TX 20h :     ");
+        for (int j = 0; j < 8; j++) Serial.printf(" %02X", buf[j]);
+        uint16_t rawSP = (uint16_t)buf[0] | (((uint16_t)(buf[1] & 0x0F)) << 8);
+        Serial.printf("  room_sp:%.1f° fan/water:%02Xh\n",
+                      rawSP / 10.0 - 273.0, buf[5]);
+      }
+    } else if (cmd=="sniff") {
+      if (param=="on" || param=="off") {
+        linSniff = (param=="on");
+        found=true;
       }
     } else if (cmd=="lindebug") {
       if (param=="on") {

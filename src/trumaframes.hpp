@@ -436,18 +436,35 @@ class TFrame14: public TFrameBase {
 };
 
 class TFrame16: public TFrameBase {
-    private:
+    protected:
        bool FWaterDemand;
        double FWaterTemp;
        double FRoomTemp;
     public:
       TFrame16();
       void publishFrameData() override;
-      //method to keep track of current water demand and temperature
-      //for the
       bool getWaterDemand() { return FWaterDemand;};
       double getWaterTemp() { return FWaterTemp;};
       double getRoomTemp()  { return FRoomTemp; };
+};
+
+// Replaces TFrame16 in the CP Plus D protocol (frames 0x20/0x21/0x22).
+// Hypothesis (single capture): byte1=flags, byte3=water°C, byte7=room°C.
+class TFrame21: public TFrame16 {
+    public:
+      TFrame21() : TFrame16() { fframeid = 0x21; }
+      void publishFrameData() override;
+};
+
+class TFrame22: public TFrameBase {
+  private:
+    double FWaterTemp    = -273.0;
+    bool   FWaterHeating = false;
+  public:
+    TFrame22();
+    void publishFrameData() override;
+    double getWaterTemp()    const { return FWaterTemp; }
+    bool   getWaterHeating() const { return FWaterHeating; }  // byte1 & 0xC0 == 0x40 (bit6=1, bit7=0)
 };
 
 class TFrame34: public TFrameBase {
@@ -541,9 +558,79 @@ class TFrameSetControlElements: public TFrameBase {
     void SetDiensteLin(uint8_t DiensteLin);
 };
 
+// CP Plus D write frame 0x20 — carries setpoints to the Truma.
+// Confirmed byte layout (ref: CP-Plus D capture + passive sniff analysis):
+//   bytes 0-1: room setpoint as 12-bit K×10 — byte0=LSB, byte1 bits3:0=MSB nibble,
+//              byte1 bits7:4=0xA (flags, constant from CP-Plus captures)
+//              e.g. 30°C → raw=3030=0x0BD6 → byte0=0xD6, byte1=0xAB
+//              0xAA 0xAA = "heating off" pattern
+//   byte  2: water setpoint as K×10 >> 4 (bits 11:4 of K×10 raw)
+//              e.g. 40°C→3130=0x0C3A→0xC3, 60°C→3330=0x0D02→0xD0
+//              0xAA = water off
+//   byte  3: 0xFA (constant)
+//   byte  5: packed nibbles — high=heating/fan mode, low=water mode (0-3)
+//              heating eco: high nibble=0xB, heating high: high nibble=0xD
+//              fan-only: high nibble=fan level (0-10)
+//   byte  6: 0xE0 (constant)
+//   byte  7: 0x0F (constant)
+class TFrameSetControl20 : public TFrameBase {
+  public:
+    TFrameSetControl20() : TFrameBase() {
+        fframeid = 0x20;
+        fdata[0] = 0xAA;
+        fdata[1] = 0xAA;
+        fdata[2] = 0xAA;
+        fdata[3] = 0xFA;
+        fdata[4] = 0x00;
+        fdata[5] = 0x01;
+        fdata[6] = 0xE0;
+        fdata[7] = 0x0F;  // constant (NOT room setpoint — setpoint is in bytes 0-1)
+    }
+    void setRoomSetpoint(double celsius) {
+        if (celsius < 5.0 || celsius > 30.0) {
+            fdata[0] = 0xAA;  // 0xAA 0xAA = "heating off" pattern (from CP-Plus capture)
+            fdata[1] = 0xAA;
+            return;
+        }
+        uint16_t raw = (uint16_t)lround((celsius + 273.0) * 10.0);
+        fdata[0] = raw & 0xFF;
+        fdata[1] = 0xA0 | ((raw >> 8) & 0x0F);  // flags nibble=0xA, temp MSB nibble
+    }
+    void setWaterSetpoint(double celsius) {
+        if (celsius < 1.0) {
+            fdata[2] = 0xAA;  // water off
+            return;
+        }
+        uint16_t raw = (uint16_t)lround((celsius + 273.0) * 10.0);
+        fdata[2] = (uint8_t)(raw >> 4);  // K×10 bits 11:4 (confirmed from real CP-Plus sniff)
+    }
+    // Byte 5: high nibble = heating/fan mode, low nibble = water mode (0-3).
+    // Confirmed from real CP-Plus D captures:
+    //   pumpOrFan=1 (eco heat)    → high nibble 0xB
+    //   pumpOrFan=2 (high heat)   → high nibble 0xD
+    //   pumpOrFan=0x10 (no fan)   → high nibble 0x0 (fan off)
+    //   pumpOrFan=0x11..0x1A      → high nibble = fan speed 1-10
+    // NOTE: 0xA in the high nibble = fan speed 10 (max), NOT "standby".
+    // The CP-Plus full-standby frame happens to send 0xA0 because byte5 is
+    // ignored when bytes 0-2 are all 0xAA (standby sentinel). Using 0xA for
+    // "fan off" caused the Truma to run at full speed whenever off was commanded.
+    void setFanAndWater(uint8_t pumpOrFan, uint8_t waterMode) {
+        uint8_t fanNibble;
+        if (pumpOrFan == 1) {
+            fanNibble = 0xB;
+        } else if (pumpOrFan == 2) {
+            fanNibble = 0xD;
+        } else {
+            uint8_t level = (pumpOrFan >= 0x10) ? (pumpOrFan & 0x0F) : pumpOrFan;
+            fanNibble = level;  // 0=off, 1-9=speeds, 0xA=speed10(max)
+        }
+        fdata[5] = (fanNibble << 4) | (waterMode & 0x0F);
+    }
+};
+
 /*******************************************************************
  * Master Request/Slave reply frames
- * 
+ *
 */
 class TMasterFrame: public TFrameBase {
   protected:
@@ -560,6 +647,7 @@ class TMasterFrame: public TFrameBase {
     virtual void setReadResult(boolean ok);
     void setEnabled(boolean value) {fenabled=value;};
     boolean getEnabled() { return fenabled;};
+    void getRawReply(uint8_t* dest) const { memcpy(dest, freply, 8); };
 };
 
 // frame to enable frames not usually availavble

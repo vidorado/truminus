@@ -8,7 +8,7 @@
 #endif
 
 std::vector<String> BoilerMode = {"off","eco","high","boost"};
-double BoilerTemp[] = {0.0, 40.0, 55.0, 60.0}; 
+double BoilerTemp[] = {0.0, 40.0, 60.0, 60.0};
 std::vector<String> FanModes = {"eco","high","off","1","2","3","4","5","6","7","8","9","10"};
 
 void TMqttSetting::PublishValue(bool local)
