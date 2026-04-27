@@ -334,15 +334,14 @@ void setup() {
 
   #ifdef CYD
   // ── Persistencia NVS (CYD solamente) ──────────────────────────────────
-  // RoomSetpoint: se recuerda entre reinicios.
   RoomSetpoint->setPersist(true);
-  RoomSetpoint->loadPersistedValue();   // carga último valor guardado
-  // HeatingOn / WaterSetpoint / FanMode: arrancan siempre en el valor por
-  // defecto (off) — no se publican con retain para que el broker MQTT no
-  // restaure el estado en el siguiente reinicio.
-  HeatingOn->setRetain(false);
-  WaterSetpoint->setRetain(false);
-  FanMode->setRetain(false);
+  RoomSetpoint->loadPersistedValue();
+  HeatingOn->setPersist(true);
+  HeatingOn->loadPersistedValue();
+  WaterSetpoint->setPersist(true);
+  WaterSetpoint->loadPersistedValue();
+  FanMode->setPersist(true);
+  FanMode->loadPersistedValue();
 
   // Now that all settings objects exist, init the display controls.
   cydDisplayInit(RoomSetpoint, WaterSetpoint, HeatingOn, FanMode);

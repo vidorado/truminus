@@ -130,18 +130,24 @@ void TMqttSetting::loadPersistedValue() {
     if (!fpersist) return;
     Preferences prefs;
     prefs.begin("truminus", true);  // read-only
+    String key = ftopic.startsWith("/") ? ftopic.substring(1) : ftopic;
     if (fkind == SKFloat) {
-        // Use -9999 as sentinel: if not stored yet, leave the default unchanged
-        double v = prefs.getDouble(
-            ftopic.startsWith("/") ? ftopic.substring(1).c_str() : ftopic.c_str(),
-            -9999.0);
+        double v = prefs.getDouble(key.c_str(), -9999.0);
+        prefs.end();
         if (v > -9000.0) {
-            // Bypass setValue to avoid triggering MQTT/WebSocket during setup
-            ffloatvalue = v;
+            ffloatvalue = v;  // bypass setValue — MQTT/WS not ready at setup
         }
+        Serial.printf("NVS load %s = %.1f\n", ftopic.c_str(), ffloatvalue);
+    } else if (fkind == SKString) {
+        String v = prefs.getString(key.c_str(), "");
+        prefs.end();
+        if (v.length() > 0) {
+            setValue(v, false);  // local=false: no MQTT echo; WS not open yet
+        }
+        Serial.printf("NVS load %s = %s\n", ftopic.c_str(), fstringvalue.c_str());
+    } else {
+        prefs.end();
     }
-    prefs.end();
-    Serial.printf("NVS load %s = %.1f\n", ftopic.c_str(), ffloatvalue);
 #endif
 }
 
@@ -151,6 +157,15 @@ void TMqttSetting::setValue(String newvalue, bool local)
         return;
     }
     fstringvalue=newvalue;
+#ifdef CYD
+    if (fpersist) {
+        Preferences prefs;
+        prefs.begin("truminus", false);
+        String key = ftopic.startsWith("/") ? ftopic.substring(1) : ftopic;
+        prefs.putString(key.c_str(), fstringvalue);
+        prefs.end();
+    }
+#endif
     PublishValue(local);
 }
 
