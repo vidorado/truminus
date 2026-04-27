@@ -9,11 +9,12 @@ var s_mqttOk     = false;
 var s_mqttEnabled = true;
 
 // ── Estado de la aplicación ───────────────────────────────────────────────
-var s_temp       = 20.0;
-var s_heat       = false;
-var s_boiler     = 'off';
-var s_fan        = 'off';
-var s_fanLevel   = 5;
+var s_temp        = 20.0;
+var s_heat        = false;
+var s_boiler      = 'off';
+var s_fan         = 'off';
+var s_fanLevel    = 5;
+var s_waterDemand = false;
 
 // ── Barra de estado ───────────────────────────────────────────────────────
 function updateStatusBar() {
@@ -119,6 +120,11 @@ function applyStatus(id, value) {
         updateMqttDot();
     }
 
+    if (id === 'waterdemand') {
+        s_waterDemand = parseInt(value) === 1;
+        refreshIndicators();
+    }
+
     if (id === 'error_code') {
         var code = parseInt(value);
         var line = document.getElementById('error_line');
@@ -179,7 +185,7 @@ function refreshBoiler() {
 }
 
 function refreshIndicators() {
-    cls('ind-tint', 'ind-active', s_boiler !== 'off');
+    cls('ind-tint', 'ind-active', s_waterDemand);
     cls('ind-fire', 'ind-active', s_heat);
 }
 

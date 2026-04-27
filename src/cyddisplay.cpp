@@ -703,14 +703,14 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     // Icono tint (izquierda) — parpadea cuando el boiler está calentando
     s_aguaLbl = lv_label_create(topBar);
     lv_obj_set_style_text_font(s_aguaLbl, &symbols_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_aguaLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_aguaLbl, lv_color_hex(C_LABEL), LV_PART_MAIN);
     lv_label_set_text(s_aguaLbl, MY_SYMBOL_TINT);
     lv_obj_set_pos(s_aguaLbl, 5, 7);
 
     // Icono llama — parpadea cuando la calefacción está activa
     s_fireLbl = lv_label_create(topBar);
     lv_obj_set_style_text_font(s_fireLbl, &symbols_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_fireLbl, lv_color_hex(0xff8844), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_fireLbl, lv_color_hex(C_LABEL), LV_PART_MAIN);
     lv_label_set_text(s_fireLbl, MY_SYMBOL_FIRE);
     lv_obj_set_pos(s_fireLbl, 22, 7);
 
@@ -932,20 +932,18 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
     // ── Indicadores de estado (iconos barra superior) ────────────────────
     {
         bool blinkPhase = (millis() % 1000) < 500;
-        // Tint: parpadea mientras el boiler calienta
         if (s_aguaLbl) {
-            bool vis = !waterHeating || blinkPhase;
-            lv_obj_set_style_text_color(s_aguaLbl,
-                vis ? lv_color_hex(0xaaccff) : lv_color_hex(C_TOPBAR),
-                LV_PART_MAIN);
+            lv_color_t c = !waterHeating  ? lv_color_hex(C_LABEL)
+                         : blinkPhase     ? lv_color_hex(0xaaccff)
+                                          : lv_color_hex(C_TOPBAR);
+            lv_obj_set_style_text_color(s_aguaLbl, c, LV_PART_MAIN);
         }
-        // Llama: parpadea mientras la calefacción está activada
         if (s_fireLbl) {
             bool heatActive = s_heatOn && (s_heatOn->getIntValue() != 0);
-            bool vis = !heatActive || blinkPhase;
-            lv_obj_set_style_text_color(s_fireLbl,
-                vis ? lv_color_hex(0xff8844) : lv_color_hex(C_TOPBAR),
-                LV_PART_MAIN);
+            lv_color_t c = !heatActive    ? lv_color_hex(C_LABEL)
+                         : blinkPhase     ? lv_color_hex(0xff8844)
+                                          : lv_color_hex(C_TOPBAR);
+            lv_obj_set_style_text_color(s_fireLbl, c, LV_PART_MAIN);
         }
     }
     if (s_ambLbl) {
