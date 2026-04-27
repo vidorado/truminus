@@ -934,10 +934,9 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
         bool blinkPhase = (millis() % 1000) < 500;
         if (s_aguaLbl) {
             bool boilerOn = s_waterSp && s_waterSp->getStringValue() != "off";
-            lv_color_t c = !boilerOn     ? lv_color_hex(C_LABEL)           // apagado: gris
-                         : !waterHeating ? lv_color_hex(0xaaccff)          // a temperatura: fijo
-                         : blinkPhase    ? lv_color_hex(0xaaccff)          // calentando: parpadea
-                                        : lv_color_hex(C_TOPBAR);
+            lv_color_t c = !waterHeating ? lv_color_hex(C_LABEL)            // apagado o a temperatura: gris
+                         : blinkPhase   ? lv_color_hex(0xaaccff)           // calentando: parpadea
+                                       : lv_color_hex(C_TOPBAR);
             lv_obj_set_style_text_color(s_aguaLbl, c, LV_PART_MAIN);
         }
         if (s_fireLbl) {
