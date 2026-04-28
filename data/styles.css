@@ -87,6 +87,8 @@ body {
 @keyframes ind-blink { 0%,100%{opacity:1} 50%{opacity:0} }
 #ind-fire.ind-on,
 #ind-fire.ind-active { color: #ff8844; }
+#ind-tint.ind-on,
+#ind-tint.ind-active { color: #55aaff; }
 
 .topbar-icons { display: flex; gap: 7px; flex-shrink: 0; align-items: center; }
 

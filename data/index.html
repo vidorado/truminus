@@ -8,7 +8,7 @@
 </head>
 <body>
 
-<!-- ── Barra superior ─────────────────────────────────────────────────── -->
+<!-- ── Top bar ────────────────────────────────────────────────────────── -->
 <header class="topbar">
   <div class="topbar-temps">
     <span id="ind-tint" class="tbadge tbadge-ind"><i class="fi">&#xF043;</i></span>
@@ -23,16 +23,16 @@
   </div>
 </header>
 
-<!-- ── Paneles principales ────────────────────────────────────────────── -->
+<!-- ── Main panels ────────────────────────────────────────────────────── -->
 <main class="panels">
 
-  <!-- Panel izquierdo — CALEFACCIÓN -->
+  <!-- Left panel — HEATING -->
   <section class="panel">
-    <div class="p-title">CALEFACCIÓN</div>
+    <div class="p-title" data-i18n="heating">CALEFACCIÓN</div>
 
     <button id="heatBtn" class="btn-heat btn-off" onclick="toggleHeating()">APAGADO</button>
 
-    <!-- Setpoint temperatura (visible sólo cuando heat ON) -->
+    <!-- Temperature setpoint (visible only when heat ON) -->
     <div id="spRow" class="sp-row vis-hidden">
       <button class="btn-step" onclick="changeTemp(-0.5)">&#9660;</button>
       <span id="spVal" class="sp-val">20.0&nbsp;°C</span>
@@ -40,20 +40,20 @@
     </div>
 
     <div class="p-sep"></div>
-    <div class="sec-lbl">VENTILADOR</div>
+    <div class="sec-lbl" data-i18n="fan">VENTILADOR</div>
 
-    <!-- Ventilador modo calefacción: Eco | Alto (heat ON) -->
+    <!-- Fan heating mode: Eco | High (heat ON) -->
     <div id="fanHeatRow" class="btn-row vis-hidden">
-      <button id="fhEco"  class="btn-fan" onclick="setFan('eco')">Eco</button>
-      <button id="fhHigh" class="btn-fan" onclick="setFan('high')">Alto</button>
+      <button id="fhEco"  class="btn-fan" onclick="setFan('eco')"  data-i18n="fan_eco">Eco</button>
+      <button id="fhHigh" class="btn-fan" onclick="setFan('high')" data-i18n="fan_high">Alto</button>
     </div>
 
-    <!-- Ventilador modo standby: Off | On (heat OFF) -->
+    <!-- Fan standby mode: Off | On (heat OFF) -->
     <div id="fanSbyRow" class="btn-row">
-      <button id="fsBtnOff" class="btn-fan btn-sel" onclick="setFanSby('off')">Off</button>
-      <button id="fsBtnOn"  class="btn-fan"         onclick="setFanSby('on')">On</button>
+      <button id="fsBtnOff" class="btn-fan btn-sel" onclick="setFanSby('off')" data-i18n="fan_off">Off</button>
+      <button id="fsBtnOn"  class="btn-fan"         onclick="setFanSby('on')"  data-i18n="fan_on">On</button>
     </div>
-    <!-- Control nivel 1-10 (visible cuando standby + fan On) -->
+    <!-- Level control 1-10 (visible when standby + fan On) -->
     <div id="fanLvlRow" class="sp-row vis-hidden">
       <button class="btn-step" onclick="changeFanLvl(-1)">&#9660;</button>
       <span id="fanLvlVal" class="sp-val">5</span>
@@ -61,13 +61,13 @@
     </div>
   </section>
 
-  <!-- Panel derecho — AGUA CALIENTE -->
+  <!-- Right panel — HOT WATER -->
   <section class="panel">
-    <div class="p-title">AGUA CALIENTE</div>
+    <div class="p-title" data-i18n="hot_water">AGUA CALIENTE</div>
 
-    <!-- 4 botones de caldera en rejilla 2×2 -->
+    <!-- 4 boiler buttons in a 2×2 grid -->
     <div class="boiler-grid">
-      <button id="bOff"   class="btn-boiler" onclick="setBoiler('off')">Apag.</button>
+      <button id="bOff"   class="btn-boiler" onclick="setBoiler('off')"   data-i18n="boiler_off">Apag.</button>
       <button id="bEco"   class="btn-boiler" onclick="setBoiler('eco')">40&nbsp;°C</button>
       <button id="bHigh"  class="btn-boiler" onclick="setBoiler('high')">60&nbsp;°C</button>
       <button id="bBoost" class="btn-boiler" onclick="setBoiler('boost')">60&nbsp;°C&nbsp;<i class="fi">&#xF0E7;</i></button>
@@ -77,22 +77,22 @@
 
 </main>
 
-<!-- ── Modal de error ─────────────────────────────────────────────────── -->
+<!-- ── Error modal ────────────────────────────────────────────────────── -->
 <div id="err-modal" class="err-modal-overlay hidden">
   <div class="err-modal-box">
     <div id="err-modal-title" class="err-modal-title">ERROR</div>
     <div id="err-modal-sub"   class="err-modal-sub"></div>
     <div id="err-modal-desc"  class="err-modal-desc"></div>
-    <button class="err-modal-btn" onclick="acknowledgeError()">Aceptar</button>
+    <button class="err-modal-btn" onclick="acknowledgeError()" data-i18n="accept">Aceptar</button>
   </div>
 </div>
 
-<!-- ── Tira de estado / error ─────────────────────────────────────────── -->
+<!-- ── Status strip / error ───────────────────────────────────────────── -->
 <div class="info-strip">
   <span id="error_line" class="err-txt"></span>
 </div>
 
-<!-- ── Barra inferior fija ────────────────────────────────────────────── -->
+<!-- ── Fixed bottom bar ──────────────────────────────────────────────── -->
 <footer class="statusbar">
   <div class="sb-left">
     <span id="statusMsg" class="sb-msg"></span>
@@ -103,6 +103,7 @@
 
 <script src="reconnecting-websocket.min.js"></script>
 <script src="errors.js"></script>
+<script src="i18n.js"></script>
 <script src="script.js"></script>
 </body>
 </html>

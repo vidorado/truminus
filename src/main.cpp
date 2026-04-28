@@ -17,6 +17,7 @@
 #include <esp32_smartdisplay.h>
 #include "wifisetup.hpp"
 #include "cyddisplay.hpp"
+#include "i18n.hpp"
 #include <DHTesp.h>
 #endif
 #include "globals.hpp"
@@ -830,17 +831,30 @@ void loop() {
     if (nav != CydNavRequest::None) {
       cydClearNavRequest();
       lvglLock();
-      bool changed = false;
+      bool needRestart = false;
       if (nav == CydNavRequest::WifiSetup) {
         String ss, pp;
-        changed = runWifiSetup(ss, pp);
+        needRestart = runWifiSetup(ss, pp);
       } else if (nav == CydNavRequest::MqttSetup) {
         String u, us, pp;
-        changed = runMqttSetup(u, us, pp);
+        needRestart = runMqttSetup(u, us, pp);
+      } else if (nav == CydNavRequest::LangChange) {
+        cydShowLangSelect();
+        cydRebuildUI();
       }
       cydReloadScreen();
       lvglUnlock();
-      if (changed) ESP.restart();   // solo reinicia si se guardaron credenciales nuevas
+      if (needRestart) ESP.restart();
+      // After a language change, broadcast the new language to all web clients
+      if (nav == CydNavRequest::LangChange) {
+        #ifdef WEBSERVER
+        JsonDocument d;
+        d["command"] = "setting";
+        d["id"]      = "/lang";
+        d["value"]   = (currentLanguage() == Language::EN) ? "en" : "es";
+        ws.textAll(d.as<String>());
+        #endif
+      }
     }
   }
   // ── Sensor AM2301: leer cada 30 s (mínimo 2 s entre lecturas para el sensor)
@@ -1100,7 +1114,7 @@ void wsConnected() {
   for (int i=0; i<SETPOINTS ;i++) {
     MqttSetpoint[i]->PublishValue(false);
   }
-  // Enviar modo de energía actual
+  // Send current energy mode index
   {
     JsonDocument d;
     d["command"] = "setting";
@@ -1108,7 +1122,7 @@ void wsConnected() {
     d["value"]   = String((int)s_energyIdx);
     ws.textAll(d.as<String>());
   }
-  // Enviar estado MQTT y si está habilitado
+  // Send MQTT connectivity state and whether MQTT is configured
   {
     JsonDocument d;
     d["command"] = "status";
@@ -1123,7 +1137,7 @@ void wsConnected() {
     d["value"]   = mqttEnabled ? "1" : "0";
     ws.textAll(d.as<String>());
   }
-  // Enviar temperatura exterior si hay lectura válida
+  // Send outdoor temperature if available
   if (s_extTemp > -200.0f) {
     JsonDocument d;
     d["command"] = "status";
@@ -1131,6 +1145,16 @@ void wsConnected() {
     d["value"]   = String(s_extTemp, 1);
     ws.textAll(d.as<String>());
   }
+  // Send current UI language so the web follows the CYD setting
+  #ifdef CYD
+  {
+    JsonDocument d;
+    d["command"] = "setting";
+    d["id"]      = "/lang";
+    d["value"]   = (currentLanguage() == Language::EN) ? "en" : "es";
+    ws.textAll(d.as<String>());
+  }
+  #endif
   //force publish the next received data
   doforcesend=true;
 }

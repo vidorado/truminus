@@ -8,7 +8,7 @@ var linerror     = false;
 var s_mqttOk     = false;
 var s_mqttEnabled = true;
 
-// ── Estado de la aplicación ───────────────────────────────────────────────
+// ── Application state ─────────────────────────────────────────────────────
 var s_temp        = 20.0;
 var s_roomTemp    = null;
 var s_heat        = false;
@@ -16,21 +16,22 @@ var s_boiler      = 'off';
 var s_fan         = 'off';
 var s_fanLevel    = 5;
 var s_waterDemand = false;
+var s_waterTemp   = null;
 var s_errClass    = 0;
 var s_errCode     = 0;
 var s_errAcked    = false;
 
-// ── Barra de estado ───────────────────────────────────────────────────────
+// ── Status bar ────────────────────────────────────────────────────────────
 function updateStatusBar() {
     var msg = document.getElementById('statusMsg');
     var ip  = document.getElementById('deviceIp');
     if (!msg) return;
     if (wserror) {
-        msg.textContent  = '⚠ Conectando…';
+        msg.textContent  = t('ws_conn');
         msg.style.color  = '#ffaa00';
         if (ip) { ip.textContent = ''; }
     } else if (linerror) {
-        msg.textContent  = '⚠ Sin LIN bus';
+        msg.textContent  = t('ws_no_lin');
         msg.style.color  = '#ff4444';
         if (ip) { ip.textContent = window.location.hostname; }
     } else {
@@ -68,13 +69,13 @@ ws.onmessage = function (event) {
     else                         applyStatus(id, d.value);
 };
 
-// ── Envío al dispositivo ──────────────────────────────────────────────────
+// ── Send to device ────────────────────────────────────────────────────────
 function send(id, value) {
     if (ws.readyState === 1)
         ws.send(JSON.stringify({ id: id, value: String(value) }));
 }
 
-// ── Dot de estado ─────────────────────────────────────────────────────────
+// ── Status dot ────────────────────────────────────────────────────────────
 function setDot(id, state) {
     var el = document.getElementById(id);
     if (el) el.className = 'sdot sdot-' + state;
@@ -84,7 +85,7 @@ function updateMqttDot() {
     setDot('dot-mqtt', !s_mqttEnabled ? 'dis' : (s_mqttOk ? 'ok' : 'err'));
 }
 
-// ── Settings recibidos del dispositivo ────────────────────────────────────
+// ── Settings received from device ─────────────────────────────────────────
 function applySetting(id, value) {
     if (id === 'temp') {
         s_temp = parseFloat(value) || 20;
@@ -101,10 +102,12 @@ function applySetting(id, value) {
         var n = parseInt(value);
         if (!isNaN(n) && n > 0) s_fanLevel = n;
         refreshFan();
+    } else if (id === 'lang') {
+        applyLanguage(value);
     }
 }
 
-// ── Status recibido del dispositivo ──────────────────────────────────────
+// ── Status received from device ───────────────────────────────────────────
 function applyStatus(id, value) {
     var el = document.getElementById(id);
     if (el) el.textContent = value;
@@ -130,6 +133,11 @@ function applyStatus(id, value) {
         refreshIndicators();
     }
 
+    if (id === 'water_temp') {
+        s_waterTemp = parseFloat(value);
+        refreshIndicators();
+    }
+
     if (id === 'room_temp') {
         s_roomTemp = parseFloat(value);
         refreshIndicators();
@@ -151,7 +159,7 @@ function applyStatus(id, value) {
     }
 }
 
-// ── Funciones de refresco de UI ───────────────────────────────────────────
+// ── UI refresh functions ──────────────────────────────────────────────────
 
 function cls(id, cssClass, on) {
     var el = document.getElementById(id);
@@ -164,7 +172,7 @@ function refreshSetpoint() {
 
 function refreshHeat() {
     var btn = document.getElementById('heatBtn');
-    btn.textContent = s_heat ? 'ENCENDIDO' : 'APAGADO';
+    btn.textContent = s_heat ? t('heat_on') : t('heat_off');
     btn.classList.toggle('btn-heat-on', s_heat);
     btn.classList.toggle('btn-off',    !s_heat);
     cls('spRow',      'vis-hidden', !s_heat);
@@ -198,23 +206,27 @@ function refreshBoiler() {
 }
 
 function refreshIndicators() {
-    var boilerOn   = s_boiler !== 'off';
-    cls('ind-tint', 'ind-on',     boilerOn && !s_waterDemand);
-    cls('ind-tint', 'ind-active', boilerOn && s_waterDemand);
+    var boilerOn = s_boiler !== 'off';
+    var boilerSetTemp = { eco: 40, high: 60, boost: 60 };
+    var wSet = boilerSetTemp[s_boiler] || 0;
+    var wAtTemp = boilerOn && s_waterTemp !== null && s_waterTemp > 0 && s_waterTemp >= wSet - 1;
+    var wDemand = boilerOn && s_waterDemand && !wAtTemp;
+    cls('ind-tint', 'ind-on',     boilerOn && !wDemand);
+    cls('ind-tint', 'ind-active', wDemand);
 
     var heatDemand = s_heat && s_roomTemp !== null && (s_roomTemp < s_temp - 0.3);
     cls('ind-fire', 'ind-on',     s_heat && !heatDemand);
     cls('ind-fire', 'ind-active', heatDemand);
 }
 
-// ── Envío con debounce (300 ms desde el último toque por topic) ───────────
+// ── Debounced send (300 ms per topic) ─────────────────────────────────────
 var _sendTimers = {};
 function sendDebounced(id, value) {
     clearTimeout(_sendTimers[id]);
     _sendTimers[id] = setTimeout(function () { send(id, value); }, 300);
 }
 
-// ── Acciones del usuario ──────────────────────────────────────────────────
+// ── User actions ──────────────────────────────────────────────────────────
 
 function changeTemp(delta) {
     s_temp = Math.round((s_temp + delta) * 2) / 2;
@@ -239,11 +251,7 @@ function setFan(value) {
 }
 
 function setFanSby(mode) {
-    if (mode === 'on') {
-        s_fan = String(s_fanLevel);
-    } else {
-        s_fan = 'off';
-    }
+    s_fan = (mode === 'on') ? String(s_fanLevel) : 'off';
     send('/fan', s_fan);
     refreshFan();
 }
@@ -263,7 +271,7 @@ function setBoiler(value) {
     refreshBoiler();
 }
 
-// ── Error de Truma ────────────────────────────────────────────────────────
+// ── Truma error display ───────────────────────────────────────────────────
 function errSeverity(cls) {
     if (cls === 0)              return 'none';
     if (cls === 1 || cls === 2) return 'warn';
@@ -272,7 +280,6 @@ function errSeverity(cls) {
 }
 
 var ERR_COLOR = { none: '', warn: '#ffaa00', error: '#ff4444', locked: '#cc2222' };
-var ERR_LABEL = { none: '', warn: 'AVISO',   error: 'ERROR',   locked: 'BLOQUEADO' };
 
 function updateErrorDisplay() {
     var line = document.getElementById('error_line');
@@ -288,11 +295,11 @@ function updateErrorDisplay() {
 
     var sev  = errSeverity(s_errClass);
     var col  = ERR_COLOR[sev];
-    var lbl  = ERR_LABEL[sev];
+    var lbl  = t('err_' + sev) || sev.toUpperCase();
     var desc = (typeof ErrText !== 'undefined' && ErrText[s_errCode])
-               ? ErrText[s_errCode] : 'Código ' + s_errCode;
+               ? ErrText[s_errCode] : 'Code ' + s_errCode;
 
-    line.textContent = lbl + '  (clase ' + s_errClass + ' / código ' + s_errCode + ')  ' + desc;
+    line.textContent = lbl + '  (class ' + s_errClass + ' / code ' + s_errCode + ')  ' + desc;
     line.style.color = col;
 
     if (!s_errAcked) showErrorModal(lbl, col, desc);
@@ -304,7 +311,7 @@ function showErrorModal(label, color, desc) {
     document.getElementById('err-modal-title').textContent = label;
     document.getElementById('err-modal-title').style.color = color;
     document.getElementById('err-modal-sub').textContent   =
-        'Clase ' + s_errClass + ' / Código ' + s_errCode;
+        'Class ' + s_errClass + ' / Code ' + s_errCode;
     document.getElementById('err-modal-desc').textContent  = desc;
     modal.classList.remove('hidden');
 }
@@ -319,7 +326,7 @@ function acknowledgeError() {
     hideErrorModal();
 }
 
-// ── Inicialización ────────────────────────────────────────────────────────
+// ── Initialisation ────────────────────────────────────────────────────────
 refreshSetpoint();
 refreshHeat();
 refreshBoiler();
