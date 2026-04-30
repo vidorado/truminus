@@ -34,4 +34,16 @@ void saveMqttConfig(const String& host, const String& port,
 // Fills uri/user/pass only when returning true.
 bool runMqttSetup(String& uri, String& user, String& pass);
 
+// -----------------------------------------------------------------------
+// Solar (Victron BLE) config (NVS)
+// -----------------------------------------------------------------------
+// addr: 12 uppercase hex chars (no separators), e.g. "AABBCCDDEEFF"
+// key:  32 uppercase hex chars (128-bit AES key from VictronConnect)
+bool loadSolarConfig(String& addr, String& key);
+void saveSolarConfig(const String& addr, const String& key);
+
+// Show solar config screen. Blocks until saved or cancelled.
+// Returns true if saved, false if cancelled/skipped.
+bool runSolarSetup(String& addr, String& key);
+
 #endif // CYD

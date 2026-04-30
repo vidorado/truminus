@@ -769,4 +769,177 @@ bool runMqttSetup(String& uri, String& user, String& pass) {
     return saved;
 }
 
+// =======================================================================
+// Solar (Victron BLE) config screen
+// Two text areas: MAC (12 hex chars) and encryption key (32 hex chars).
+// Layout (landscape 320×240):
+//   title | MAC label | MAC TA | Key label | Key TA | Cancel+Save | status
+//   LVGL keyboard fixed at bottom, shown on TA focus.
+// =======================================================================
+
+static const char* NVS_SOLAR_NS   = "solar";
+static const char* NVS_SOLAR_ADDR = "addr";
+static const char* NVS_SOLAR_KEY  = "key";
+
+bool loadSolarConfig(String& addr, String& key) {
+    Preferences p;
+    p.begin(NVS_SOLAR_NS, true);
+    if (!p.isKey(NVS_SOLAR_ADDR)) { p.end(); return false; }
+    addr = p.getString(NVS_SOLAR_ADDR, "");
+    key  = p.getString(NVS_SOLAR_KEY,  "");
+    p.end();
+    return addr.length() == 12 && key.length() == 32;
+}
+
+void saveSolarConfig(const String& addr, const String& key) {
+    Preferences p;
+    p.begin(NVS_SOLAR_NS, false);
+    p.putString(NVS_SOLAR_ADDR, addr);
+    p.putString(NVS_SOLAR_KEY,  key);
+    p.end();
+}
+
+static lv_obj_t* ss_addrTA    = nullptr;
+static lv_obj_t* ss_keyTA     = nullptr;
+static lv_obj_t* ss_kb        = nullptr;
+static lv_obj_t* ss_statusLbl = nullptr;
+static bool      ss_done      = false;
+static bool      ss_cancelled = false;
+
+static void solarSetStatus(const char* msg) {
+    lv_label_set_text(ss_statusLbl, msg);
+    lvRun(20);
+}
+
+static void solarCancelCb(lv_event_t*) { ss_cancelled = true; ss_done = true; }
+
+static void solarSaveCb(lv_event_t*) {
+    const char* addr = lv_textarea_get_text(ss_addrTA);
+    const char* key  = lv_textarea_get_text(ss_keyTA);
+    if (strlen(addr) != 12) {
+        solarSetStatus("Introduce exactamente 12 caracteres hex (sin \":\")");;
+        return;
+    }
+    if (strlen(key) != 32) {
+        solarSetStatus("La clave debe tener exactamente 32 caracteres hex");
+        return;
+    }
+    String addrStr(addr); addrStr.toUpperCase();
+    String keyStr(key);   keyStr.toUpperCase();
+    saveSolarConfig(addrStr, keyStr);
+    solarSetStatus("Guardado. Reinicia para aplicar.");
+    lvRun(1200);
+    ss_done = true;
+}
+
+static void solarFocusCb(lv_event_t* e) {
+    lv_obj_t* ta = lv_event_get_target_obj(e);
+    lv_keyboard_set_textarea(ss_kb, ta);
+    lv_keyboard_set_mode(ss_kb, LV_KEYBOARD_MODE_TEXT_UPPER);
+    lv_obj_remove_flag(ss_kb, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void solarHideKbCb(lv_event_t*) {
+    lv_obj_add_flag(ss_kb, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool runSolarSetup(String& addr, String& key) {
+    ss_done      = false;
+    ss_cancelled = false;
+    s_lvLastTick = millis();
+
+    String existAddr, existKey;
+    bool hasConfig = loadSolarConfig(existAddr, existKey);
+
+    lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_style_pad_all(scr, 5, LV_PART_MAIN);
+    lv_screen_load(scr);
+
+    lv_obj_t* title = lv_label_create(scr);
+    lv_label_set_text(title, "TruMinus - Config. Solar Victron");
+    lv_obj_set_width(title, 310);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t* addrLbl = lv_label_create(scr);
+    lv_label_set_text(addrLbl, "MAC BLE (12 hex, sin \":\" - ej. E4E1D0AABBCC):");
+    lv_obj_set_width(addrLbl, 310);
+    lv_obj_align(addrLbl, LV_ALIGN_TOP_LEFT, 0, 22);
+
+    ss_addrTA = lv_textarea_create(scr);
+    lv_obj_set_size(ss_addrTA, 310, 36);
+    lv_textarea_set_one_line(ss_addrTA, true);
+    lv_textarea_set_placeholder_text(ss_addrTA, "E4E1D0AABBCC");
+    lv_textarea_set_max_length(ss_addrTA, 12);
+    lv_obj_align(ss_addrTA, LV_ALIGN_TOP_LEFT, 0, 40);
+    if (hasConfig) lv_textarea_set_text(ss_addrTA, existAddr.c_str());
+
+    lv_obj_t* keyLbl = lv_label_create(scr);
+    lv_label_set_text(keyLbl, "Clave cifrado (32 hex, ver VictronConnect > info):");
+    lv_obj_set_width(keyLbl, 310);
+    lv_obj_align(keyLbl, LV_ALIGN_TOP_LEFT, 0, 82);
+
+    ss_keyTA = lv_textarea_create(scr);
+    lv_obj_set_size(ss_keyTA, 310, 36);
+    lv_textarea_set_one_line(ss_keyTA, true);
+    lv_textarea_set_placeholder_text(ss_keyTA, "0123456789ABCDEF...");
+    lv_textarea_set_max_length(ss_keyTA, 32);
+    lv_obj_align(ss_keyTA, LV_ALIGN_TOP_LEFT, 0, 100);
+    if (hasConfig) lv_textarea_set_text(ss_keyTA, existKey.c_str());
+
+    // Cancel / Save
+    lv_obj_t* cancelBtn = lv_btn_create(scr);
+    lv_obj_set_size(cancelBtn, 148, 34);
+    lv_obj_align(cancelBtn, LV_ALIGN_TOP_LEFT, 0, 142);
+    lv_obj_set_style_bg_color(cancelBtn, lv_color_make(60, 60, 60), LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(cancelBtn, lv_color_make(80, 80, 80), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(cancelBtn, solarCancelCb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* cancelLbl = lv_label_create(cancelBtn);
+    lv_label_set_text(cancelLbl, hasConfig ? "Cancelar" : "Omitir");
+    lv_obj_center(cancelLbl);
+
+    lv_obj_t* saveBtn = lv_btn_create(scr);
+    lv_obj_set_size(saveBtn, 148, 34);
+    lv_obj_align(saveBtn, LV_ALIGN_TOP_RIGHT, 0, 142);
+    lv_obj_add_event_cb(saveBtn, solarSaveCb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* saveLbl = lv_label_create(saveBtn);
+    lv_label_set_text(saveLbl, "Guardar");
+    lv_obj_center(saveLbl);
+
+    ss_statusLbl = lv_label_create(scr);
+    lv_obj_set_width(ss_statusLbl, 310);
+    lv_label_set_long_mode(ss_statusLbl, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_text(ss_statusLbl, "VictronConnect > 3 puntos > Info del producto > Clave cifrado");
+    lv_obj_align(ss_statusLbl, LV_ALIGN_TOP_LEFT, 0, 182);
+
+    ss_kb = lv_keyboard_create(scr);
+    lv_obj_set_size(ss_kb, 320, 130);
+    lv_obj_align(ss_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_keyboard_set_textarea(ss_kb, ss_addrTA);
+    lv_keyboard_set_mode(ss_kb, LV_KEYBOARD_MODE_TEXT_UPPER);
+    lv_obj_add_flag(ss_kb, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_add_event_cb(ss_addrTA, solarFocusCb,  LV_EVENT_FOCUSED, NULL);
+    lv_obj_add_event_cb(ss_keyTA,  solarFocusCb,  LV_EVENT_FOCUSED, NULL);
+    lv_obj_add_event_cb(ss_kb,     solarHideKbCb, LV_EVENT_READY,   NULL);
+    lv_obj_add_event_cb(ss_kb,     solarHideKbCb, LV_EVENT_CANCEL,  NULL);
+
+    while (!ss_done) {
+        uint32_t now = millis();
+        lv_tick_inc(now - s_lvLastTick);
+        s_lvLastTick = now;
+        lv_timer_handler();
+        delay(5);
+    }
+
+    bool saved = false;
+    if (!ss_cancelled) {
+        addr  = String(lv_textarea_get_text(ss_addrTA));
+        key   = String(lv_textarea_get_text(ss_keyTA));
+        saved = true;
+    }
+
+    lv_obj_delete(scr);
+    return saved;
+}
+
 #endif // CYD

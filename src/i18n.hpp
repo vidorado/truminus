@@ -40,6 +40,11 @@ enum class TK : uint8_t {
     LOCKED_LBL,        // error modal: "BLOQUEADO" / "LOCKED"
     ERR_SUBTITLE_FMT,  // "Clase %02Xh  /  Cod.%d" / "Class %02Xh  /  Code %d"
     ACCEPT,            // modal button: "Aceptar" / "Accept"
+    SOLAR_CFG,         // settings menu: "Solar"
+    SOLAR_TITLE,       // solar config title: "Config. Solar" / "Solar Config"
+    SOLAR_ADDR,        // solar setup label: "Direcc. MAC" / "MAC Address"
+    SOLAR_KEY,         // solar setup label: "Clave cifrado" / "Enc. Key"
+    SOLAR_NO_DATA,     // right panel when no data: "Sin datos" / "No data"
     _COUNT
 };
 

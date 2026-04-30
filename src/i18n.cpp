@@ -41,6 +41,11 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "BLOQUEADO",                // LOCKED_LBL
     "Clase %02Xh  /  Cod.%d",  // ERR_SUBTITLE_FMT
     "Aceptar",                  // ACCEPT
+    "Solar",                    // SOLAR_CFG
+    "Config. Solar",            // SOLAR_TITLE
+    "Direcc. MAC",              // SOLAR_ADDR
+    "Clave cifrado",            // SOLAR_KEY
+    "Sin datos",                // SOLAR_NO_DATA
 };
 
 static const char* EN_STRINGS[(int)TK::_COUNT] = {
@@ -79,6 +84,11 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "LOCKED",                   // LOCKED_LBL
     "Class %02Xh  /  Code %d", // ERR_SUBTITLE_FMT
     "Accept",                   // ACCEPT
+    "Solar",                    // SOLAR_CFG
+    "Solar Config",             // SOLAR_TITLE
+    "MAC Address",              // SOLAR_ADDR
+    "Enc. Key",                 // SOLAR_KEY
+    "No data",                  // SOLAR_NO_DATA
 };
 
 const char* t(TK key) {

@@ -146,6 +146,11 @@ static lv_obj_t* s_fanLevelLbl   = nullptr;
 static lv_obj_t* s_boilerBtn[BOILER_N];
 static lv_obj_t* s_energyDd      = nullptr;
 
+// Right panel — Solar data (below boiler buttons, y≈133..200)
+static lv_obj_t* s_solarStateLbl = nullptr;
+static lv_obj_t* s_solarBattLbl  = nullptr;
+static lv_obj_t* s_solarPvLbl    = nullptr;
+
 // Status bar
 static lv_obj_t* s_statusLbl    = nullptr;
 static lv_obj_t* s_ipLbl        = nullptr;
@@ -641,6 +646,14 @@ static void langConfigCb(lv_event_t*) {
     if (old) lv_obj_delete(old);
 }
 
+static void solarConfigCb(lv_event_t*) {
+    lv_obj_t* old = s_settingsScr;
+    s_settingsScr = nullptr;
+    s_navRequest  = CydNavRequest::SolarSetup;
+    lv_screen_load(s_scr);
+    if (old) lv_obj_delete(old);
+}
+
 static void showSettingsMenu() {
     if (s_settingsScr) return;
 
@@ -671,19 +684,20 @@ static void showSettingsMenu() {
 
     makeSep(scr, 0, Y_SEP1, 320, 1);
 
-    // 4 buttons fit in the content area with bh=38, bgap=8:
-    // 4×38 + 3×8 = 176 px < CONT_H (175)
-    const int bx = 8, bw = 304, bh = 38, bgap = 8;
-    int by = Y_CONT + 10;
+    // 5 buttons: bh=34, bgap=5 → 5×34+4×5=190 px (screen is 240, top bar=28 → 202 px avail)
+    const int bx = 8, bw = 304, bh = 34, bgap = 5;
+    int by = Y_CONT + 8;
 
     makeBtn(scr, bx, by,               bw, bh,
-            symText(LV_SYMBOL_WIFI, TK::WIFI_CFG),      wifiConfigCb);
+            symText(LV_SYMBOL_WIFI,     TK::WIFI_CFG),  wifiConfigCb);
     makeBtn(scr, bx, by +   (bh+bgap), bw, bh,
-            symText(LV_SYMBOL_LOOP, TK::MQTT_CFG),      mqttConfigCb);
+            symText(LV_SYMBOL_LOOP,     TK::MQTT_CFG),  mqttConfigCb);
     makeBtn(scr, bx, by + 2*(bh+bgap), bw, bh,
             symText(LV_SYMBOL_SETTINGS, TK::DISPLAY),   displayConfigCb);
     makeBtn(scr, bx, by + 3*(bh+bgap), bw, bh,
             symText(LV_SYMBOL_KEYBOARD, TK::LANGUAGE),  langConfigCb);
+    makeBtn(scr, bx, by + 4*(bh+bgap), bw, bh,
+            symText(LV_SYMBOL_CHARGE,   TK::SOLAR_CFG), solarConfigCb);
 
     lv_screen_load(scr);
 }
@@ -907,6 +921,34 @@ static void buildMainUI() {
                                   boilerLabel(i), boilerCb, (void*)(intptr_t)i);
     }
 
+    // ── Solar data (free area y=133..204, below boiler buttons) ──────────
+    // Section label
+    makeSecLabel(s_scr, rx, Y_CONT + 104, t(TK::SOLAR_CFG));
+
+    // State line — e.g. "Bulk" / "Float" / "No data"
+    s_solarStateLbl = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_solarStateLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_solarStateLbl, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_size(s_solarStateLbl, rw, 16);
+    lv_obj_set_pos(s_solarStateLbl, rx, Y_CONT + 119);
+    lv_label_set_text(s_solarStateLbl, "--");
+
+    // Battery line — "12.6V  1.5A"
+    s_solarBattLbl = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_solarBattLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_solarBattLbl, lv_color_hex(0x88ccff), LV_PART_MAIN);
+    lv_obj_set_size(s_solarBattLbl, rw, 16);
+    lv_obj_set_pos(s_solarBattLbl, rx, Y_CONT + 137);
+    lv_label_set_text(s_solarBattLbl, "--");
+
+    // PV + kWh line — "120W  0.8kWh"
+    s_solarPvLbl = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_solarPvLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_solarPvLbl, lv_color_hex(0xffdd66), LV_PART_MAIN);
+    lv_obj_set_size(s_solarPvLbl, rw, 16);
+    lv_obj_set_pos(s_solarPvLbl, rx, Y_CONT + 155);
+    lv_label_set_text(s_solarPvLbl, "--");
+
     // ── Energy dropdown — hidden on Combi D (no electrical option) ────────
     lv_obj_add_flag(makeSecLabel(s_scr, rx, Y_CONT + 108, t(TK::ENERGY)), LV_OBJ_FLAG_HIDDEN);
 
@@ -954,6 +996,63 @@ static void buildMainUI() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// cydUpdateSolar — refresh solar data labels (call under LVGL mutex)
+// ═══════════════════════════════════════════════════════════════════════════
+static const char* solarStateName(uint8_t s) {
+    switch (s) {
+        case   0: return "Off";
+        case   2: return "Fault";
+        case   3: return "Bulk";
+        case   4: return "Absorb";
+        case   5: return "Float";
+        case   7: return "Equalize";
+        case 245: return "Starting";
+        case 247: return "Auto-eq";
+        case 252: return "Ext ctrl";
+        default:  return "?";
+    }
+}
+
+void cydUpdateSolar(const CydSolarData& d) {
+    if (!s_solarStateLbl) return;
+
+    char buf[32];
+
+    if (!d.configured) {
+        lv_label_set_text(s_solarStateLbl, t(TK::SOLAR_NO_DATA));
+        lv_label_set_text(s_solarBattLbl,  "");
+        lv_label_set_text(s_solarPvLbl,    "");
+        return;
+    }
+
+    // Stale data after 2 minutes → show "--"
+    bool fresh = d.valid && d.ageMs < 120000;
+
+    if (!fresh) {
+        lv_label_set_text(s_solarStateLbl, "--");
+        lv_label_set_text(s_solarBattLbl,  "--");
+        lv_label_set_text(s_solarPvLbl,    "--");
+        return;
+    }
+
+    // State line: "Bulk" (+ " E01" if error)
+    if (d.errCode != 0) {
+        snprintf(buf, sizeof(buf), "%s E%02d", solarStateName(d.state), d.errCode);
+    } else {
+        snprintf(buf, sizeof(buf), "%s", solarStateName(d.state));
+    }
+    lv_label_set_text(s_solarStateLbl, buf);
+
+    // Battery line: "12.6V  1.5A"
+    snprintf(buf, sizeof(buf), "%.1fV  %.1fA", d.battV, d.battA);
+    lv_label_set_text(s_solarBattLbl, buf);
+
+    // PV line: "120W  0.8kWh"
+    snprintf(buf, sizeof(buf), "%.0fW  %.2fkWh", d.pvW, d.kWhToday);
+    lv_label_set_text(s_solarPvLbl, buf);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // cydRebuildUI — tear down and recreate all main-screen widgets
 // ═══════════════════════════════════════════════════════════════════════════
 void cydRebuildUI() {
@@ -973,6 +1072,7 @@ void cydRebuildUI() {
     for (int i = 0; i < BOILER_N; i++) s_boilerBtn[i] = nullptr;
     s_fanOnBtn = s_fanOffBtn = s_fanLevelLbl = nullptr;
     s_energyDd = s_statusLbl = s_ipLbl = nullptr;
+    s_solarStateLbl = s_solarBattLbl = s_solarPvLbl = nullptr;
 
     lv_obj_clean(s_scr);   // delete all children
     buildMainUI();

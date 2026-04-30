@@ -18,6 +18,7 @@
 #include "wifisetup.hpp"
 #include "cyddisplay.hpp"
 #include "i18n.hpp"
+#include "victronble.hpp"
 #include <DHTesp.h>
 #endif
 #include "globals.hpp"
@@ -396,6 +397,11 @@ void setup() {
   mqttClient.setKeepAlive(30);
   mqttClient.enableDebuggingMessages(false);
   mqttClient.loopStart();
+  #endif
+
+  #ifdef CYD
+  // BLE init: only allocates BT stack if solar device is configured in NVS.
+  victronBleInit();
   #endif
 
   //creates the led task (not needed on CYD: status shown on display)
@@ -841,6 +847,10 @@ void loop() {
       } else if (nav == CydNavRequest::LangChange) {
         cydShowLangSelect();
         cydRebuildUI();
+      } else if (nav == CydNavRequest::SolarSetup) {
+        String addr, key;
+        // runSolarSetup already saves to NVS; restart so victronBleInit() picks it up.
+        needRestart = runSolarSetup(addr, key);
       }
       cydReloadScreen();
       lvglUnlock();
@@ -893,6 +903,17 @@ void loop() {
                      wHeating, s_extTemp,
                      getErrorInfo ? getErrorInfo->getErrorClass() : 0,
                      getErrorInfo ? getErrorInfo->getErrorCode()  : 0);
+    {
+      VictronData vd = victronGetData();
+      CydSolarData sd = {
+          victronIsConfigured(),
+          vd.valid,
+          vd.battV, vd.battA, vd.pvW, vd.kWhToday,
+          vd.state,
+          vd.valid ? (uint32_t)(millis() - vd.lastMs) : 999999u
+      };
+      cydUpdateSolar(sd);
+    }
     xSemaphoreGive(s_lvglMutex);
   }
   #endif
