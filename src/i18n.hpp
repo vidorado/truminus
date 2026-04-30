@@ -19,7 +19,7 @@ enum class TK : uint8_t {
     SETTINGS,          // settings screen title: "CONFIGURACION" / "SETTINGS"
     WIFI_CFG,          // settings menu item: "WiFi Config"
     MQTT_CFG,          // settings menu item: "MQTT Config"
-    DISPLAY,           // settings menu item: "Pantalla" / "Display"
+    DISP_CFG,          // settings menu item: "Pantalla" / "Display"
     LANGUAGE,          // settings menu item: "Idioma" / "Language"
     BACK,              // back button: "Volver" / "Back"
     DISPLAY_TITLE,     // display settings title: "PANTALLA" / "DISPLAY"

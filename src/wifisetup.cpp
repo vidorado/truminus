@@ -1,8 +1,13 @@
 #ifdef CYD
 #include "wifisetup.hpp"
+#include "victronble.hpp"
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp32_smartdisplay.h>
+#include <BLEDevice.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
+#include <vector>
 
 // -----------------------------------------------------------------------
 // NVS — Touch calibration
@@ -770,6 +775,196 @@ bool runMqttSetup(String& uri, String& user, String& pass) {
 }
 
 // =======================================================================
+// Victron BLE device scan (called from the Solar config screen)
+// Scans 8 s for devices with Victron company ID (0xE1 0x02).
+// Shows results in a list; returns the selected normalised MAC (12 uppercase
+// hex chars, no colons), or "" if cancelled / no device chosen.
+// Must be called while holding the LVGL lock (same as runSolarSetup).
+// =======================================================================
+
+struct VictronFound {
+    String  mac;
+    String  name;
+    int16_t rssi;
+};
+
+static std::vector<VictronFound> sc_devices;
+static SemaphoreHandle_t         sc_mutex        = nullptr;
+static String                    sc_pickedMac;
+static volatile bool             sc_picked       = false;
+static volatile bool             sc_scanAborted  = false;
+
+class VictronSetupScanCb : public BLEAdvertisedDeviceCallbacks {
+    void onResult(BLEAdvertisedDevice dev) override {
+        if (!dev.haveManufacturerData()) return;
+        std::string raw = dev.getManufacturerData();
+        if (raw.size() < 2) return;
+        if ((uint8_t)raw[0] != 0xE1 || (uint8_t)raw[1] != 0x02) return;
+
+        String mac;
+        for (char c : dev.getAddress().toString())
+            if (c != ':') mac += (char)toupper((unsigned char)c);
+
+        if (!sc_mutex) return;
+        xSemaphoreTake(sc_mutex, portMAX_DELAY);
+        bool found = false;
+        for (auto& d : sc_devices)
+            if (d.mac == mac) { d.rssi = (int16_t)dev.getRSSI(); found = true; break; }
+        if (!found) {
+            VictronFound f;
+            f.mac  = mac;
+            f.name = dev.haveName() ? String(dev.getName().c_str()) : String("");
+            f.rssi = (int16_t)dev.getRSSI();
+            sc_devices.push_back(f);
+        }
+        xSemaphoreGive(sc_mutex);
+    }
+};
+
+static void scanItemCb(lv_event_t* e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (!sc_mutex) return;
+    xSemaphoreTake(sc_mutex, portMAX_DELAY);
+    if (idx >= 0 && idx < (int)sc_devices.size()) {
+        sc_pickedMac = sc_devices[idx].mac;
+        sc_picked    = true;
+    }
+    xSemaphoreGive(sc_mutex);
+}
+
+static void scanAbortCb(lv_event_t*) { sc_scanAborted = true; }
+
+static String runSolarScan() {
+    sc_devices.clear();
+    sc_pickedMac    = "";
+    sc_picked       = false;
+    sc_scanAborted  = false;
+    if (!sc_mutex) sc_mutex = xSemaphoreCreateMutex();
+
+    victronBleSuspend();                  // stop monitoring task if running
+
+    BLEDevice::init("");                  // idempotent
+    BLEScan* scan = BLEDevice::getScan();
+    scan->stop();
+    scan->setAdvertisedDeviceCallbacks(new VictronSetupScanCb(), /*wantDuplicates=*/true);
+    scan->setActiveScan(false);
+    scan->setInterval(100);
+    scan->setWindow(99);
+    scan->clearResults();
+    scan->start(8, false);                // 8 s non-blocking in ESP-IDF 3.x
+
+    // ── Build scan screen ────────────────────────────────────────────────
+    lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_style_pad_all(scr, 4, LV_PART_MAIN);
+    lv_screen_load(scr);
+
+    lv_obj_t* title = lv_label_create(scr);
+    lv_label_set_text(title, "Buscar dispositivos Victron");
+    lv_obj_set_width(title, 310);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 2);
+
+    lv_obj_t* statusLbl = lv_label_create(scr);
+    lv_obj_set_width(statusLbl, 310);
+    lv_label_set_long_mode(statusLbl, LV_LABEL_LONG_CLIP);
+    lv_label_set_text(statusLbl, "Buscando... 8 s");
+    lv_obj_align(statusLbl, LV_ALIGN_TOP_LEFT, 0, 22);
+
+    lv_obj_t* bar = lv_bar_create(scr);
+    lv_obj_set_size(bar, 310, 8);
+    lv_obj_align(bar, LV_ALIGN_TOP_LEFT, 0, 40);
+    lv_bar_set_range(bar, 0, 80);         // 80 × 100 ms = 8 s
+    lv_bar_set_value(bar, 0, LV_ANIM_OFF);
+
+    lv_obj_t* list = lv_list_create(scr);
+    lv_obj_set_size(list, 312, 158);
+    lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, 52);
+
+    lv_obj_t* cancelBtn = lv_btn_create(scr);
+    lv_obj_set_size(cancelBtn, 148, 28);
+    lv_obj_align(cancelBtn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(cancelBtn, lv_color_make(60, 60, 60), LV_STATE_DEFAULT);
+    lv_obj_add_event_cb(cancelBtn, scanAbortCb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* cancelLbl = lv_label_create(cancelBtn);
+    lv_label_set_text(cancelLbl, "Cancelar");
+    lv_obj_center(cancelLbl);
+
+    // ── Event loop ────────────────────────────────────────────────────────
+    uint32_t scanStart = millis();
+    int      lastCount = -1;
+    bool     scanDone  = false;
+    uint32_t lastListUpdate = 0;
+    s_lvLastTick = millis();
+
+    while (!sc_picked && !sc_scanAborted) {
+        uint32_t now = millis();
+        lv_tick_inc(now - s_lvLastTick);
+        s_lvLastTick = now;
+        lv_timer_handler();
+
+        uint32_t elapsed = now - scanStart;
+        lv_bar_set_value(bar, (int32_t)min((uint32_t)80, elapsed / 100), LV_ANIM_OFF);
+
+        if (!scanDone && elapsed >= 8000) {
+            scan->stop();
+            scanDone = true;
+        }
+
+        if (!scanDone) {
+            char buf[28];
+            uint32_t rem = (elapsed < 8000) ? (8000 - elapsed + 999) / 1000 : 0;
+            snprintf(buf, sizeof(buf), "Buscando... %u s", (unsigned)rem);
+            lv_label_set_text(statusLbl, buf);
+        }
+
+        if (millis() - lastListUpdate > 600 || (scanDone && lastCount < 0)) {
+            lastListUpdate = millis();
+            xSemaphoreTake(sc_mutex, portMAX_DELAY);
+            int cnt = (int)sc_devices.size();
+            if (cnt != lastCount) {
+                lastCount = cnt;
+                lv_obj_clean(list);
+                for (int i = 0; i < cnt; i++) {
+                    // Last 3 MAC bytes as "XX:XX:XX"
+                    const String& m = sc_devices[i].mac;
+                    char tail[9];
+                    snprintf(tail, sizeof(tail), "%c%c:%c%c:%c%c",
+                             m[6],m[7], m[8],m[9], m[10],m[11]);
+                    char buf[52];
+                    snprintf(buf, sizeof(buf), "%.18s  ...%s  %d dBm",
+                             sc_devices[i].name.isEmpty() ? "Victron"
+                                                          : sc_devices[i].name.c_str(),
+                             tail, (int)sc_devices[i].rssi);
+                    lv_obj_t* btn = lv_list_add_button(list, LV_SYMBOL_BLUETOOTH, buf);
+                    lv_obj_add_event_cb(btn, scanItemCb, LV_EVENT_CLICKED,
+                                        (void*)(intptr_t)i);
+                }
+                if (scanDone) {
+                    if (cnt == 0)
+                        lv_label_set_text(statusLbl,
+                            "No se encontraron dispositivos Victron");
+                    else {
+                        char buf[48];
+                        snprintf(buf, sizeof(buf),
+                                 "%d dispositivo(s) — toca para seleccionar", cnt);
+                        lv_label_set_text(statusLbl, buf);
+                    }
+                }
+            }
+            xSemaphoreGive(sc_mutex);
+        }
+
+        delay(10);
+    }
+
+    if (!scanDone) scan->stop();
+    scan->clearResults();
+
+    String result = sc_picked ? sc_pickedMac : String("");
+    lv_obj_delete(scr);
+    return result;
+}
+
+// =======================================================================
 // Solar (Victron BLE) config screen
 // Two text areas: MAC (12 hex chars) and encryption key (32 hex chars).
 // Layout (landscape 320×240):
@@ -799,12 +994,13 @@ void saveSolarConfig(const String& addr, const String& key) {
     p.end();
 }
 
-static lv_obj_t* ss_addrTA    = nullptr;
-static lv_obj_t* ss_keyTA     = nullptr;
-static lv_obj_t* ss_kb        = nullptr;
-static lv_obj_t* ss_statusLbl = nullptr;
-static bool      ss_done      = false;
-static bool      ss_cancelled = false;
+static lv_obj_t* ss_addrTA       = nullptr;
+static lv_obj_t* ss_keyTA        = nullptr;
+static lv_obj_t* ss_kb           = nullptr;
+static lv_obj_t* ss_statusLbl    = nullptr;
+static bool      ss_done         = false;
+static bool      ss_cancelled    = false;
+static bool      ss_scanRequested = false;
 
 static void solarSetStatus(const char* msg) {
     lv_label_set_text(ss_statusLbl, msg);
@@ -812,6 +1008,7 @@ static void solarSetStatus(const char* msg) {
 }
 
 static void solarCancelCb(lv_event_t*) { ss_cancelled = true; ss_done = true; }
+static void solarScanCb(lv_event_t*)   { ss_scanRequested = true; }
 
 static void solarSaveCb(lv_event_t*) {
     const char* addr = lv_textarea_get_text(ss_addrTA);
@@ -844,9 +1041,10 @@ static void solarHideKbCb(lv_event_t*) {
 }
 
 bool runSolarSetup(String& addr, String& key) {
-    ss_done      = false;
-    ss_cancelled = false;
-    s_lvLastTick = millis();
+    ss_done         = false;
+    ss_cancelled    = false;
+    ss_scanRequested = false;
+    s_lvLastTick    = millis();
 
     String existAddr, existKey;
     bool hasConfig = loadSolarConfig(existAddr, existKey);
@@ -866,12 +1064,22 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_align(addrLbl, LV_ALIGN_TOP_LEFT, 0, 22);
 
     ss_addrTA = lv_textarea_create(scr);
-    lv_obj_set_size(ss_addrTA, 310, 36);
+    lv_obj_set_size(ss_addrTA, 198, 36);
     lv_textarea_set_one_line(ss_addrTA, true);
     lv_textarea_set_placeholder_text(ss_addrTA, "E4E1D0AABBCC");
     lv_textarea_set_max_length(ss_addrTA, 12);
     lv_obj_align(ss_addrTA, LV_ALIGN_TOP_LEFT, 0, 40);
     if (hasConfig) lv_textarea_set_text(ss_addrTA, existAddr.c_str());
+
+    lv_obj_t* scanBtn = lv_btn_create(scr);
+    lv_obj_set_size(scanBtn, 107, 36);
+    lv_obj_align(scanBtn, LV_ALIGN_TOP_RIGHT, 0, 40);
+    lv_obj_set_style_bg_color(scanBtn, lv_color_make(0, 80, 140), LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(scanBtn, lv_color_make(0, 110, 190), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(scanBtn, solarScanCb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* scanLbl = lv_label_create(scanBtn);
+    lv_label_set_text(scanLbl, LV_SYMBOL_REFRESH " Buscar");
+    lv_obj_center(scanLbl);
 
     lv_obj_t* keyLbl = lv_label_create(scr);
     lv_label_set_text(keyLbl, "Clave cifrado (32 hex, ver VictronConnect > info):");
@@ -928,6 +1136,17 @@ bool runSolarSetup(String& addr, String& key) {
         lv_tick_inc(now - s_lvLastTick);
         s_lvLastTick = now;
         lv_timer_handler();
+
+        if (ss_scanRequested) {
+            ss_scanRequested = false;
+            String picked = runSolarScan();
+            // Restore the solar setup screen
+            lv_screen_load(scr);
+            s_lvLastTick = millis();
+            if (picked.length() > 0)
+                lv_textarea_set_text(ss_addrTA, picked.c_str());
+        }
+
         delay(5);
     }
 

@@ -49,13 +49,14 @@ void          cydReloadScreen();
 
 // ── Solar data display (call under LVGL mutex from loop()) ─────────────────
 struct CydSolarData {
-    bool    configured;
-    bool    valid;
-    float   battV;
-    float   battA;
-    float   pvW;
-    float   kWhToday;
-    uint8_t state;
+    bool     configured;
+    bool     valid;
+    float    battV;
+    float    battA;
+    float    pvW;
+    float    kWhToday;
+    uint8_t  state;
+    uint8_t  errCode;
     uint32_t ageMs;    // millis() since last valid reception
 };
 void cydUpdateSolar(const CydSolarData& d);

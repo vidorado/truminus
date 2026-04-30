@@ -37,7 +37,8 @@ static String        s_targetAddr;        // 12 uppercase hex chars (no colons)
 static SemaphoreHandle_t s_dataMux = nullptr;
 static VictronData       s_data    = {};
 
-static BLEScan*      s_bleScan = nullptr;
+static BLEScan*      s_bleScan      = nullptr;
+static TaskHandle_t  s_bleTaskHandle = nullptr;
 
 // ── Hex helpers ───────────────────────────────────────────────────────────
 static bool hexToBytes(const String& hex, uint8_t* out, int len) {
@@ -194,8 +195,15 @@ void victronBleInit() {
     s_bleScan->setInterval(100);
     s_bleScan->setWindow(99);
 
-    xTaskCreate(bleTask, "ble_vic", 4096, nullptr, 1, nullptr);
+    xTaskCreate(bleTask, "ble_vic", 4096, nullptr, 1, &s_bleTaskHandle);
     Serial.printf("[ble] Victron BLE init ok, target=%s\n", s_targetAddr.c_str());
+}
+
+void victronBleSuspend() {
+    if (s_bleTaskHandle) {
+        vTaskSuspend(s_bleTaskHandle);
+        if (s_bleScan) s_bleScan->stop();
+    }
 }
 
 #endif // CYD

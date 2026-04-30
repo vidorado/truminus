@@ -693,7 +693,7 @@ static void showSettingsMenu() {
     makeBtn(scr, bx, by +   (bh+bgap), bw, bh,
             symText(LV_SYMBOL_LOOP,     TK::MQTT_CFG),  mqttConfigCb);
     makeBtn(scr, bx, by + 2*(bh+bgap), bw, bh,
-            symText(LV_SYMBOL_SETTINGS, TK::DISPLAY),   displayConfigCb);
+            symText(LV_SYMBOL_SETTINGS, TK::DISP_CFG),  displayConfigCb);
     makeBtn(scr, bx, by + 3*(bh+bgap), bw, bh,
             symText(LV_SYMBOL_KEYBOARD, TK::LANGUAGE),  langConfigCb);
     makeBtn(scr, bx, by + 4*(bh+bgap), bw, bh,

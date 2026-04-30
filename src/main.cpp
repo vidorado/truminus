@@ -909,7 +909,7 @@ void loop() {
           victronIsConfigured(),
           vd.valid,
           vd.battV, vd.battA, vd.pvW, vd.kWhToday,
-          vd.state,
+          vd.state, vd.errCode,
           vd.valid ? (uint32_t)(millis() - vd.lastMs) : 999999u
       };
       cydUpdateSolar(sd);
