@@ -234,9 +234,22 @@ static void showSplash(uint32_t ms) {
     lv_screen_load(splash);
 
     uint32_t t0 = millis();
-    while (millis() - t0 < ms) { lv_task_handler(); delay(5); }
+    uint32_t _last = millis();
+    while (millis() - t0 < ms) {
+        uint32_t _now = millis();
+        lv_tick_inc(_now - _last);
+        _last = _now;
+        lv_task_handler(); delay(5);
+    }
 
-    lv_obj_delete(splash);
+    // Load a blank screen and auto-delete splash — avoids deleting the active
+    // screen while it is still the active screen, which leaves LVGL with a
+    // dangling act_scr pointer and breaks the next lv_screen_load() call.
+    lv_obj_t* blank = lv_obj_create(NULL);
+    lv_screen_load_anim(blank, LV_SCR_LOAD_ANIM_NONE, 0, 0, /*auto_del=*/true);
+    lv_tick_inc(5);
+    lv_task_handler();   // commit the switch; splash is deleted here
+
     Serial.printf("[logo] splash %dx%d px (%d bytes)\n", LOGO_W, LOGO_H, LOGO_W * LOGO_H * 2);
 }
 
@@ -593,11 +606,18 @@ static void showLangSelectBlocking() {
 
     // Two large buttons centred on screen
     makeBtn(scr, 20,  130, 130, 60, "English", langEnCb);
-    makeBtn(scr, 170, 130, 130, 60, "Espa\xc3\xb1""ol", langEsCb);
+    makeBtn(scr, 170, 130, 130, 60, "Espanol", langEsCb);
 
     lv_screen_load(scr);
+    lv_refr_now(lv_display_get_default());   // force immediate render — flush state may be stale after splash
 
-    while (s_langSelected == -1) { lv_task_handler(); delay(5); }
+    uint32_t _tickLast = millis();
+    while (s_langSelected == -1) {
+        uint32_t _tickNow = millis();
+        lv_tick_inc(_tickNow - _tickLast);
+        _tickLast = _tickNow;
+        lv_task_handler(); delay(5);
+    }
 
     setLanguage((Language)s_langSelected);
     lv_obj_delete(scr);
