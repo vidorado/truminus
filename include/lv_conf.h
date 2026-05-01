@@ -30,7 +30,7 @@
 #define LV_USE_STDLIB_SPRINTF   LV_STDLIB_BUILTIN
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
-    #define LV_MEM_SIZE (48 * 1024U)    /* 48 KB es suficiente para nuestro UI; 128 KB agotaba el heap del sistema */
+    #define LV_MEM_SIZE (40 * 1024U)    /* 40 KB: reducido de 48 KB para liberar BSS con BLE activo */
     #define LV_MEM_POOL_EXPAND_SIZE 0
     #define LV_MEM_ADR 0
     #if LV_MEM_ADR == 0
