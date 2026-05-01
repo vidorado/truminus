@@ -353,6 +353,13 @@ void setup() {
   PublishReset.setADComponent(CKBinary_sensor)->setADName("Resetting")->setADIcon("mdi:sync")->setADDevice_class("connectivity");
   PublishLinOk.setADComponent(CKBinary_sensor)->setADName("LIN bus status")->setADIcon("mdi:serial-port")->setADDevice_class("connectivity");
 
+  #ifdef CYD
+  // BLE init before WiFi: heap is unfragmented here, making the large BT
+  // controller allocation more likely to succeed. bleTask itself waits 8 s
+  // before its first scan, so WiFi/MQTT will be up by then.
+  victronBleInit();
+  #endif
+
   //starts the wifi (loop will check if it's connected)
   WiFi.mode(WIFI_STA);
   Serial.print("WiFi MAC: ");
@@ -397,11 +404,6 @@ void setup() {
   mqttClient.setKeepAlive(30);
   mqttClient.enableDebuggingMessages(false);
   mqttClient.loopStart();
-  #endif
-
-  #ifdef CYD
-  // BLE init: only allocates BT stack if solar device is configured in NVS.
-  victronBleInit();
   #endif
 
   //creates the led task (not needed on CYD: status shown on display)
