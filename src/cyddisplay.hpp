@@ -36,11 +36,16 @@ void cydShowLangSelect();
 // Rebuild the main UI in-place after a language change (call under LVGL mutex).
 void cydRebuildUI();
 
+// Free all main-screen widgets without rebuilding — releases LVGL heap before
+// entering a heavy setup screen (keyboard). Always follow with cydRebuildUI().
+// Must be called under the LVGL mutex.
+void cydFreeMainUI();
+
 // ── Settings / navigation ──────────────────────────────────────────────────
 // Settings-screen buttons set this flag from LVGL callbacks.
 // main.cpp reads it in loop() OUTSIDE the mutex to safely drive the blocking
 // runWifiSetup / runMqttSetup / language-select screens.
-enum class CydNavRequest { None, WifiSetup, MqttSetup, LangChange, SolarSetup, BattSetup };
+enum class CydNavRequest { None, WifiSetup, MqttSetup, LangChange, SolarSetup };
 CydNavRequest cydGetNavRequest();
 void          cydClearNavRequest();
 // Reload s_scr (call after returning from a settings screen).

@@ -853,12 +853,13 @@ void loop() {
         cydRebuildUI();
       } else if (nav == CydNavRequest::SolarSetup) {
         String addr, key;
+        // Free main-screen widgets before entering solar setup: the LVGL keyboard
+        // widget alone consumes ~16 KB, and the 32 KB pool cannot hold both the
+        // main UI and the setup screen simultaneously.
+        cydFreeMainUI();
         // runSolarSetup already saves to NVS; restart so victronBleInit() picks it up.
         needRestart = runSolarSetup(addr, key);
-      } else if (nav == CydNavRequest::BattSetup) {
-        String addr;
-        // runBattSetup already saves to NVS; restart so ultimatronBleInit() picks it up.
-        needRestart = runBattSetup(addr);
+        cydRebuildUI();   // rebuild main UI (replaces the freed widgets)
       }
       cydReloadScreen();
       lvglUnlock();

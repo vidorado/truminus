@@ -53,8 +53,4 @@ bool runSolarSetup(String& addr, String& key);
 bool loadBattConfig(String& addr);
 void saveBattConfig(const String& addr);
 
-// Show battery config screen. Blocks until saved or cancelled.
-// Returns true if saved, false if cancelled/skipped.
-bool runBattSetup(String& addr);
-
 #endif // CYD

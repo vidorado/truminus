@@ -45,7 +45,6 @@ enum class TK : uint8_t {
     SOLAR_ADDR,        // solar setup label: "Direcc. MAC" / "MAC Address"
     SOLAR_KEY,         // solar setup label: "Clave cifrado" / "Enc. Key"
     SOLAR_NO_DATA,     // right panel when no data: "Sin datos" / "No data"
-    BATT_CFG,          // settings menu: "Bateria" / "Battery"
     _COUNT
 };
 

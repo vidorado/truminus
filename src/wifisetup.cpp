@@ -7,6 +7,7 @@
 #include <esp32_smartdisplay.h>
 #include <NimBLEDevice.h>
 #include <vector>
+#include <esp_task_wdt.h>
 
 // -----------------------------------------------------------------------
 // NVS — Touch calibration
@@ -902,6 +903,7 @@ static String runSolarScan() {
         lv_tick_inc(now - s_lvLastTick);
         s_lvLastTick = now;
         lv_timer_handler();
+        esp_task_wdt_reset();
 
         uint32_t elapsed = now - scanStart;
         lv_bar_set_value(bar, (int32_t)min((uint32_t)80, elapsed / 100), LV_ANIM_OFF);
@@ -996,36 +998,52 @@ void saveSolarConfig(const String& addr, const String& key) {
     p.end();
 }
 
-static lv_obj_t* ss_addrTA       = nullptr;
-static lv_obj_t* ss_keyTA        = nullptr;
-static lv_obj_t* ss_kb           = nullptr;
-static lv_obj_t* ss_statusLbl    = nullptr;
-static bool      ss_done         = false;
-static bool      ss_cancelled    = false;
-static bool      ss_scanRequested = false;
+static String runBattScan();  // forward declaration
+
+static lv_obj_t* ss_addrTA            = nullptr;
+static lv_obj_t* ss_keyTA             = nullptr;
+static lv_obj_t* ss_battAddrTA        = nullptr;
+static lv_obj_t* ss_contentPanel      = nullptr;
+static lv_obj_t* ss_kb                = nullptr;
+static lv_obj_t* ss_statusLbl         = nullptr;
+static bool      ss_done              = false;
+static bool      ss_cancelled         = false;
+static bool      ss_scanRequested     = false;
+static bool      ss_battScanRequested = false;
 
 static void solarSetStatus(const char* msg) {
     lv_label_set_text(ss_statusLbl, msg);
     lvRun(20);
 }
 
-static void solarCancelCb(lv_event_t*) { ss_cancelled = true; ss_done = true; }
-static void solarScanCb(lv_event_t*)   { ss_scanRequested = true; }
+static void solarCancelCb(lv_event_t*)      { ss_cancelled = true; ss_done = true; }
+static void solarScanCb(lv_event_t*)        { ss_scanRequested = true; }
+static void solarBattScanCb(lv_event_t*)    { ss_battScanRequested = true; }
 
 static void solarSaveCb(lv_event_t*) {
-    const char* addr = lv_textarea_get_text(ss_addrTA);
-    const char* key  = lv_textarea_get_text(ss_keyTA);
+    const char* addr     = lv_textarea_get_text(ss_addrTA);
+    const char* key      = lv_textarea_get_text(ss_keyTA);
+    const char* battAddr = lv_textarea_get_text(ss_battAddrTA);
     if (strlen(addr) != 12) {
-        solarSetStatus("Introduce exactamente 12 caracteres hex (sin \":\")");;
+        solarSetStatus("MAC Victron: 12 hex sin \":\" (ej. D8AC8D2C49FA)");
         return;
     }
     if (strlen(key) != 32) {
-        solarSetStatus("La clave debe tener exactamente 32 caracteres hex");
+        solarSetStatus("Clave Victron: 32 hex (ver VictronConnect > info)");
         return;
     }
-    String addrStr(addr); addrStr.toUpperCase();
-    String keyStr(key);   keyStr.toUpperCase();
+    size_t battLen = strlen(battAddr);
+    if (battLen != 0 && battLen != 12) {
+        solarSetStatus("MAC Bateria: 12 hex sin \":\" o dejar vacio");
+        return;
+    }
+    String addrStr(addr);     addrStr.toUpperCase();
+    String keyStr(key);       keyStr.toUpperCase();
     saveSolarConfig(addrStr, keyStr);
+    if (battLen == 12) {
+        String battStr(battAddr); battStr.toUpperCase();
+        saveBattConfig(battStr);
+    }
     solarSetStatus("Guardado. Reinicia para aplicar.");
     lvRun(1200);
     ss_done = true;
@@ -1036,46 +1054,87 @@ static void solarFocusCb(lv_event_t* e) {
     lv_keyboard_set_textarea(ss_kb, ta);
     lv_keyboard_set_mode(ss_kb, LV_KEYBOARD_MODE_TEXT_UPPER);
     lv_obj_remove_flag(ss_kb, LV_OBJ_FLAG_HIDDEN);
+    // Shrink panel so keyboard doesn't cover it; scroll focused TA into view
+    lv_obj_set_height(ss_contentPanel, 90);
+    lv_obj_scroll_to_view(ta, LV_ANIM_ON);
 }
 
 static void solarHideKbCb(lv_event_t*) {
     lv_obj_add_flag(ss_kb, LV_OBJ_FLAG_HIDDEN);
+    if (ss_contentPanel) lv_obj_set_height(ss_contentPanel, 220);
 }
 
 bool runSolarSetup(String& addr, String& key) {
-    ss_done         = false;
-    ss_cancelled    = false;
-    ss_scanRequested = false;
-    s_lvLastTick    = millis();
+    ss_done              = false;
+    ss_cancelled         = false;
+    ss_scanRequested     = false;
+    ss_battScanRequested = false;
+    s_lvLastTick         = millis();
 
     String existAddr, existKey;
     bool hasConfig = loadSolarConfig(existAddr, existKey);
 
+    String existBattAddr;
+    bool hasBattConfig = loadBattConfig(existBattAddr);
+
+    // Screen: no padding, non-scrollable
     lv_obj_t* scr = lv_obj_create(NULL);
-    lv_obj_set_style_pad_all(scr, 5, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(scr, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(scr, (lv_obj_flag_t)LV_OBJ_FLAG_SCROLLABLE);
     lv_screen_load(scr);
 
+    // Fixed title at top
     lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "TruMinus - Config. Solar Victron");
-    lv_obj_set_width(title, 310);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+    lv_label_set_text(title, "TruMinus - Config. BLE");
+    lv_obj_set_width(title, 320);
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 3);
 
-    lv_obj_t* addrLbl = lv_label_create(scr);
-    lv_label_set_text(addrLbl, "MAC BLE (12 hex, sin \":\" - ej. E4E1D0AABBCC):");
+    // Scrollable content panel (shrinks to 90 when keyboard opens)
+    ss_contentPanel = lv_obj_create(scr);
+    lv_obj_set_pos(ss_contentPanel, 0, 20);
+    lv_obj_set_size(ss_contentPanel, 320, 220);
+    lv_obj_set_style_pad_left (ss_contentPanel, 5, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(ss_contentPanel, 5, LV_PART_MAIN);
+    lv_obj_set_style_pad_top  (ss_contentPanel, 4, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(ss_contentPanel, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(ss_contentPanel, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(ss_contentPanel, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_add_flag(ss_contentPanel, (lv_obj_flag_t)LV_OBJ_FLAG_SCROLLABLE);
+
+    // ── Victron Solar ─────────────────────────────────────────────
+    // Layout y-positions (font heights: montserrat_20≈22px, montserrat_14≈18px)
+    //   0  : "Victron Solar" title (22px)
+    //  26  : addr label (18px)
+    //  46  : addr TA / scan btn (36px)
+    //  86  : key label (18px)
+    // 106  : key TA (36px)
+    // 148  : "Bateria BMS" title (22px)
+    // 174  : batt addr label (18px)
+    // 194  : batt addr TA / batt scan btn (36px)
+    // 236  : Cancel / Save buttons (34px) — scroll panel to see
+    // 274  : status label
+    lv_obj_t* solarSecLbl = lv_label_create(ss_contentPanel);
+    lv_obj_set_style_text_font(solarSecLbl, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_label_set_text(solarSecLbl, "Victron Solar");
+    lv_obj_set_pos(solarSecLbl, 0, 0);
+
+    lv_obj_t* addrLbl = lv_label_create(ss_contentPanel);
+    lv_label_set_text(addrLbl, "MAC BLE (12 hex, sin \":\" - ej. D8AC8D2C49FA):");
     lv_obj_set_width(addrLbl, 310);
-    lv_obj_align(addrLbl, LV_ALIGN_TOP_LEFT, 0, 22);
+    lv_obj_set_pos(addrLbl, 0, 26);
 
-    ss_addrTA = lv_textarea_create(scr);
+    ss_addrTA = lv_textarea_create(ss_contentPanel);
     lv_obj_set_size(ss_addrTA, 198, 36);
     lv_textarea_set_one_line(ss_addrTA, true);
-    lv_textarea_set_placeholder_text(ss_addrTA, "E4E1D0AABBCC");
+    lv_textarea_set_placeholder_text(ss_addrTA, "D8AC8D2C49FA");
     lv_textarea_set_max_length(ss_addrTA, 12);
-    lv_obj_align(ss_addrTA, LV_ALIGN_TOP_LEFT, 0, 40);
+    lv_obj_set_pos(ss_addrTA, 0, 46);
     if (hasConfig) lv_textarea_set_text(ss_addrTA, existAddr.c_str());
 
-    lv_obj_t* scanBtn = lv_btn_create(scr);
+    lv_obj_t* scanBtn = lv_btn_create(ss_contentPanel);
     lv_obj_set_size(scanBtn, 107, 36);
-    lv_obj_align(scanBtn, LV_ALIGN_TOP_RIGHT, 0, 40);
+    lv_obj_set_pos(scanBtn, 203, 46);
     lv_obj_set_style_bg_color(scanBtn, lv_color_make(0, 80, 140), LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(scanBtn, lv_color_make(0, 110, 190), LV_STATE_PRESSED);
     lv_obj_add_event_cb(scanBtn, solarScanCb, LV_EVENT_CLICKED, NULL);
@@ -1083,23 +1142,52 @@ bool runSolarSetup(String& addr, String& key) {
     lv_label_set_text(scanLbl, LV_SYMBOL_REFRESH " Buscar");
     lv_obj_center(scanLbl);
 
-    lv_obj_t* keyLbl = lv_label_create(scr);
-    lv_label_set_text(keyLbl, "Clave cifrado (32 hex, ver VictronConnect > info):");
+    lv_obj_t* keyLbl = lv_label_create(ss_contentPanel);
+    lv_label_set_text(keyLbl, "Clave cifrado (32 hex, VictronConnect > info):");
     lv_obj_set_width(keyLbl, 310);
-    lv_obj_align(keyLbl, LV_ALIGN_TOP_LEFT, 0, 82);
+    lv_obj_set_pos(keyLbl, 0, 86);
 
-    ss_keyTA = lv_textarea_create(scr);
+    ss_keyTA = lv_textarea_create(ss_contentPanel);
     lv_obj_set_size(ss_keyTA, 310, 36);
     lv_textarea_set_one_line(ss_keyTA, true);
     lv_textarea_set_placeholder_text(ss_keyTA, "0123456789ABCDEF...");
     lv_textarea_set_max_length(ss_keyTA, 32);
-    lv_obj_align(ss_keyTA, LV_ALIGN_TOP_LEFT, 0, 100);
+    lv_obj_set_pos(ss_keyTA, 0, 106);
     if (hasConfig) lv_textarea_set_text(ss_keyTA, existKey.c_str());
 
+    // ── Bateria BMS (Ultimatron) ───────────────────────────────────
+    lv_obj_t* battSecLbl = lv_label_create(ss_contentPanel);
+    lv_obj_set_style_text_font(battSecLbl, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_label_set_text(battSecLbl, "Bateria BMS");
+    lv_obj_set_pos(battSecLbl, 0, 148);
+
+    lv_obj_t* battAddrLbl = lv_label_create(ss_contentPanel);
+    lv_label_set_text(battAddrLbl, "MAC BLE (12 hex, sin \":\" - ej. 12100AE21001):");
+    lv_obj_set_width(battAddrLbl, 310);
+    lv_obj_set_pos(battAddrLbl, 0, 174);
+
+    ss_battAddrTA = lv_textarea_create(ss_contentPanel);
+    lv_obj_set_size(ss_battAddrTA, 198, 36);
+    lv_textarea_set_one_line(ss_battAddrTA, true);
+    lv_textarea_set_placeholder_text(ss_battAddrTA, "12100AE21001 (opcional)");
+    lv_textarea_set_max_length(ss_battAddrTA, 12);
+    lv_obj_set_pos(ss_battAddrTA, 0, 194);
+    if (hasBattConfig) lv_textarea_set_text(ss_battAddrTA, existBattAddr.c_str());
+
+    lv_obj_t* battScanBtn = lv_btn_create(ss_contentPanel);
+    lv_obj_set_size(battScanBtn, 107, 36);
+    lv_obj_set_pos(battScanBtn, 203, 194);
+    lv_obj_set_style_bg_color(battScanBtn, lv_color_make(0, 80, 140), LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(battScanBtn, lv_color_make(0, 110, 190), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(battScanBtn, solarBattScanCb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* battScanLbl = lv_label_create(battScanBtn);
+    lv_label_set_text(battScanLbl, LV_SYMBOL_REFRESH " Buscar");
+    lv_obj_center(battScanLbl);
+
     // Cancel / Save
-    lv_obj_t* cancelBtn = lv_btn_create(scr);
+    lv_obj_t* cancelBtn = lv_btn_create(ss_contentPanel);
     lv_obj_set_size(cancelBtn, 148, 34);
-    lv_obj_align(cancelBtn, LV_ALIGN_TOP_LEFT, 0, 142);
+    lv_obj_set_pos(cancelBtn, 0, 236);
     lv_obj_set_style_bg_color(cancelBtn, lv_color_make(60, 60, 60), LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(cancelBtn, lv_color_make(80, 80, 80), LV_STATE_PRESSED);
     lv_obj_add_event_cb(cancelBtn, solarCancelCb, LV_EVENT_CLICKED, NULL);
@@ -1107,20 +1195,21 @@ bool runSolarSetup(String& addr, String& key) {
     lv_label_set_text(cancelLbl, hasConfig ? "Cancelar" : "Omitir");
     lv_obj_center(cancelLbl);
 
-    lv_obj_t* saveBtn = lv_btn_create(scr);
+    lv_obj_t* saveBtn = lv_btn_create(ss_contentPanel);
     lv_obj_set_size(saveBtn, 148, 34);
-    lv_obj_align(saveBtn, LV_ALIGN_TOP_RIGHT, 0, 142);
+    lv_obj_set_pos(saveBtn, 162, 236);
     lv_obj_add_event_cb(saveBtn, solarSaveCb, LV_EVENT_CLICKED, NULL);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
     lv_label_set_text(saveLbl, "Guardar");
     lv_obj_center(saveLbl);
 
-    ss_statusLbl = lv_label_create(scr);
+    ss_statusLbl = lv_label_create(ss_contentPanel);
     lv_obj_set_width(ss_statusLbl, 310);
-    lv_label_set_long_mode(ss_statusLbl, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lv_label_set_text(ss_statusLbl, "VictronConnect > 3 puntos > Info del producto > Clave cifrado");
-    lv_obj_align(ss_statusLbl, LV_ALIGN_TOP_LEFT, 0, 182);
+    lv_label_set_long_mode(ss_statusLbl, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(ss_statusLbl, "Bateria: opcional. Dejar vacio si no hay BMS.");
+    lv_obj_set_pos(ss_statusLbl, 0, 274);
 
+    // Keyboard: direct child of scr (not panel), fixed at bottom
     ss_kb = lv_keyboard_create(scr);
     lv_obj_set_size(ss_kb, 320, 130);
     lv_obj_align(ss_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -1128,25 +1217,44 @@ bool runSolarSetup(String& addr, String& key) {
     lv_keyboard_set_mode(ss_kb, LV_KEYBOARD_MODE_TEXT_UPPER);
     lv_obj_add_flag(ss_kb, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_add_event_cb(ss_addrTA, solarFocusCb,  LV_EVENT_FOCUSED, NULL);
-    lv_obj_add_event_cb(ss_keyTA,  solarFocusCb,  LV_EVENT_FOCUSED, NULL);
-    lv_obj_add_event_cb(ss_kb,     solarHideKbCb, LV_EVENT_READY,   NULL);
-    lv_obj_add_event_cb(ss_kb,     solarHideKbCb, LV_EVENT_CANCEL,  NULL);
+    lv_obj_add_event_cb(ss_addrTA,     solarFocusCb,  LV_EVENT_FOCUSED, NULL);
+    lv_obj_add_event_cb(ss_keyTA,      solarFocusCb,  LV_EVENT_FOCUSED, NULL);
+    lv_obj_add_event_cb(ss_battAddrTA, solarFocusCb,  LV_EVENT_FOCUSED, NULL);
+    lv_obj_add_event_cb(ss_kb,         solarHideKbCb, LV_EVENT_READY,   NULL);
+    lv_obj_add_event_cb(ss_kb,         solarHideKbCb, LV_EVENT_CANCEL,  NULL);
 
     while (!ss_done) {
         uint32_t now = millis();
         lv_tick_inc(now - s_lvLastTick);
         s_lvLastTick = now;
         lv_timer_handler();
+        esp_task_wdt_reset();   // user may take >10 s to enter MAC/key
 
-        if (ss_scanRequested) {
-            ss_scanRequested = false;
-            String picked = runSolarScan();
-            // Restore the solar setup screen
+        if (ss_scanRequested || ss_battScanRequested) {
+            // Free the keyboard (~16 KB) so the scan screen fits in the LVGL pool.
+            bool forBatt = ss_battScanRequested;
+            ss_scanRequested = ss_battScanRequested = false;
+            if (ss_kb) { lv_obj_delete(ss_kb); ss_kb = nullptr; }
+            if (ss_contentPanel) lv_obj_set_height(ss_contentPanel, 220);
+
+            String picked = forBatt ? runBattScan() : runSolarScan();
+
+            // Rebuild keyboard now that scan screen is gone.
+            ss_kb = lv_keyboard_create(scr);
+            lv_obj_set_size(ss_kb, 320, 130);
+            lv_obj_align(ss_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+            lv_keyboard_set_textarea(ss_kb, ss_addrTA);
+            lv_keyboard_set_mode(ss_kb, LV_KEYBOARD_MODE_TEXT_UPPER);
+            lv_obj_add_flag(ss_kb, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_event_cb(ss_kb, solarHideKbCb, LV_EVENT_READY,  NULL);
+            lv_obj_add_event_cb(ss_kb, solarHideKbCb, LV_EVENT_CANCEL, NULL);
+
             lv_screen_load(scr);
             s_lvLastTick = millis();
-            if (picked.length() > 0)
-                lv_textarea_set_text(ss_addrTA, picked.c_str());
+            if (picked.length() > 0) {
+                if (forBatt) lv_textarea_set_text(ss_battAddrTA, picked.c_str());
+                else         lv_textarea_set_text(ss_addrTA,     picked.c_str());
+            }
         }
 
         delay(5);
@@ -1159,6 +1267,7 @@ bool runSolarSetup(String& addr, String& key) {
         saved = true;
     }
 
+    ss_contentPanel = nullptr;
     lv_obj_delete(scr);
     return saved;
 }
@@ -1166,7 +1275,7 @@ bool runSolarSetup(String& addr, String& key) {
 // =======================================================================
 // Battery (Ultimatron BLE) device scan
 // Scans 8 s for all BLE devices so the user can find their battery by name/MAC.
-// Must be called while holding the LVGL lock (same as runBattSetup).
+// Must be called while holding the LVGL lock.
 // =======================================================================
 
 struct BattFound {
@@ -1281,6 +1390,7 @@ static String runBattScan() {
         lv_tick_inc(now - s_lvLastTick);
         s_lvLastTick = now;
         lv_timer_handler();
+        esp_task_wdt_reset();
 
         uint32_t elapsed = now - scanStart;
         lv_bar_set_value(bar, (int32_t)min((uint32_t)80, elapsed / 100), LV_ANIM_OFF);
@@ -1368,149 +1478,6 @@ void saveBattConfig(const String& addr) {
     p.begin(NVS_BATT_NS, false);
     p.putString(NVS_BATT_ADDR, addr);
     p.end();
-}
-
-static lv_obj_t* bs_addrTA    = nullptr;
-static lv_obj_t* bs_kb        = nullptr;
-static lv_obj_t* bs_statusLbl = nullptr;
-static bool      bs_done          = false;
-static bool      bs_cancelled     = false;
-static bool      bs_scanRequested = false;
-
-static void battSetStatus(const char* msg) {
-    lv_label_set_text(bs_statusLbl, msg);
-    lvRun(20);
-}
-
-static void battCancelCb(lv_event_t*) { bs_cancelled = true; bs_done = true; }
-static void battScanCb(lv_event_t*)   { bs_scanRequested = true; }
-
-static void battSaveCb(lv_event_t*) {
-    const char* addr = lv_textarea_get_text(bs_addrTA);
-    if (strlen(addr) != 12) {
-        battSetStatus("Introduce exactamente 12 caracteres hex (sin \":\")");;
-        return;
-    }
-    String addrStr(addr); addrStr.toUpperCase();
-    saveBattConfig(addrStr);
-    battSetStatus("Guardado. Reinicia para aplicar.");
-    lvRun(1200);
-    bs_done = true;
-}
-
-static void battFocusCb(lv_event_t* e) {
-    lv_obj_t* ta = lv_event_get_target_obj(e);
-    lv_keyboard_set_textarea(bs_kb, ta);
-    lv_keyboard_set_mode(bs_kb, LV_KEYBOARD_MODE_TEXT_UPPER);
-    lv_obj_remove_flag(bs_kb, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void battHideKbCb(lv_event_t*) {
-    lv_obj_add_flag(bs_kb, LV_OBJ_FLAG_HIDDEN);
-}
-
-bool runBattSetup(String& addr) {
-    bs_done         = false;
-    bs_cancelled    = false;
-    bs_scanRequested = false;
-    s_lvLastTick    = millis();
-
-    String existAddr;
-    bool hasConfig = loadBattConfig(existAddr);
-
-    lv_obj_t* scr = lv_obj_create(NULL);
-    lv_obj_set_style_pad_all(scr, 5, LV_PART_MAIN);
-    lv_screen_load(scr);
-
-    lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "TruMinus - Config. Bateria BLE (Ultimatron)");
-    lv_obj_set_width(title, 310);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
-
-    lv_obj_t* addrLbl = lv_label_create(scr);
-    lv_label_set_text(addrLbl, "MAC BLE (12 hex, sin \":\" - ej. AABBCCDDEEFF):");
-    lv_obj_set_width(addrLbl, 310);
-    lv_obj_align(addrLbl, LV_ALIGN_TOP_LEFT, 0, 22);
-
-    bs_addrTA = lv_textarea_create(scr);
-    lv_obj_set_size(bs_addrTA, 198, 36);
-    lv_textarea_set_one_line(bs_addrTA, true);
-    lv_textarea_set_placeholder_text(bs_addrTA, "12100AE2100111");
-    lv_textarea_set_max_length(bs_addrTA, 12);
-    lv_obj_align(bs_addrTA, LV_ALIGN_TOP_LEFT, 0, 40);
-    if (hasConfig) lv_textarea_set_text(bs_addrTA, existAddr.c_str());
-
-    lv_obj_t* scanBtn = lv_btn_create(scr);
-    lv_obj_set_size(scanBtn, 107, 36);
-    lv_obj_align(scanBtn, LV_ALIGN_TOP_RIGHT, 0, 40);
-    lv_obj_set_style_bg_color(scanBtn, lv_color_make(0, 80, 140), LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(scanBtn, lv_color_make(0, 110, 190), LV_STATE_PRESSED);
-    lv_obj_add_event_cb(scanBtn, battScanCb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t* scanLbl = lv_label_create(scanBtn);
-    lv_label_set_text(scanLbl, LV_SYMBOL_REFRESH " Buscar");
-    lv_obj_center(scanLbl);
-
-    lv_obj_t* cancelBtn = lv_btn_create(scr);
-    lv_obj_set_size(cancelBtn, 148, 34);
-    lv_obj_align(cancelBtn, LV_ALIGN_TOP_LEFT, 0, 84);
-    lv_obj_set_style_bg_color(cancelBtn, lv_color_make(60, 60, 60), LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(cancelBtn, lv_color_make(80, 80, 80), LV_STATE_PRESSED);
-    lv_obj_add_event_cb(cancelBtn, battCancelCb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t* cancelLbl = lv_label_create(cancelBtn);
-    lv_label_set_text(cancelLbl, hasConfig ? "Cancelar" : "Omitir");
-    lv_obj_center(cancelLbl);
-
-    lv_obj_t* saveBtn = lv_btn_create(scr);
-    lv_obj_set_size(saveBtn, 148, 34);
-    lv_obj_align(saveBtn, LV_ALIGN_TOP_RIGHT, 0, 84);
-    lv_obj_add_event_cb(saveBtn, battSaveCb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t* saveLbl = lv_label_create(saveBtn);
-    lv_label_set_text(saveLbl, "Guardar");
-    lv_obj_center(saveLbl);
-
-    bs_statusLbl = lv_label_create(scr);
-    lv_obj_set_width(bs_statusLbl, 310);
-    lv_label_set_long_mode(bs_statusLbl, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lv_label_set_text(bs_statusLbl, "Nombre del dispositivo: numero de serie del Ultimatron");
-    lv_obj_align(bs_statusLbl, LV_ALIGN_TOP_LEFT, 0, 125);
-
-    bs_kb = lv_keyboard_create(scr);
-    lv_obj_set_size(bs_kb, 320, 130);
-    lv_obj_align(bs_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_keyboard_set_textarea(bs_kb, bs_addrTA);
-    lv_keyboard_set_mode(bs_kb, LV_KEYBOARD_MODE_TEXT_UPPER);
-    lv_obj_add_flag(bs_kb, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_add_event_cb(bs_addrTA, battFocusCb,  LV_EVENT_FOCUSED, NULL);
-    lv_obj_add_event_cb(bs_kb,     battHideKbCb, LV_EVENT_READY,   NULL);
-    lv_obj_add_event_cb(bs_kb,     battHideKbCb, LV_EVENT_CANCEL,  NULL);
-
-    while (!bs_done) {
-        uint32_t now = millis();
-        lv_tick_inc(now - s_lvLastTick);
-        s_lvLastTick = now;
-        lv_timer_handler();
-
-        if (bs_scanRequested) {
-            bs_scanRequested = false;
-            String picked = runBattScan();
-            lv_screen_load(scr);
-            s_lvLastTick = millis();
-            if (picked.length() > 0)
-                lv_textarea_set_text(bs_addrTA, picked.c_str());
-        }
-
-        delay(5);
-    }
-
-    bool saved = false;
-    if (!bs_cancelled) {
-        addr  = String(lv_textarea_get_text(bs_addrTA));
-        saved = true;
-    }
-
-    lv_obj_delete(scr);
-    return saved;
 }
 
 #endif // CYD

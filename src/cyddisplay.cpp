@@ -155,7 +155,8 @@ static lv_obj_t* s_solarPvLbl    = nullptr;
 static lv_obj_t* s_battSocLbl = nullptr;
 static lv_obj_t* s_battBody   = nullptr;
 static lv_obj_t* s_battFill   = nullptr;
-static lv_obj_t* s_battNub    = nullptr;
+static lv_obj_t* s_battNub    = nullptr;   // left terminal
+static lv_obj_t* s_battNub2   = nullptr;   // right terminal
 
 // Status bar
 static lv_obj_t* s_statusLbl    = nullptr;
@@ -680,14 +681,6 @@ static void solarConfigCb(lv_event_t*) {
     if (old) lv_obj_delete(old);
 }
 
-static void battConfigCb(lv_event_t*) {
-    lv_obj_t* old = s_settingsScr;
-    s_settingsScr = nullptr;
-    s_navRequest  = CydNavRequest::BattSetup;
-    lv_screen_load(s_scr);
-    if (old) lv_obj_delete(old);
-}
-
 static void showSettingsMenu() {
     if (s_settingsScr) return;
 
@@ -718,9 +711,9 @@ static void showSettingsMenu() {
 
     makeSep(scr, 0, Y_SEP1, 320, 1);
 
-    // 6 buttons: bh=28, bgap=4 → 6×28+5×4=188 px (screen is 240, top bar=28 → 202 px avail)
-    const int bx = 8, bw = 304, bh = 28, bgap = 4;
-    int by = Y_CONT + 8;
+    // 5 buttons: bh=34, bgap=5 → 5×34+4×5=190 px (screen is 240, top bar=28 → 202 px avail)
+    const int bx = 8, bw = 304, bh = 34, bgap = 5;
+    int by = Y_CONT + 6;
 
     makeBtn(scr, bx, by,               bw, bh,
             symText(LV_SYMBOL_WIFI,     TK::WIFI_CFG),  wifiConfigCb);
@@ -732,8 +725,6 @@ static void showSettingsMenu() {
             symText(LV_SYMBOL_KEYBOARD, TK::LANGUAGE),  langConfigCb);
     makeBtn(scr, bx, by + 4*(bh+bgap), bw, bh,
             symText(LV_SYMBOL_CHARGE,   TK::SOLAR_CFG), solarConfigCb);
-    makeBtn(scr, bx, by + 5*(bh+bgap), bw, bh,
-            symText(LV_SYMBOL_BATTERY_FULL, TK::BATT_CFG), battConfigCb);
 
     lv_screen_load(scr);
 }
@@ -963,21 +954,25 @@ static void buildMainUI() {
     const int SC_W  = 106;               // solar column width
     const int BC_X  = rx + SC_W + 2;    // battery column x (~264)
     const int BC_W  = rw - SC_W - 2;    // battery column width (~54 px)
-    // Battery pill icon (vertical): body 22×44, nub 12×4 above body
-    const int BB_X  = BC_X + (BC_W - 22) / 2;  // body left edge (centered)
-    const int BB_Y  = Y_CONT + 124;             // body top
-    const int BB_H  = 44;                        // body height
-    const int BF_IH = BB_H - 2;                 // fill inner height (42 px)
+    // Battery pill icon (vertical): body 34×39, two nubs 5×4 above body
+    const int BB_W  = 34;                        // body width
+    const int BB_X  = BC_X + (BC_W - BB_W) / 2; // body left edge (centered)
+    const int BB_Y  = Y_CONT + 129;             // body top (baseline Y+168, 5px gap from SOC label)
+    const int BB_H  = 39;                        // body height
+    const int BF_IH = BB_H - 2;                 // fill inner height (37 px)
 
-    // Section label "Carga solar" / "Solar charge"
-    makeSecLabel(s_scr, rx, Y_CONT + 104, t(TK::SOLAR_CFG));
+    // Section label — uppercase like HEATING/FAN/HOT_WATER
+    makeSecLabel(s_scr, rx, Y_CONT + 104,
+        currentLanguage() == Language::EN ? "SOLAR CHARGE" : "CARGA SOLAR");
 
+    // Solar data: 3 rows × 14 px = 42 px, centered in 50 px below section label+3px gap
+    // (section label h≈16, 3px margin → data area Y+123..Y+173, top pad 4px → Y+127)
     // State line — e.g. "Bulk" / "Float" / "--"
     s_solarStateLbl = lv_label_create(s_scr);
     lv_obj_set_style_text_font(s_solarStateLbl, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarStateLbl, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_size(s_solarStateLbl, SC_W, 14);
-    lv_obj_set_pos(s_solarStateLbl, rx, Y_CONT + 118);
+    lv_obj_set_pos(s_solarStateLbl, rx, Y_CONT + 127);
     lv_label_set_long_mode(s_solarStateLbl, LV_LABEL_LONG_DOT);
     lv_label_set_text(s_solarStateLbl, "--");
 
@@ -986,7 +981,7 @@ static void buildMainUI() {
     lv_obj_set_style_text_font(s_solarBattLbl, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarBattLbl, lv_color_hex(0x88ccff), LV_PART_MAIN);
     lv_obj_set_size(s_solarBattLbl, SC_W, 14);
-    lv_obj_set_pos(s_solarBattLbl, rx, Y_CONT + 132);
+    lv_obj_set_pos(s_solarBattLbl, rx, Y_CONT + 141);
     lv_label_set_text(s_solarBattLbl, "--");
 
     // PV + kWh line — "120W 0.8kWh"
@@ -994,7 +989,7 @@ static void buildMainUI() {
     lv_obj_set_style_text_font(s_solarPvLbl, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarPvLbl, lv_color_hex(0xffdd66), LV_PART_MAIN);
     lv_obj_set_size(s_solarPvLbl, SC_W, 14);
-    lv_obj_set_pos(s_solarPvLbl, rx, Y_CONT + 146);
+    lv_obj_set_pos(s_solarPvLbl, rx, Y_CONT + 155);
     lv_label_set_text(s_solarPvLbl, "--");
 
     // Vertical separator between solar and battery columns
@@ -1010,20 +1005,25 @@ static void buildMainUI() {
     lv_obj_set_pos(s_battSocLbl, BC_X, Y_CONT + 106);
     lv_label_set_text(s_battSocLbl, "--");
 
-    // Battery nub (positive terminal, above body)
-    s_battNub = lv_obj_create(s_scr);
-    lv_obj_remove_style_all(s_battNub);
-    lv_obj_set_size(s_battNub, 12, 4);
-    lv_obj_set_pos(s_battNub, BB_X + 5, BB_Y - 4);   // centered on 22 px body
-    lv_obj_set_style_bg_opa(s_battNub, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_battNub, lv_color_hex(0x888888), LV_PART_MAIN);
-    lv_obj_set_style_radius(s_battNub, 1, LV_PART_MAIN);
-    lv_obj_clear_flag(s_battNub, (lv_obj_flag_t)LV_OBJ_FLAG_SCROLLABLE);
+    // Battery terminals (two nubs above body, left and right)
+    auto makeBattNub = [&](int x) -> lv_obj_t* {
+        lv_obj_t* n = lv_obj_create(s_scr);
+        lv_obj_remove_style_all(n);
+        lv_obj_set_size(n, 5, 4);
+        lv_obj_set_pos(n, x, BB_Y - 4);
+        lv_obj_set_style_bg_opa(n, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(n, lv_color_hex(0x888888), LV_PART_MAIN);
+        lv_obj_set_style_radius(n, 1, LV_PART_MAIN);
+        lv_obj_clear_flag(n, (lv_obj_flag_t)LV_OBJ_FLAG_SCROLLABLE);
+        return n;
+    };
+    s_battNub  = makeBattNub(BB_X + 3);               // left terminal
+    s_battNub2 = makeBattNub(BB_X + BB_W - 5 - 3);   // right terminal
 
-    // Battery body: border-only vertical rect 22×44 px
+    // Battery body: border-only vertical rect 30×44 px
     s_battBody = lv_obj_create(s_scr);
     lv_obj_remove_style_all(s_battBody);
-    lv_obj_set_size(s_battBody, 22, BB_H);
+    lv_obj_set_size(s_battBody, BB_W, BB_H);
     lv_obj_set_pos(s_battBody, BB_X, BB_Y);
     lv_obj_set_style_bg_opa(s_battBody, LV_OPA_0, LV_PART_MAIN);
     lv_obj_set_style_border_color(s_battBody, lv_color_hex(0x888888), LV_PART_MAIN);
@@ -1034,7 +1034,7 @@ static void buildMainUI() {
     // Battery fill: bottom-anchored, height updated by cydUpdateBatt()
     s_battFill = lv_obj_create(s_scr);
     lv_obj_remove_style_all(s_battFill);
-    lv_obj_set_size(s_battFill, 20, 0);   // height = 0 until first update
+    lv_obj_set_size(s_battFill, BB_W - 2, 0);   // height = 0 until first update
     lv_obj_set_pos(s_battFill, BB_X + 1, BB_Y + 1 + BF_IH);  // starts at bottom
     lv_obj_set_style_bg_opa(s_battFill, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_battFill, lv_color_hex(0x44bb44), LV_PART_MAIN);
@@ -1152,8 +1152,8 @@ void cydUpdateBatt(const CydBattData& d) {
     if (!s_battSocLbl) return;
 
     // These must match the static constants in buildMainUI()
-    static const int BB_Y  = Y_CONT + 124;
-    static const int BF_IH = 42;   // fill inner height
+    static const int BB_Y  = Y_CONT + 129;
+    static const int BF_IH = 37;   // fill inner height
 
     bool fresh = d.configured && d.valid && d.ageMs < 120000;
 
@@ -1171,17 +1171,15 @@ void cydUpdateBatt(const CydBattData& d) {
     int fillH = (int)d.soc * BF_IH / 100;
     if (fillH < 0)    fillH = 0;
     if (fillH > BF_IH) fillH = BF_IH;
-    lv_obj_set_size(s_battFill, 20, fillH);
+    lv_obj_set_size(s_battFill, 32, fillH);   // 32 = body width (34) - 2 borders
     lv_obj_set_pos(s_battFill, lv_obj_get_x(s_battFill),
                                BB_Y + 1 + (BF_IH - fillH));
 
-    // Color: green ≥50%, amber 20–49%, red <20%
+    // Color: green ≥50%, amber 20–49%, red <20% — only fill changes color
     uint32_t color = (d.soc >= 50) ? 0x44bb44u
                    : (d.soc >= 20) ? 0xffbb00u
                                    : 0xff3333u;
     lv_obj_set_style_bg_color(s_battFill, lv_color_hex(color), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_battNub,  lv_color_hex(color), LV_PART_MAIN);
-    lv_obj_set_style_border_color(s_battBody, lv_color_hex(color), LV_PART_MAIN);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1205,10 +1203,36 @@ void cydRebuildUI() {
     s_fanOnBtn = s_fanOffBtn = s_fanLevelLbl = nullptr;
     s_energyDd = s_statusLbl = s_ipLbl = nullptr;
     s_solarStateLbl = s_solarBattLbl = s_solarPvLbl = nullptr;
-    s_battSocLbl = s_battBody = s_battFill = s_battNub = nullptr;
+    s_battSocLbl = s_battBody = s_battFill = s_battNub = s_battNub2 = nullptr;
 
     lv_obj_clean(s_scr);   // delete all children
     buildMainUI();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// cydFreeMainUI — free all main-screen widgets without rebuilding.
+// Call before entering a blocking setup screen that needs LVGL heap room
+// (the keyboard widget alone is ~16 KB). Follow with cydRebuildUI() on exit.
+// Must be called under the LVGL mutex.
+// ═══════════════════════════════════════════════════════════════════════════
+void cydFreeMainUI() {
+    if (!s_scr) return;
+    s_errorModal   = nullptr;
+    s_lastErrClass = 0;
+    s_lastErrCode  = 0;
+    s_errAcked     = false;
+    s_ambLbl = s_aguaLbl = s_fireLbl = s_extLbl = nullptr;
+    s_wifiDot = s_mqttDot = s_linDot = nullptr;
+    s_heatBtn = s_heatBtnLbl = nullptr;
+    s_spRow = s_spLbl = nullptr;
+    s_fanHeatingRow = s_fanOffRow = s_fanLevelRow = nullptr;
+    for (int i = 0; i < FAN_N;    i++) s_fanBtn[i]    = nullptr;
+    for (int i = 0; i < BOILER_N; i++) s_boilerBtn[i] = nullptr;
+    s_fanOnBtn = s_fanOffBtn = s_fanLevelLbl = nullptr;
+    s_energyDd = s_statusLbl = s_ipLbl = nullptr;
+    s_solarStateLbl = s_solarBattLbl = s_solarPvLbl = nullptr;
+    s_battSocLbl = s_battBody = s_battFill = s_battNub = s_battNub2 = nullptr;
+    lv_obj_clean(s_scr);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
