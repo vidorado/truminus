@@ -4,9 +4,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp32_smartdisplay.h>
-#include <BLEDevice.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
+#include <NimBLEDevice.h>
 #include <vector>
 
 // -----------------------------------------------------------------------
@@ -794,27 +792,27 @@ static String                    sc_pickedMac;
 static volatile bool             sc_picked       = false;
 static volatile bool             sc_scanAborted  = false;
 
-class VictronSetupScanCb : public BLEAdvertisedDeviceCallbacks {
-    void onResult(BLEAdvertisedDevice dev) override {
-        if (!dev.haveManufacturerData()) return;
-        std::string raw = dev.getManufacturerData();
+class VictronSetupScanCb : public NimBLEAdvertisedDeviceCallbacks {
+    void onResult(NimBLEAdvertisedDevice* dev) override {
+        if (!dev->haveManufacturerData()) return;
+        std::string raw = dev->getManufacturerData();
         if (raw.size() < 2) return;
         if ((uint8_t)raw[0] != 0xE1 || (uint8_t)raw[1] != 0x02) return;
 
         String mac;
-        for (char c : dev.getAddress().toString())
+        for (char c : dev->getAddress().toString())
             if (c != ':') mac += (char)toupper((unsigned char)c);
 
         if (!sc_mutex) return;
         xSemaphoreTake(sc_mutex, portMAX_DELAY);
         bool found = false;
         for (auto& d : sc_devices)
-            if (d.mac == mac) { d.rssi = (int16_t)dev.getRSSI(); found = true; break; }
+            if (d.mac == mac) { d.rssi = (int16_t)dev->getRSSI(); found = true; break; }
         if (!found) {
             VictronFound f;
             f.mac  = mac;
-            f.name = dev.haveName() ? String(dev.getName().c_str()) : String("");
-            f.rssi = (int16_t)dev.getRSSI();
+            f.name = dev->haveName() ? String(dev->getName().c_str()) : String("");
+            f.rssi = (int16_t)dev->getRSSI();
             sc_devices.push_back(f);
         }
         xSemaphoreGive(sc_mutex);
@@ -843,8 +841,8 @@ static String runSolarScan() {
 
     victronBleSuspend();                  // stop monitoring task if running
 
-    BLEDevice::init("");                  // idempotent
-    BLEScan* scan = BLEDevice::getScan();
+    NimBLEDevice::init("");               // idempotent
+    NimBLEScan* scan = NimBLEDevice::getScan();
     scan->stop();
     scan->setAdvertisedDeviceCallbacks(new VictronSetupScanCb(), /*wantDuplicates=*/true);
     scan->setActiveScan(false);

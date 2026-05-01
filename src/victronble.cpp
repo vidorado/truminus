@@ -1,9 +1,7 @@
 #ifdef CYD
 #include "victronble.hpp"
 #include <Preferences.h>
-#include <BLEDevice.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
+#include <NimBLEDevice.h>
 #include <mbedtls/aes.h>
 
 // ── NVS ───────────────────────────────────────────────────────────────────
@@ -37,7 +35,7 @@ static String        s_targetAddr;        // 12 uppercase hex chars (no colons)
 static SemaphoreHandle_t s_dataMux = nullptr;
 static VictronData       s_data    = {};
 
-static BLEScan*      s_bleScan      = nullptr;
+static NimBLEScan*   s_bleScan      = nullptr;
 static TaskHandle_t  s_bleTaskHandle = nullptr;
 
 // ── Hex helpers ───────────────────────────────────────────────────────────
@@ -134,17 +132,17 @@ static void parseMfrData(const uint8_t* mfr, int len) {
 }
 
 // ── BLE callback ──────────────────────────────────────────────────────────
-class VictronScanCb : public BLEAdvertisedDeviceCallbacks {
-    void onResult(BLEAdvertisedDevice dev) override {
-        if (!dev.haveManufacturerData()) return;
+class VictronScanCb : public NimBLEAdvertisedDeviceCallbacks {
+    void onResult(NimBLEAdvertisedDevice* dev) override {
+        if (!dev->haveManufacturerData()) return;
 
         // Filter by MAC if configured
         if (s_targetAddr.length() > 0) {
-            String devAddr = normaliseAddr(dev.getAddress().toString());
+            String devAddr = normaliseAddr(dev->getAddress().toString());
             if (devAddr != s_targetAddr) return;
         }
 
-        std::string raw = dev.getManufacturerData();
+        std::string raw = dev->getManufacturerData();
         parseMfrData((const uint8_t*)raw.data(), (int)raw.size());
     }
 };
@@ -188,12 +186,13 @@ void victronBleInit() {
     s_configured  = true;
     s_dataMux     = xSemaphoreCreateMutex();
 
-    BLEDevice::init("");
-    s_bleScan = BLEDevice::getScan();
+    NimBLEDevice::init("");
+    s_bleScan = NimBLEDevice::getScan();
     s_bleScan->setAdvertisedDeviceCallbacks(new VictronScanCb(), /*wantDuplicates=*/true);
     s_bleScan->setActiveScan(false);   // passive — no connection needed
     s_bleScan->setInterval(100);
     s_bleScan->setWindow(99);
+    s_bleScan->setMaxResults(0);       // no caching — fire onResult for every adv
 
     xTaskCreate(bleTask, "ble_vic", 4096, nullptr, 1, &s_bleTaskHandle);
     Serial.printf("[ble] Victron BLE init ok, target=%s\n", s_targetAddr.c_str());
