@@ -110,28 +110,17 @@ static void parseMfrData(const uint8_t* mfr, int len) {
     if (mfr[2] != 0x10) return;   // Instant Readout marker — only in SCAN_RSP
 
     // Key-check byte: must match key[0] before attempting decryption
-    if (mfr[9] != s_aesKey[0]) {
-        Serial.printf("[ble] key-check mismatch: pkt=0x%02X key[0]=0x%02X\n", mfr[9], s_aesKey[0]);
-        return;
-    }
-
-    Serial.printf("[ble] Instant Readout found (len=%d), decrypting...\n", len);
+    if (mfr[9] != s_aesKey[0]) return;
 
     uint8_t out[16] = {};
-    if (!aesCtrDecrypt(mfr + 10, 16, mfr[7], mfr[8], out)) {
-        Serial.println("[ble] AES decrypt failed");
-        return;
-    }
+    if (!aesCtrDecrypt(mfr + 10, 16, mfr[7], mfr[8], out)) return;
 
     int16_t  rawV  = (int16_t)((uint16_t)out[2] | ((uint16_t)out[3] << 8));
     int16_t  rawA  = (int16_t)((uint16_t)out[4] | ((uint16_t)out[5] << 8));
     uint16_t rawKwh = (uint16_t)out[6] | ((uint16_t)out[7] << 8);
     uint16_t rawPv  = (uint16_t)out[8] | ((uint16_t)out[9] << 8);
 
-    if (rawV == 0x7FFF) {
-        Serial.println("[ble] voltage sentinel 0x7FFF — no data yet");
-        return;
-    }
+    if (rawV == 0x7FFF) return;   // sentinel — no data yet
 
     VictronData d;
     d.state    = out[0];
@@ -142,9 +131,6 @@ static void parseMfrData(const uint8_t* mfr, int len) {
     d.pvW      = (float)rawPv;
     d.valid    = true;
     d.lastMs   = millis();
-
-    Serial.printf("[ble] data: state=%u err=%u V=%.2f A=%.1f kWh=%.2f PV=%.0fW\n",
-                  d.state, d.errCode, d.battV, d.battA, d.kWhToday, d.pvW);
 
     if (s_dataMux) xSemaphoreTake(s_dataMux, portMAX_DELAY);
     s_data = d;
