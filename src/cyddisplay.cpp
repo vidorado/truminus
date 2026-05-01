@@ -1019,16 +1019,17 @@ static void buildMainUI() {
 // cydUpdateSolar — refresh solar data labels (call under LVGL mutex)
 // ═══════════════════════════════════════════════════════════════════════════
 static const char* solarStateName(uint8_t s) {
+    bool es = (currentLanguage() == Language::ES);
     switch (s) {
-        case   0: return "Off";
-        case   2: return "Fault";
-        case   3: return "Bulk";
-        case   4: return "Absorb";
-        case   5: return "Float";
-        case   7: return "Equalize";
-        case 245: return "Starting";
-        case 247: return "Auto-eq";
-        case 252: return "Ext ctrl";
+        case   0: return es ? "Apagado"      : "Off";
+        case   2: return es ? "Fallo"        : "Fault";
+        case   3: return es ? "Carga inicial": "Bulk";
+        case   4: return es ? "Absorcion"     : "Absorb";
+        case   5: return es ? "Flotacion"     : "Float";
+        case   7: return es ? "Ecualiz."     : "Equalize";
+        case 245: return es ? "Iniciando"    : "Starting";
+        case 247: return es ? "Auto-ec."     : "Auto-eq";
+        case 252: return es ? "Ctrl. ext."   : "Ext ctrl";
         default:  return "?";
     }
 }
