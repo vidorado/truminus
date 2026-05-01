@@ -46,6 +46,7 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Direcc. MAC",              // SOLAR_ADDR
     "Clave cifrado",            // SOLAR_KEY
     "Sin datos",                // SOLAR_NO_DATA
+    "Bateria",                  // BATT_CFG
 };
 
 static const char* EN_STRINGS[(int)TK::_COUNT] = {
@@ -89,6 +90,7 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "MAC Address",              // SOLAR_ADDR
     "Enc. Key",                 // SOLAR_KEY
     "No data",                  // SOLAR_NO_DATA
+    "Battery",                  // BATT_CFG
 };
 
 const char* t(TK key) {

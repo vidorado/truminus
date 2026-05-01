@@ -40,7 +40,7 @@ void cydRebuildUI();
 // Settings-screen buttons set this flag from LVGL callbacks.
 // main.cpp reads it in loop() OUTSIDE the mutex to safely drive the blocking
 // runWifiSetup / runMqttSetup / language-select screens.
-enum class CydNavRequest { None, WifiSetup, MqttSetup, LangChange, SolarSetup };
+enum class CydNavRequest { None, WifiSetup, MqttSetup, LangChange, SolarSetup, BattSetup };
 CydNavRequest cydGetNavRequest();
 void          cydClearNavRequest();
 // Reload s_scr (call after returning from a settings screen).
@@ -60,5 +60,16 @@ struct CydSolarData {
     uint32_t ageMs;    // millis() since last valid reception
 };
 void cydUpdateSolar(const CydSolarData& d);
+
+// ── Battery SOC display (call under LVGL mutex from loop()) ────────────────
+struct CydBattData {
+    bool     configured;
+    bool     valid;
+    uint8_t  soc;      // state of charge [%]
+    float    battV;
+    float    battA;
+    uint32_t ageMs;
+};
+void cydUpdateBatt(const CydBattData& d);
 
 #endif // CYD

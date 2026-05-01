@@ -146,10 +146,16 @@ static lv_obj_t* s_fanLevelLbl   = nullptr;
 static lv_obj_t* s_boilerBtn[BOILER_N];
 static lv_obj_t* s_energyDd      = nullptr;
 
-// Right panel — Solar data (below boiler buttons, y≈133..200)
+// Right panel — Solar data (compact, no section label)
 static lv_obj_t* s_solarStateLbl = nullptr;
 static lv_obj_t* s_solarBattLbl  = nullptr;
 static lv_obj_t* s_solarPvLbl    = nullptr;
+
+// Right panel — Battery SOC (below solar data)
+static lv_obj_t* s_battSocLbl = nullptr;
+static lv_obj_t* s_battBody   = nullptr;
+static lv_obj_t* s_battFill   = nullptr;
+static lv_obj_t* s_battNub    = nullptr;
 
 // Status bar
 static lv_obj_t* s_statusLbl    = nullptr;
@@ -674,6 +680,14 @@ static void solarConfigCb(lv_event_t*) {
     if (old) lv_obj_delete(old);
 }
 
+static void battConfigCb(lv_event_t*) {
+    lv_obj_t* old = s_settingsScr;
+    s_settingsScr = nullptr;
+    s_navRequest  = CydNavRequest::BattSetup;
+    lv_screen_load(s_scr);
+    if (old) lv_obj_delete(old);
+}
+
 static void showSettingsMenu() {
     if (s_settingsScr) return;
 
@@ -704,8 +718,8 @@ static void showSettingsMenu() {
 
     makeSep(scr, 0, Y_SEP1, 320, 1);
 
-    // 5 buttons: bh=34, bgap=5 → 5×34+4×5=190 px (screen is 240, top bar=28 → 202 px avail)
-    const int bx = 8, bw = 304, bh = 34, bgap = 5;
+    // 6 buttons: bh=28, bgap=4 → 6×28+5×4=188 px (screen is 240, top bar=28 → 202 px avail)
+    const int bx = 8, bw = 304, bh = 28, bgap = 4;
     int by = Y_CONT + 8;
 
     makeBtn(scr, bx, by,               bw, bh,
@@ -718,6 +732,8 @@ static void showSettingsMenu() {
             symText(LV_SYMBOL_KEYBOARD, TK::LANGUAGE),  langConfigCb);
     makeBtn(scr, bx, by + 4*(bh+bgap), bw, bh,
             symText(LV_SYMBOL_CHARGE,   TK::SOLAR_CFG), solarConfigCb);
+    makeBtn(scr, bx, by + 5*(bh+bgap), bw, bh,
+            symText(LV_SYMBOL_BATTERY_FULL, TK::BATT_CFG), battConfigCb);
 
     lv_screen_load(scr);
 }
@@ -941,33 +957,73 @@ static void buildMainUI() {
                                   boilerLabel(i), boilerCb, (void*)(intptr_t)i);
     }
 
-    // ── Solar data (free area y=133..204, below boiler buttons) ──────────
-    // Section label
-    makeSecLabel(s_scr, rx, Y_CONT + 104, t(TK::SOLAR_CFG));
+    // ── Solar data + Battery SOC (y=104..173, below boiler buttons) ──────
+    // Solar section is compacted (no header label) to leave room for battery widget.
 
-    // State line — e.g. "Bulk" / "Float" / "No data"
+    // State line — e.g. "Bulk" / "Float" / "--"
     s_solarStateLbl = lv_label_create(s_scr);
     lv_obj_set_style_text_font(s_solarStateLbl, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarStateLbl, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_size(s_solarStateLbl, rw, 16);
-    lv_obj_set_pos(s_solarStateLbl, rx, Y_CONT + 119);
+    lv_obj_set_size(s_solarStateLbl, rw, 14);
+    lv_obj_set_pos(s_solarStateLbl, rx, Y_CONT + 104);
     lv_label_set_text(s_solarStateLbl, "--");
 
-    // Battery line — "12.6V  1.5A"
+    // Battery/current line — "12.6V  1.5A"
     s_solarBattLbl = lv_label_create(s_scr);
     lv_obj_set_style_text_font(s_solarBattLbl, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarBattLbl, lv_color_hex(0x88ccff), LV_PART_MAIN);
-    lv_obj_set_size(s_solarBattLbl, rw, 16);
-    lv_obj_set_pos(s_solarBattLbl, rx, Y_CONT + 137);
+    lv_obj_set_size(s_solarBattLbl, rw, 14);
+    lv_obj_set_pos(s_solarBattLbl, rx, Y_CONT + 118);
     lv_label_set_text(s_solarBattLbl, "--");
 
     // PV + kWh line — "120W  0.8kWh"
     s_solarPvLbl = lv_label_create(s_scr);
     lv_obj_set_style_text_font(s_solarPvLbl, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarPvLbl, lv_color_hex(0xffdd66), LV_PART_MAIN);
-    lv_obj_set_size(s_solarPvLbl, rw, 16);
-    lv_obj_set_pos(s_solarPvLbl, rx, Y_CONT + 155);
+    lv_obj_set_size(s_solarPvLbl, rw, 14);
+    lv_obj_set_pos(s_solarPvLbl, rx, Y_CONT + 132);
     lv_label_set_text(s_solarPvLbl, "--");
+
+    // ── Battery SOC widget (y=146..173) ──────────────────────────────────
+    // SOC % centered above the battery icon
+    s_battSocLbl = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_battSocLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_battSocLbl, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_battSocLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_size(s_battSocLbl, rw, 14);
+    lv_obj_set_pos(s_battSocLbl, rx, Y_CONT + 148);
+    lv_label_set_text(s_battSocLbl, "--");
+
+    // Battery body: border-only rect 152×11 px at y+162
+    s_battBody = lv_obj_create(s_scr);
+    lv_obj_remove_style_all(s_battBody);
+    lv_obj_set_size(s_battBody, 152, 11);
+    lv_obj_set_pos(s_battBody, rx, Y_CONT + 162);
+    lv_obj_set_style_bg_opa(s_battBody, LV_OPA_0, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_battBody, lv_color_hex(0x888888), LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_battBody, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_battBody, 2, LV_PART_MAIN);
+    lv_obj_clear_flag(s_battBody, (lv_obj_flag_t)LV_OBJ_FLAG_SCROLLABLE);
+
+    // Battery fill: green/amber/red depending on SOC
+    s_battFill = lv_obj_create(s_scr);
+    lv_obj_remove_style_all(s_battFill);
+    lv_obj_set_size(s_battFill, 0, 9);  // width updated by cydUpdateBatt()
+    lv_obj_set_pos(s_battFill, rx + 1, Y_CONT + 163);
+    lv_obj_set_style_bg_opa(s_battFill, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_battFill, lv_color_hex(0x44bb44), LV_PART_MAIN);
+    lv_obj_set_style_radius(s_battFill, 1, LV_PART_MAIN);
+    lv_obj_clear_flag(s_battFill, (lv_obj_flag_t)LV_OBJ_FLAG_SCROLLABLE);
+
+    // Battery nub (positive terminal, right of body)
+    s_battNub = lv_obj_create(s_scr);
+    lv_obj_remove_style_all(s_battNub);
+    lv_obj_set_size(s_battNub, 5, 7);
+    lv_obj_set_pos(s_battNub, rx + 152, Y_CONT + 164);  // centered in 11 px body
+    lv_obj_set_style_bg_opa(s_battNub, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_battNub, lv_color_hex(0x888888), LV_PART_MAIN);
+    lv_obj_set_style_radius(s_battNub, 1, LV_PART_MAIN);
+    lv_obj_clear_flag(s_battNub, (lv_obj_flag_t)LV_OBJ_FLAG_SCROLLABLE);
 
     // ── Energy dropdown — hidden on Combi D (no electrical option) ────────
     lv_obj_add_flag(makeSecLabel(s_scr, rx, Y_CONT + 108, t(TK::ENERGY)), LV_OBJ_FLAG_HIDDEN);
@@ -1074,6 +1130,39 @@ void cydUpdateSolar(const CydSolarData& d) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// cydUpdateBatt — refresh battery SOC widget (call under LVGL mutex)
+// ═══════════════════════════════════════════════════════════════════════════
+void cydUpdateBatt(const CydBattData& d) {
+    if (!s_battSocLbl) return;
+
+    bool fresh = d.configured && d.valid && d.ageMs < 120000;
+
+    if (!fresh) {
+        lv_label_set_text(s_battSocLbl, "--");
+        lv_obj_set_width(s_battFill, 0);
+        return;
+    }
+
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d%%", d.soc);
+    lv_label_set_text(s_battSocLbl, buf);
+
+    // Fill width: 0–150 px maps to 0–100 %
+    int fillW = (int)d.soc * 150 / 100;
+    if (fillW < 0)   fillW = 0;
+    if (fillW > 150) fillW = 150;
+    lv_obj_set_width(s_battFill, fillW);
+
+    // Color: green ≥50%, amber 20-49%, red <20%
+    uint32_t color = (d.soc >= 50) ? 0x44bb44u
+                   : (d.soc >= 20) ? 0xffbb00u
+                                   : 0xff3333u;
+    lv_obj_set_style_bg_color(s_battFill, lv_color_hex(color), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_battNub,  lv_color_hex(color), LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_battBody, lv_color_hex(color), LV_PART_MAIN);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // cydRebuildUI — tear down and recreate all main-screen widgets
 // ═══════════════════════════════════════════════════════════════════════════
 void cydRebuildUI() {
@@ -1094,6 +1183,7 @@ void cydRebuildUI() {
     s_fanOnBtn = s_fanOffBtn = s_fanLevelLbl = nullptr;
     s_energyDd = s_statusLbl = s_ipLbl = nullptr;
     s_solarStateLbl = s_solarBattLbl = s_solarPvLbl = nullptr;
+    s_battSocLbl = s_battBody = s_battFill = s_battNub = nullptr;
 
     lv_obj_clean(s_scr);   // delete all children
     buildMainUI();

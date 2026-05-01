@@ -18,7 +18,8 @@ void victronBleInit();
 
 VictronData        victronGetData();   // returns a mutex-protected copy
 bool               victronIsConfigured();
-void               victronBleSuspend(); // stop scan task before setup screen
+void               victronBleSuspend(); // pause scan task (e.g. before GATT connection)
+void               victronBleResume();  // resume scan task after suspension
 
 // NVS helpers (used by wifisetup / solar config screen).
 bool victronLoadConfig(String& addr, String& key);

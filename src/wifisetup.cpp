@@ -1,6 +1,7 @@
 #ifdef CYD
 #include "wifisetup.hpp"
 #include "victronble.hpp"
+#include "ultimatronble.hpp"
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp32_smartdisplay.h>
@@ -1155,6 +1156,356 @@ bool runSolarSetup(String& addr, String& key) {
     if (!ss_cancelled) {
         addr  = String(lv_textarea_get_text(ss_addrTA));
         key   = String(lv_textarea_get_text(ss_keyTA));
+        saved = true;
+    }
+
+    lv_obj_delete(scr);
+    return saved;
+}
+
+// =======================================================================
+// Battery (Ultimatron BLE) device scan
+// Scans 8 s for all BLE devices so the user can find their battery by name/MAC.
+// Must be called while holding the LVGL lock (same as runBattSetup).
+// =======================================================================
+
+struct BattFound {
+    String  mac;
+    String  name;
+    int16_t rssi;
+};
+
+static std::vector<BattFound> bc_devices;
+static SemaphoreHandle_t      bc_mutex       = nullptr;
+static String                 bc_pickedMac;
+static volatile bool          bc_picked      = false;
+static volatile bool          bc_scanAborted = false;
+
+class BattSetupScanCb : public NimBLEAdvertisedDeviceCallbacks {
+    void onResult(NimBLEAdvertisedDevice* dev) override {
+        String mac;
+        for (char c : dev->getAddress().toString())
+            if (c != ':') mac += (char)toupper((unsigned char)c);
+
+        if (!bc_mutex) return;
+        xSemaphoreTake(bc_mutex, portMAX_DELAY);
+        bool found = false;
+        for (auto& d : bc_devices)
+            if (d.mac == mac) { d.rssi = (int16_t)dev->getRSSI(); found = true; break; }
+        if (!found) {
+            BattFound f;
+            f.mac  = mac;
+            f.name = dev->haveName() ? String(dev->getName().c_str()) : String("");
+            f.rssi = (int16_t)dev->getRSSI();
+            bc_devices.push_back(f);
+        }
+        xSemaphoreGive(bc_mutex);
+    }
+};
+
+static void battScanItemCb(lv_event_t* e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (!bc_mutex) return;
+    xSemaphoreTake(bc_mutex, portMAX_DELAY);
+    if (idx >= 0 && idx < (int)bc_devices.size()) {
+        bc_pickedMac = bc_devices[idx].mac;
+        bc_picked    = true;
+    }
+    xSemaphoreGive(bc_mutex);
+}
+
+static void battScanAbortCb(lv_event_t*) { bc_scanAborted = true; }
+
+static String runBattScan() {
+    bc_devices.clear();
+    bc_pickedMac   = "";
+    bc_picked      = false;
+    bc_scanAborted = false;
+    if (!bc_mutex) bc_mutex = xSemaphoreCreateMutex();
+
+    victronBleSuspend();
+    ultimatronBleSuspend();
+
+    NimBLEDevice::init("");  // idempotent
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    scan->stop();
+    scan->setAdvertisedDeviceCallbacks(new BattSetupScanCb(), /*wantDuplicates=*/false);
+    scan->setActiveScan(true);
+    scan->setInterval(100);
+    scan->setWindow(99);
+    scan->clearResults();
+    scan->start(8, false);
+
+    lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_style_pad_all(scr, 4, LV_PART_MAIN);
+    lv_screen_load(scr);
+
+    lv_obj_t* title = lv_label_create(scr);
+    lv_label_set_text(title, "Buscar bateria BLE (Ultimatron)");
+    lv_obj_set_width(title, 310);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 2);
+
+    lv_obj_t* statusLbl = lv_label_create(scr);
+    lv_obj_set_width(statusLbl, 310);
+    lv_label_set_long_mode(statusLbl, LV_LABEL_LONG_CLIP);
+    lv_label_set_text(statusLbl, "Buscando... 8 s");
+    lv_obj_align(statusLbl, LV_ALIGN_TOP_LEFT, 0, 22);
+
+    lv_obj_t* bar = lv_bar_create(scr);
+    lv_obj_set_size(bar, 310, 8);
+    lv_obj_align(bar, LV_ALIGN_TOP_LEFT, 0, 40);
+    lv_bar_set_range(bar, 0, 80);
+    lv_bar_set_value(bar, 0, LV_ANIM_OFF);
+
+    lv_obj_t* list = lv_list_create(scr);
+    lv_obj_set_size(list, 312, 158);
+    lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, 52);
+
+    lv_obj_t* cancelBtn = lv_btn_create(scr);
+    lv_obj_set_size(cancelBtn, 148, 28);
+    lv_obj_align(cancelBtn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(cancelBtn, lv_color_make(60, 60, 60), LV_STATE_DEFAULT);
+    lv_obj_add_event_cb(cancelBtn, battScanAbortCb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* cancelLbl = lv_label_create(cancelBtn);
+    lv_label_set_text(cancelLbl, "Cancelar");
+    lv_obj_center(cancelLbl);
+
+    uint32_t scanStart      = millis();
+    int      lastCount      = -1;
+    bool     scanDone       = false;
+    uint32_t lastListUpdate = 0;
+    s_lvLastTick = millis();
+
+    while (!bc_picked && !bc_scanAborted) {
+        uint32_t now = millis();
+        lv_tick_inc(now - s_lvLastTick);
+        s_lvLastTick = now;
+        lv_timer_handler();
+
+        uint32_t elapsed = now - scanStart;
+        lv_bar_set_value(bar, (int32_t)min((uint32_t)80, elapsed / 100), LV_ANIM_OFF);
+
+        if (!scanDone && elapsed >= 8000) {
+            scan->stop();
+            scanDone = true;
+        }
+
+        if (!scanDone) {
+            char buf[28];
+            uint32_t rem = (elapsed < 8000) ? (8000 - elapsed + 999) / 1000 : 0;
+            snprintf(buf, sizeof(buf), "Buscando... %u s", (unsigned)rem);
+            lv_label_set_text(statusLbl, buf);
+        }
+
+        if (millis() - lastListUpdate > 600 || (scanDone && lastCount < 0)) {
+            lastListUpdate = millis();
+            xSemaphoreTake(bc_mutex, portMAX_DELAY);
+            int cnt = (int)bc_devices.size();
+            if (cnt != lastCount) {
+                lastCount = cnt;
+                lv_obj_clean(list);
+                for (int i = 0; i < cnt; i++) {
+                    const String& m = bc_devices[i].mac;
+                    char tail[9];
+                    snprintf(tail, sizeof(tail), "%c%c:%c%c:%c%c",
+                             m[6],m[7], m[8],m[9], m[10],m[11]);
+                    char buf[52];
+                    snprintf(buf, sizeof(buf), "%.18s  ...%s  %d dBm",
+                             bc_devices[i].name.isEmpty() ? "(sin nombre)"
+                                                          : bc_devices[i].name.c_str(),
+                             tail, (int)bc_devices[i].rssi);
+                    lv_obj_t* btn = lv_list_add_button(list, LV_SYMBOL_BLUETOOTH, buf);
+                    lv_obj_add_event_cb(btn, battScanItemCb, LV_EVENT_CLICKED,
+                                        (void*)(intptr_t)i);
+                }
+                if (scanDone) {
+                    if (cnt == 0)
+                        lv_label_set_text(statusLbl, "No se encontraron dispositivos BLE");
+                    else {
+                        char buf[48];
+                        snprintf(buf, sizeof(buf),
+                                 "%d dispositivo(s) — toca para seleccionar", cnt);
+                        lv_label_set_text(statusLbl, buf);
+                    }
+                }
+            }
+            xSemaphoreGive(bc_mutex);
+        }
+
+        delay(10);
+    }
+
+    if (!scanDone) scan->stop();
+    scan->clearResults();
+
+    String result = bc_picked ? bc_pickedMac : String("");
+    lv_obj_delete(scr);
+
+    ultimatronBleResume();
+    victronBleResume();
+    return result;
+}
+
+// =======================================================================
+// Battery (Ultimatron BLE) config screen
+// One text area: MAC address (12 hex chars) + scan + cancel/save.
+// =======================================================================
+
+static const char* NVS_BATT_NS   = "batt";
+static const char* NVS_BATT_ADDR = "addr";
+
+bool loadBattConfig(String& addr) {
+    Preferences p;
+    p.begin(NVS_BATT_NS, true);
+    if (!p.isKey(NVS_BATT_ADDR)) { p.end(); return false; }
+    addr = p.getString(NVS_BATT_ADDR, "");
+    p.end();
+    return addr.length() == 12;
+}
+
+void saveBattConfig(const String& addr) {
+    Preferences p;
+    p.begin(NVS_BATT_NS, false);
+    p.putString(NVS_BATT_ADDR, addr);
+    p.end();
+}
+
+static lv_obj_t* bs_addrTA    = nullptr;
+static lv_obj_t* bs_kb        = nullptr;
+static lv_obj_t* bs_statusLbl = nullptr;
+static bool      bs_done          = false;
+static bool      bs_cancelled     = false;
+static bool      bs_scanRequested = false;
+
+static void battSetStatus(const char* msg) {
+    lv_label_set_text(bs_statusLbl, msg);
+    lvRun(20);
+}
+
+static void battCancelCb(lv_event_t*) { bs_cancelled = true; bs_done = true; }
+static void battScanCb(lv_event_t*)   { bs_scanRequested = true; }
+
+static void battSaveCb(lv_event_t*) {
+    const char* addr = lv_textarea_get_text(bs_addrTA);
+    if (strlen(addr) != 12) {
+        battSetStatus("Introduce exactamente 12 caracteres hex (sin \":\")");;
+        return;
+    }
+    String addrStr(addr); addrStr.toUpperCase();
+    saveBattConfig(addrStr);
+    battSetStatus("Guardado. Reinicia para aplicar.");
+    lvRun(1200);
+    bs_done = true;
+}
+
+static void battFocusCb(lv_event_t* e) {
+    lv_obj_t* ta = lv_event_get_target_obj(e);
+    lv_keyboard_set_textarea(bs_kb, ta);
+    lv_keyboard_set_mode(bs_kb, LV_KEYBOARD_MODE_TEXT_UPPER);
+    lv_obj_remove_flag(bs_kb, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void battHideKbCb(lv_event_t*) {
+    lv_obj_add_flag(bs_kb, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool runBattSetup(String& addr) {
+    bs_done         = false;
+    bs_cancelled    = false;
+    bs_scanRequested = false;
+    s_lvLastTick    = millis();
+
+    String existAddr;
+    bool hasConfig = loadBattConfig(existAddr);
+
+    lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_style_pad_all(scr, 5, LV_PART_MAIN);
+    lv_screen_load(scr);
+
+    lv_obj_t* title = lv_label_create(scr);
+    lv_label_set_text(title, "TruMinus - Config. Bateria BLE (Ultimatron)");
+    lv_obj_set_width(title, 310);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t* addrLbl = lv_label_create(scr);
+    lv_label_set_text(addrLbl, "MAC BLE (12 hex, sin \":\" - ej. AABBCCDDEEFF):");
+    lv_obj_set_width(addrLbl, 310);
+    lv_obj_align(addrLbl, LV_ALIGN_TOP_LEFT, 0, 22);
+
+    bs_addrTA = lv_textarea_create(scr);
+    lv_obj_set_size(bs_addrTA, 198, 36);
+    lv_textarea_set_one_line(bs_addrTA, true);
+    lv_textarea_set_placeholder_text(bs_addrTA, "12100AE2100111");
+    lv_textarea_set_max_length(bs_addrTA, 12);
+    lv_obj_align(bs_addrTA, LV_ALIGN_TOP_LEFT, 0, 40);
+    if (hasConfig) lv_textarea_set_text(bs_addrTA, existAddr.c_str());
+
+    lv_obj_t* scanBtn = lv_btn_create(scr);
+    lv_obj_set_size(scanBtn, 107, 36);
+    lv_obj_align(scanBtn, LV_ALIGN_TOP_RIGHT, 0, 40);
+    lv_obj_set_style_bg_color(scanBtn, lv_color_make(0, 80, 140), LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(scanBtn, lv_color_make(0, 110, 190), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(scanBtn, battScanCb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* scanLbl = lv_label_create(scanBtn);
+    lv_label_set_text(scanLbl, LV_SYMBOL_REFRESH " Buscar");
+    lv_obj_center(scanLbl);
+
+    lv_obj_t* cancelBtn = lv_btn_create(scr);
+    lv_obj_set_size(cancelBtn, 148, 34);
+    lv_obj_align(cancelBtn, LV_ALIGN_TOP_LEFT, 0, 84);
+    lv_obj_set_style_bg_color(cancelBtn, lv_color_make(60, 60, 60), LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(cancelBtn, lv_color_make(80, 80, 80), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(cancelBtn, battCancelCb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* cancelLbl = lv_label_create(cancelBtn);
+    lv_label_set_text(cancelLbl, hasConfig ? "Cancelar" : "Omitir");
+    lv_obj_center(cancelLbl);
+
+    lv_obj_t* saveBtn = lv_btn_create(scr);
+    lv_obj_set_size(saveBtn, 148, 34);
+    lv_obj_align(saveBtn, LV_ALIGN_TOP_RIGHT, 0, 84);
+    lv_obj_add_event_cb(saveBtn, battSaveCb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* saveLbl = lv_label_create(saveBtn);
+    lv_label_set_text(saveLbl, "Guardar");
+    lv_obj_center(saveLbl);
+
+    bs_statusLbl = lv_label_create(scr);
+    lv_obj_set_width(bs_statusLbl, 310);
+    lv_label_set_long_mode(bs_statusLbl, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_text(bs_statusLbl, "Nombre del dispositivo: numero de serie del Ultimatron");
+    lv_obj_align(bs_statusLbl, LV_ALIGN_TOP_LEFT, 0, 125);
+
+    bs_kb = lv_keyboard_create(scr);
+    lv_obj_set_size(bs_kb, 320, 130);
+    lv_obj_align(bs_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_keyboard_set_textarea(bs_kb, bs_addrTA);
+    lv_keyboard_set_mode(bs_kb, LV_KEYBOARD_MODE_TEXT_UPPER);
+    lv_obj_add_flag(bs_kb, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_add_event_cb(bs_addrTA, battFocusCb,  LV_EVENT_FOCUSED, NULL);
+    lv_obj_add_event_cb(bs_kb,     battHideKbCb, LV_EVENT_READY,   NULL);
+    lv_obj_add_event_cb(bs_kb,     battHideKbCb, LV_EVENT_CANCEL,  NULL);
+
+    while (!bs_done) {
+        uint32_t now = millis();
+        lv_tick_inc(now - s_lvLastTick);
+        s_lvLastTick = now;
+        lv_timer_handler();
+
+        if (bs_scanRequested) {
+            bs_scanRequested = false;
+            String picked = runBattScan();
+            lv_screen_load(scr);
+            s_lvLastTick = millis();
+            if (picked.length() > 0)
+                lv_textarea_set_text(bs_addrTA, picked.c_str());
+        }
+
+        delay(5);
+    }
+
+    bool saved = false;
+    if (!bs_cancelled) {
+        addr  = String(lv_textarea_get_text(bs_addrTA));
         saved = true;
     }
 

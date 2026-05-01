@@ -19,6 +19,7 @@
 #include "cyddisplay.hpp"
 #include "i18n.hpp"
 #include "victronble.hpp"
+#include "ultimatronble.hpp"
 #include <DHTesp.h>
 #endif
 #include "globals.hpp"
@@ -355,9 +356,10 @@ void setup() {
 
   #ifdef CYD
   // BLE init before WiFi: heap is unfragmented here, making the large BT
-  // controller allocation more likely to succeed. bleTask itself waits 8 s
-  // before its first scan, so WiFi/MQTT will be up by then.
+  // controller allocation more likely to succeed. Tasks themselves wait before
+  // their first poll so WiFi/MQTT will be up by then.
   victronBleInit();
+  ultimatronBleInit();
   #endif
 
   //starts the wifi (loop will check if it's connected)
@@ -853,6 +855,10 @@ void loop() {
         String addr, key;
         // runSolarSetup already saves to NVS; restart so victronBleInit() picks it up.
         needRestart = runSolarSetup(addr, key);
+      } else if (nav == CydNavRequest::BattSetup) {
+        String addr;
+        // runBattSetup already saves to NVS; restart so ultimatronBleInit() picks it up.
+        needRestart = runBattSetup(addr);
       }
       cydReloadScreen();
       lvglUnlock();
@@ -915,6 +921,15 @@ void loop() {
           vd.valid ? (uint32_t)(millis() - vd.lastMs) : 999999u
       };
       cydUpdateSolar(sd);
+
+      UltratronData ud = ultimatronGetData();
+      CydBattData bd = {
+          ultimatronIsConfigured(),
+          ud.valid,
+          ud.soc, ud.battV, ud.battA,
+          ud.valid ? (uint32_t)(millis() - ud.lastMs) : 999999u
+      };
+      cydUpdateBatt(bd);
     }
     xSemaphoreGive(s_lvglMutex);
   }

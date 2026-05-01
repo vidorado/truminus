@@ -231,4 +231,8 @@ void victronBleSuspend() {
     }
 }
 
+void victronBleResume() {
+    if (s_bleTaskHandle) vTaskResume(s_bleTaskHandle);
+}
+
 #endif // CYD
