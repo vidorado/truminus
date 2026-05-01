@@ -841,11 +841,14 @@ static String runSolarScan() {
 
     victronBleSuspend();                  // stop monitoring task if running
 
+    Serial.printf("[scan] heap before BLE init: free=%u largest=%u\n",
+                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     NimBLEDevice::init("");               // idempotent
+    Serial.printf("[scan] heap after BLE init:  free=%u\n", ESP.getFreeHeap());
     NimBLEScan* scan = NimBLEDevice::getScan();
     scan->stop();
     scan->setAdvertisedDeviceCallbacks(new VictronSetupScanCb(), /*wantDuplicates=*/true);
-    scan->setActiveScan(false);
+    scan->setActiveScan(true);    // active scan to receive SCAN_RSP with Instant Readout data
     scan->setInterval(100);
     scan->setWindow(99);
     scan->clearResults();

@@ -86,45 +86,65 @@ static bool aesCtrDecrypt(const uint8_t* cipher, int len,
 }
 
 // ── Parse manufacturer-specific advertisement data ────────────────────────
-// Victron format (26+ bytes):
-//   [0-1]  Company ID  0xE1 0x02
-//   [2]    Record type 0x10 = Solar Controller
-//   [3-6]  Misc / reserved
+// Victron "Instant Readout" format — only present in SCAN RESPONSE (active scan).
+// Bleak strips the company ID, so relative to raw NimBLE getManufacturerData():
+//   [0-1]  Company ID  0xE1 0x02  (stripped by bleak, kept by NimBLE)
+//   [2]    0x10  — Instant Readout marker  (= data[0] in Python library)
+//   [3]    prefix hi byte
+//   [4-5]  Model ID (LE)
+//   [6]    Readout type (0x01 = solar charger)
 //   [7-8]  IV (little-endian 16-bit counter)
-//   [9]    Reserved
-//   [10-25] 16-byte AES-CTR ciphertext
+//   [9]    Key-check byte — must equal key[0]
+//   [10-N] AES-128-CTR ciphertext (first 16 bytes used)
 //
-// Decrypted output[0..9]:
+// Decrypted output (LSB-first bit packing, same layout as Python solar_charger.py):
 //   [0]    Device state
 //   [1]    Error code
-//   [2-3]  Battery voltage  ×10 mV  (uint16 LE, 0xFFFF = invalid)
-//   [4-5]  Battery current  ×100 mA (int16 LE,  0x7FFF = invalid)
-//   [6-7]  Yield today      ×10 Wh  (uint16 LE)
-//   [8-9]  PV power         W       (uint16 LE)
+//   [2-3]  Battery voltage  (int16 LE, ÷100 → V,  0x7FFF = invalid)
+//   [4-5]  Battery current  (int16 LE, ÷10 → A,   0x7FFF = invalid)
+//   [6-7]  Yield today      (uint16 LE, ×10 → Wh)
+//   [8-9]  PV power         (uint16 LE, W)
 static void parseMfrData(const uint8_t* mfr, int len) {
-    if (len < 26) return;
+    if (len < 18) return;
     if (mfr[0] != 0xE1 || mfr[1] != 0x02) return;
-    if (mfr[2] != 0x10) return;   // solar controller record type
+    if (mfr[2] != 0x10) return;   // Instant Readout marker — only in SCAN_RSP
+
+    // Key-check byte: must match key[0] before attempting decryption
+    if (mfr[9] != s_aesKey[0]) {
+        Serial.printf("[ble] key-check mismatch: pkt=0x%02X key[0]=0x%02X\n", mfr[9], s_aesKey[0]);
+        return;
+    }
+
+    Serial.printf("[ble] Instant Readout found (len=%d), decrypting...\n", len);
 
     uint8_t out[16] = {};
-    if (!aesCtrDecrypt(mfr + 10, 16, mfr[7], mfr[8], out)) return;
+    if (!aesCtrDecrypt(mfr + 10, 16, mfr[7], mfr[8], out)) {
+        Serial.println("[ble] AES decrypt failed");
+        return;
+    }
 
-    uint16_t rawV  = (uint16_t)out[2] | ((uint16_t)out[3] << 8);
+    int16_t  rawV  = (int16_t)((uint16_t)out[2] | ((uint16_t)out[3] << 8));
     int16_t  rawA  = (int16_t)((uint16_t)out[4] | ((uint16_t)out[5] << 8));
     uint16_t rawKwh = (uint16_t)out[6] | ((uint16_t)out[7] << 8);
     uint16_t rawPv  = (uint16_t)out[8] | ((uint16_t)out[9] << 8);
 
-    if (rawV == 0xFFFF) return;   // invalid voltage = decryption probably failed
+    if (rawV == 0x7FFF) {
+        Serial.println("[ble] voltage sentinel 0x7FFF — no data yet");
+        return;
+    }
 
     VictronData d;
     d.state    = out[0];
     d.errCode  = out[1];
-    d.battV    = rawV  * 0.01f;
+    d.battV    = rawV * 0.01f;
     d.battA    = (rawA == 0x7FFF) ? 0.0f : rawA * 0.1f;
     d.kWhToday = rawKwh * 0.01f;
     d.pvW      = (float)rawPv;
     d.valid    = true;
     d.lastMs   = millis();
+
+    Serial.printf("[ble] data: state=%u err=%u V=%.2f A=%.1f kWh=%.2f PV=%.0fW\n",
+                  d.state, d.errCode, d.battV, d.battA, d.kWhToday, d.pvW);
 
     if (s_dataMux) xSemaphoreTake(s_dataMux, portMAX_DELAY);
     s_data = d;
@@ -136,28 +156,31 @@ class VictronScanCb : public NimBLEAdvertisedDeviceCallbacks {
     void onResult(NimBLEAdvertisedDevice* dev) override {
         if (!dev->haveManufacturerData()) return;
 
+        std::string raw = dev->getManufacturerData();
+        const uint8_t* mfr = (const uint8_t*)raw.data();
+        int mlen = (int)raw.size();
+
+
         // Filter by MAC if configured
         if (s_targetAddr.length() > 0) {
             String devAddr = normaliseAddr(dev->getAddress().toString());
             if (devAddr != s_targetAddr) return;
         }
 
-        std::string raw = dev->getManufacturerData();
-        parseMfrData((const uint8_t*)raw.data(), (int)raw.size());
+        parseMfrData(mfr, mlen);
     }
 };
 
 // ── Periodic scan task (Core 1) ───────────────────────────────────────────
 static void bleTask(void* /*arg*/) {
     vTaskDelay(pdMS_TO_TICKS(8000));   // wait for WiFi/MQTT to finish init
+    Serial.println("[ble] scan task started");
     for (;;) {
         if (s_bleScan) {
             s_bleScan->clearResults();
-            s_bleScan->start(3, false);   // 3-second scan, non-blocking
-            // Sleep long enough for the scan to finish before we clear results again
-            vTaskDelay(pdMS_TO_TICKS(4000));
+            s_bleScan->start(3, false);   // 3-second blocking scan
+            vTaskDelay(pdMS_TO_TICKS(2000));   // 3+2 = 5 s total period
         }
-        vTaskDelay(pdMS_TO_TICKS(26000));   // 26+4 = 30 s total period
     }
 }
 
@@ -186,10 +209,13 @@ void victronBleInit() {
     s_configured  = true;
     s_dataMux     = xSemaphoreCreateMutex();
 
+    Serial.printf("[ble] heap before init: free=%u largest=%u\n",
+                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     NimBLEDevice::init("");
+    Serial.printf("[ble] heap after init:  free=%u\n", ESP.getFreeHeap());
     s_bleScan = NimBLEDevice::getScan();
     s_bleScan->setAdvertisedDeviceCallbacks(new VictronScanCb(), /*wantDuplicates=*/true);
-    s_bleScan->setActiveScan(false);   // passive — no connection needed
+    s_bleScan->setActiveScan(true);    // active scan needed to receive SCAN_RSP (Instant Readout)
     s_bleScan->setInterval(100);
     s_bleScan->setWindow(99);
     s_bleScan->setMaxResults(0);       // no caching — fire onResult for every adv
