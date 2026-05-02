@@ -25,9 +25,11 @@ void TMqttSetting::PublishValue(bool local)
            value=fstringvalue;
            break;   
     }
+    #ifndef NO_MQTT
     if (local) {
       mqttClient.publish(BaseTopicSet+ftopic, value, 0, fretain);
     }
+    #endif
     #ifdef WEBSERVER
     sendToWebsocket(value);
     #endif

@@ -1,6 +1,8 @@
 #pragma once
 #include <Arduino.h>
+#ifndef NO_MQTT
 #include <ESP32MQTTClient.h>
+#endif
 #include "globals.hpp"
 #include "settings.hpp"
 #include "trumaframes.hpp"

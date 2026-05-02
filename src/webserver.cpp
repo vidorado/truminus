@@ -62,10 +62,24 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
   }
 }
 
+// Cap the number of concurrent WebSocket clients. Each client costs ~10 KB of
+// heap (AsyncTCP control + send/recv buffers). On CYD only ~33 KB free at runtime.
+#ifdef CYD
+static constexpr uint8_t WS_MAX_CLIENTS = 2;
+#else
+static constexpr uint8_t WS_MAX_CLIENTS = 4;
+#endif
+
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
              AwsEventType type, void *arg, uint8_t *data, size_t len) {
   switch (type) {
     case WS_EVT_CONNECT:
+      if (server->count() > WS_MAX_CLIENTS) {
+        Serial.printf("WebSocket client #%u rejected (max %u)\n",
+                      client->id(), WS_MAX_CLIENTS);
+        client->close(1013, "busy");
+        break;
+      }
       Serial.printf("WebSocket client #%u connected from %s\n",
                     client->id(), client->remoteIP().toString().c_str());
       if (wsCb!=NULL) { wsCb("/ping","1"); }

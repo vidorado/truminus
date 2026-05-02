@@ -3,7 +3,9 @@
 #include <cinttypes>
 #include <string.h>
 #include <endian.h>
+#ifndef NO_MQTT
 #include <ESP32MQTTClient.h>
+#endif
 #include <array>
 #include <vector>
 #include "autodiscovery.hpp"

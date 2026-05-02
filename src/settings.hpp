@@ -1,5 +1,7 @@
 #pragma once
+#ifndef NO_MQTT
 #include <ESP32MQTTClient.h>
+#endif
 #include "autodiscovery.hpp"
 #include "globals.hpp"
 

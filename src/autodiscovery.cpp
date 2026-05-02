@@ -93,5 +93,7 @@ void TAutoDiscovery::PublishAutoDiscovery()
     String discovery_topic = HA_DISCOVERY_TOPIC + ComponentName[Fcomponent] + "/truma/" + uniq_id + "/config";
     String payload;
     serializeJson(doc, payload);
+    #ifndef NO_MQTT
     mqttClient.publish(discovery_topic, payload, 0, true);
+    #endif
 }

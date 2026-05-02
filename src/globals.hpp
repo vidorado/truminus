@@ -1,11 +1,15 @@
 #pragma once
 #include <Arduino.h>
+#ifndef NO_MQTT
 #include <ESP32MQTTClient.h>
+#endif
 #ifdef WEBSERVER
 #include "ESPAsyncWebServer.h"
 #endif
 
+#ifndef NO_MQTT
 inline ESP32MQTTClient  mqttClient;
+#endif
 inline String const BaseTopicStatus = "truma/status";
 inline String const BaseTopicSet = "truma/set";
 #ifdef WEBSERVER

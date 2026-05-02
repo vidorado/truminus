@@ -53,7 +53,9 @@ void TMqttPublisherBase::setValue(uint32_t newvalue)
         //Serial.print(ftopic);
         //Serial.print(" ");
         //Serial.println(fvalue);
+        #ifndef NO_MQTT
         mqttClient.publish(BaseTopicStatus+ftopic,payload);
+        #endif
     }
     fforcesend=false;
 }

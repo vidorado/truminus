@@ -242,7 +242,7 @@ void ultimatronBleInit() {
     s_rxSem       = xSemaphoreCreateBinary();
 
     // NimBLE already initialised by victronBleInit(); calling init("") is idempotent.
-    xTaskCreate(ultimatronTask, "ult_batt", 6144, nullptr, 1, &s_taskHandle);
+    xTaskCreate(ultimatronTask, "ult_batt", 4096, nullptr, 1, &s_taskHandle);
     Serial.printf("[ult] Ultimatron init ok, target=%s\n", s_targetAddr.c_str());
 }
 
