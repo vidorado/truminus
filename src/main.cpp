@@ -1,5 +1,7 @@
 #include <Arduino.h>
+#ifndef NO_MQTT
 #include <ESP32MQTTClient.h>
+#endif
 #include <WiFi.h>
 //------ you should create your own wifi_config.h with:
 //
@@ -33,6 +35,9 @@
 #include "webserver.hpp"
 #endif
 #include <ArduinoOTA.h>
+#if defined(CYD) && defined(WEBSERVER)
+void publishSolarBatt();
+#endif
 #include <esp_task_wdt.h>
 
 //adapt these to your board
@@ -99,6 +104,7 @@ static SemaphoreHandle_t s_lvglMutex = nullptr;
 
 static void lvglTask(void*) {
     static uint32_t last = millis();
+    static bool s_wmLogged = false;
     for (;;) {
         uint32_t now = millis();
         lv_tick_inc(now - last);
@@ -106,6 +112,11 @@ static void lvglTask(void*) {
         if (xSemaphoreTake(s_lvglMutex, portMAX_DELAY) == pdTRUE) {
             lv_timer_handler();
             xSemaphoreGive(s_lvglMutex);
+        }
+        if (!s_wmLogged && millis() > 12000) {
+            s_wmLogged = true;
+            Serial.printf("[wm] lvglTask=%u\n",
+                (unsigned)uxTaskGetStackHighWaterMark(NULL));
         }
         vTaskDelay(pdMS_TO_TICKS(5));
     }
@@ -236,9 +247,17 @@ bool mqttok=false;
 bool mqttEnabled=false;  // false si el usuario omitió la config MQTT
 
 //---------------------------------------------------------------------
+static void logMem(const char* tag) {
+  Serial.printf("[mem] %s free=%u largest=%u\n",
+    tag,
+    (unsigned)ESP.getFreeHeap(),
+    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
+
 void setup() {
   Serial.begin(115200);
- 
+  logMem("boot");
+
   LinBus.baud=9600;
   LinBus.txPin=TX_PIN;
   LinBus.rxPin=RX_PIN;
@@ -253,6 +272,7 @@ void setup() {
 
   #ifdef CYD
   smartdisplay_init();
+  logMem("after smartdisplay_init");
   // Sensor AM2301 en IO17 (LED azul desoldado).
   s_dht.setup(DHT_DATA_PIN, DHTesp::AM2302);
   s_lvglMutex = xSemaphoreCreateMutex();
@@ -347,7 +367,9 @@ void setup() {
   FanMode->loadPersistedValue();
 
   // Now that all settings objects exist, init the display controls.
+  logMem("before cydDisplayInit");
   cydDisplayInit(RoomSetpoint, WaterSetpoint, HeatingOn, FanMode);
+  logMem("after cydDisplayInit");
   #endif
 
   //autodiscovery for local topics
@@ -358,8 +380,10 @@ void setup() {
   // BLE init before WiFi: heap is unfragmented here, making the large BT
   // controller allocation more likely to succeed. Tasks themselves wait before
   // their first poll so WiFi/MQTT will be up by then.
+  logMem("before BLE init");
   victronBleInit();
   ultimatronBleInit();
+  logMem("after BLE init");
   #endif
 
   //starts the wifi (loop will check if it's connected)
@@ -381,6 +405,7 @@ void setup() {
 
   //starts the mqtt connection to the broker
   #ifdef CYD
+  #ifndef NO_MQTT
   {
     String mqttUri, mqttUser, mqttPass;
     String mqttHost, mqttPort;
@@ -400,6 +425,7 @@ void setup() {
       mqttClient.loopStart();
     }
   }
+  #endif // NO_MQTT
   #else
   mqttClient.setURI(MQTT_URI, MQTT_USERNAME, MQTT_PASSWORD);
   mqttClient.enableLastWillMessage(STATUS_TOPIC, STATUS_OFFLINE, true);
@@ -455,14 +481,31 @@ void setup() {
       });
   esp_task_wdt_init(10,true);
 
+  // Pre-create the async_tcp task before LinBus/LVGL tasks fragment the heap.
+  // AsyncTCP uses a singleton task handle: if the task already exists when
+  // server.begin() is called in loop(), it skips xTaskCreate entirely.
+  // We use a throw-away AsyncServer on port 9999 and immediately call end()
+  // to release the PCB; the task itself keeps running.
+  #ifdef WEBSERVER
+  {
+    logMem("before async_tcp pre-create");
+    AsyncServer _pre(9999);
+    _pre.begin();  // creates async_tcp task (8 KB stack) while heap is clean
+    _pre.end();    // releases port 9999; task handle remains valid
+    logMem("after async_tcp pre-create");
+  }
+  #endif
+
   // LIN bus task: pinned to Core 0 (WiFi core) so the blocking serial reads
   // don't interfere with LVGL (Core 1) or WebSocket response latency.
   xTaskCreatePinnedToCore(linBusTask, "LinBus", 4096, nullptr, 1, nullptr, 0);
+  logMem("after LinBus task");
 
   #ifdef CYD
   // Start LVGL task only now — all LVGL init (calibration, wifi/mqtt setup
   // screens, cydDisplayInit) is complete, so no race condition.
-  xTaskCreatePinnedToCore(lvglTask, "LVGL", 16384, nullptr, 2, nullptr, 1);
+  xTaskCreatePinnedToCore(lvglTask, "LVGL", 10240, nullptr, 2, nullptr, 1);
+  logMem("after LVGL task");
   #endif
 }
 
@@ -524,10 +567,9 @@ void CheckWifi() {
       Serial.println(WiFi.localIP());
       wifistarted=true;
       #ifdef WEBSERVER
-      //start the web server the first time the wifi is connected
       StartServer(wsCallback, wsConnected);
       #endif
-    } 
+    }
   } else {
     if (wifiok) {
       ArduinoOTA.end();
@@ -832,6 +874,25 @@ void loop() {
   esp_task_wdt_reset();
   delay(1);
   #ifdef CYD
+  // One-shot RAM / stack watermark diagnostic at 10 s after boot.
+  {
+    static bool s_memLogged = false;
+    if (!s_memLogged && millis() > 10000) {
+      s_memLogged = true;
+      logMem("loop@10s");
+      lv_mem_monitor_t mon;
+      lv_mem_monitor(&mon);
+      Serial.printf("[lvgl] pool used=%u/%u free=%u frag=%u%%\n",
+          (unsigned)(mon.total_size - mon.free_size),
+          (unsigned)mon.total_size,
+          (unsigned)mon.free_size,
+          (unsigned)mon.frag_pct);
+      Serial.printf("[wm] loopTask=%u\n",
+          (unsigned)uxTaskGetStackHighWaterMark(NULL));
+    }
+  }
+  #endif
+  #ifdef CYD
   // ── Nav request: pantallas de config bloqueantes ─────────────────────
   // Se comprueban ANTES del mutex. runWifiSetup/runMqttSetup gestionan LVGL
   // por sí mismas; tomamos el mutex para que lvglTask no interfiera y lo
@@ -844,11 +905,22 @@ void loop() {
       bool needRestart = false;
       if (nav == CydNavRequest::WifiSetup) {
         String ss, pp;
+        // Free main-screen widgets before entering setup: the wifi screen
+        // bundles a keyboard (~16 KB) and a dropdown that, when opened with
+        // many networks, exceeds the 32 KB LVGL pool if the main UI is still
+        // resident. Same pattern as SolarSetup below.
+        cydFreeMainUI();
         needRestart = runWifiSetup(ss, pp);
+        cydRebuildUI();
       } else if (nav == CydNavRequest::MqttSetup) {
         String u, us, pp;
+        cydFreeMainUI();
         needRestart = runMqttSetup(u, us, pp);
+        cydRebuildUI();
       } else if (nav == CydNavRequest::LangChange) {
+        // Free main UI to give the lang-select screen the full LVGL pool.
+        // cydRebuildUI() below recreates it after selection.
+        cydFreeMainUI();
         cydShowLangSelect();
         cydRebuildUI();
       } else if (nav == CydNavRequest::SolarSetup) {
@@ -862,6 +934,16 @@ void loop() {
         cydRebuildUI();   // rebuild main UI (replaces the freed widgets)
       }
       cydReloadScreen();
+      // If the user cancelled (no restart needed) and came from a sub-screen
+      // launched from the settings menu, return to the settings menu instead
+      // of dropping all the way to the main UI.
+      if (!needRestart &&
+          (nav == CydNavRequest::WifiSetup ||
+           nav == CydNavRequest::MqttSetup ||
+           nav == CydNavRequest::SolarSetup ||
+           nav == CydNavRequest::LangChange)) {
+        cydOpenSettingsMenu();
+      }
       lvglUnlock();
       if (needRestart) ESP.restart();
       // After a language change, broadcast the new language to all web clients
@@ -907,7 +989,7 @@ void loop() {
     double wTempDisp = Frame22 ? Frame22->getWaterTemp()    : Frame21->getWaterTemp();
     bool   wHeating  = (Frame22 ? Frame22->getWaterHeating(): Frame21->getWaterDemand())
                        && (WaterSetpoint->getFloatValue() > 0.0);
-    cydDisplayUpdate(wifiok, mqttok, trumaok, truma_reset, inota, mqttEnabled,
+    cydDisplayUpdate(wifiok, trumaok, truma_reset, inota,
                      (float)Frame21->getRoomTemp(), (float)wTempDisp,
                      wHeating, s_extTemp,
                      getErrorInfo ? getErrorInfo->getErrorClass() : 0,
@@ -934,6 +1016,16 @@ void loop() {
     }
     xSemaphoreGive(s_lvglMutex);
   }
+  // Publish solar/battery to WebSocket every 10 s
+  #if defined(CYD) && defined(WEBSERVER)
+  {
+    static uint32_t lastSolarWs = 0;
+    if (wifistarted && millis() - lastSolarWs > 10000) {
+      lastSolarWs = millis();
+      publishSolarBatt();
+    }
+  }
+  #endif
   #endif
   CheckWifi();
   if (wifiok) {
@@ -1025,10 +1117,12 @@ void loop() {
         found=true;
       }
     } else if(cmd=="mqttdebug") {
+      #ifndef NO_MQTT
       if (param=="on" || param=="off") {
         mqttClient.enableDebuggingMessages(param=="on");
         found=true;
       }
+      #endif
     } else if(cmd=="reset") {
       found=true;
       HandleCommandReset();
@@ -1045,18 +1139,26 @@ void loop() {
     }
   }
   #ifdef WEBSERVER
-  ws.cleanupClients();
+  // Limit concurrent WS clients to keep heap usage bounded; matches WS_MAX_CLIENTS
+  // in webserver.cpp. Inactive/stale clients past the limit are evicted here.
+  #ifdef CYD
+  ws.cleanupClients(2);
+  #else
+  ws.cleanupClients(4);
+  #endif
   #endif
 }
 
 /* mqtt handling */
+#ifndef NO_MQTT
 esp_err_t handleMQTT(esp_mqtt_event_handle_t event) {
   if (event->event_id==MQTT_EVENT_DISCONNECTED || event->event_id == MQTT_EVENT_ERROR) {
     mqttok=false;
-  } 
+  }
   mqttClient.onEventCallback(event);
   return ESP_OK;
 }
+#endif
 
 //start an error reset (either from an mqtt or websocket message)
 void HandleCommandReset() {
@@ -1127,6 +1229,7 @@ void handleSetting(const String& topic, const String& payload, boolean local)  {
 }
 
 // message received from the mqtt broker
+#ifndef NO_MQTT
 void callback(const String& topic, const String& payload) {
   mqttok=true;
   Serial.print("Received mqtt message [");
@@ -1137,6 +1240,7 @@ void callback(const String& topic, const String& payload) {
   Serial.flush();
   handleSetting(topic,payload,false);
 }
+#endif
 
 #ifdef WEBSERVER
 // message received from the websocket (treat is as local)
@@ -1196,7 +1300,44 @@ void wsConnected() {
   #endif
   //force publish the next received data
   doforcesend=true;
+  #ifdef CYD
+  publishSolarBatt();
+  #endif
 }
+
+#ifdef CYD
+void publishSolarBatt() {
+  {
+    VictronData vd = victronGetData();
+    JsonDocument d;
+    d["command"]    = "solar";
+    d["configured"] = victronIsConfigured();
+    d["valid"]      = vd.valid;
+    if (vd.valid) {
+      d["state"] = vd.state;
+      d["battV"] = String(vd.battV, 2);
+      d["battA"] = String(vd.battA, 1);
+      d["pvW"]   = (int)vd.pvW;
+      d["kWh"]   = String(vd.kWhToday, 2);
+    }
+    ws.textAll(d.as<String>());
+  }
+  {
+    UltratronData ud = ultimatronGetData();
+    JsonDocument d;
+    d["command"]    = "batt";
+    d["configured"] = ultimatronIsConfigured();
+    d["valid"]      = ud.valid;
+    if (ud.valid) {
+      d["soc"]   = ud.soc;
+      d["V"]     = String(ud.battV, 1);
+      d["A"]     = String(ud.battA, 2);
+      d["tempC"] = String(ud.tempC, 1);
+    }
+    ws.textAll(d.as<String>());
+  }
+}
+#endif
 #endif
 
 void PublishMqttAutoDiscovery() {
@@ -1224,6 +1365,7 @@ void PublishMqttAutoDiscovery() {
 
 // connection to the broker established, subscribe to the settings and
 // force publish the next received data
+#ifndef NO_MQTT
 void onConnectionEstablishedCallback(esp_mqtt_client_handle_t client) {
   doforcesend=true;
   mqttok=true;
@@ -1239,6 +1381,7 @@ void onConnectionEstablishedCallback(esp_mqtt_client_handle_t client) {
   mqttClient.subscribe(BaseTopicSet+"/#", callback);
   mqttClient.publish(STATUS_TOPIC, STATUS_ONLINE, 2, true);
 }
+#endif
 
 //------------------------------------------------------------------------
 #ifndef CYD

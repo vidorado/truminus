@@ -124,7 +124,6 @@ static lv_obj_t* s_aguaLbl      = nullptr;
 static lv_obj_t* s_fireLbl      = nullptr;   // flame icon — blinks when heating is active
 static lv_obj_t* s_extLbl       = nullptr;   // outdoor temperature (AM2301)
 static lv_obj_t* s_wifiDot      = nullptr;
-static lv_obj_t* s_mqttDot      = nullptr;
 static lv_obj_t* s_linDot       = nullptr;
 
 // Left panel — Heating
@@ -155,6 +154,7 @@ static lv_obj_t* s_solarPvLbl    = nullptr;
 static lv_obj_t* s_battSocLbl = nullptr;
 static lv_obj_t* s_battBody   = nullptr;
 static lv_obj_t* s_battFill   = nullptr;
+static int       s_battFillX  = 0;    // BB_X + 1, set in buildMainUI()
 static lv_obj_t* s_battNub    = nullptr;   // left terminal
 static lv_obj_t* s_battNub2   = nullptr;   // right terminal
 
@@ -528,8 +528,9 @@ static void navigateBackFromDisplay() {
     lv_obj_t* old = s_displayScr;
     s_displayScr  = nullptr;
     for (int i = 0; i < TIMEOUT_N; i++) s_dispOptBtn[i] = nullptr;
-    showSettingsMenu();
+    lv_screen_load(s_scr);
     if (old) lv_obj_delete(old);
+    showSettingsMenu();
 }
 
 static void dispOptCb(lv_event_t* e) {
@@ -650,19 +651,15 @@ static void wifiConfigCb(lv_event_t*) {
     if (old) lv_obj_delete(old);
 }
 
-static void mqttConfigCb(lv_event_t*) {
-    lv_obj_t* old = s_settingsScr;
-    s_settingsScr = nullptr;
-    s_navRequest  = CydNavRequest::MqttSetup;
-    lv_screen_load(s_scr);
-    if (old) lv_obj_delete(old);
-}
-
 static void displayConfigCb(lv_event_t*) {
     lv_obj_t* old = s_settingsScr;
     s_settingsScr = nullptr;
-    showDisplaySettings();
+    // Free settings-screen pool memory before allocating the display-settings screen.
+    // Both screens coexisting briefly can exhaust the LVGL pool and silently break
+    // touch callbacks on the new screen.
+    lv_screen_load(s_scr);
     if (old) lv_obj_delete(old);
+    showDisplaySettings();
 }
 
 static void langConfigCb(lv_event_t*) {
@@ -718,18 +715,18 @@ static void showSettingsMenu() {
     makeBtn(scr, bx, by,               bw, bh,
             symText(LV_SYMBOL_WIFI,     TK::WIFI_CFG),  wifiConfigCb);
     makeBtn(scr, bx, by +   (bh+bgap), bw, bh,
-            symText(LV_SYMBOL_LOOP,     TK::MQTT_CFG),  mqttConfigCb);
-    makeBtn(scr, bx, by + 2*(bh+bgap), bw, bh,
             symText(LV_SYMBOL_SETTINGS, TK::DISP_CFG),  displayConfigCb);
-    makeBtn(scr, bx, by + 3*(bh+bgap), bw, bh,
+    makeBtn(scr, bx, by + 2*(bh+bgap), bw, bh,
             symText(LV_SYMBOL_KEYBOARD, TK::LANGUAGE),  langConfigCb);
-    makeBtn(scr, bx, by + 4*(bh+bgap), bw, bh,
+    makeBtn(scr, bx, by + 3*(bh+bgap), bw, bh,
             symText(LV_SYMBOL_CHARGE,   TK::SOLAR_CFG), solarConfigCb);
 
     lv_screen_load(scr);
 }
 
 static void gearCb(lv_event_t*) { showSettingsMenu(); }
+
+void cydOpenSettingsMenu() { showSettingsMenu(); }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Public API: navigation and screen reload
@@ -851,12 +848,11 @@ static void buildMainUI() {
         return lbl;
     };
 
-    // Gear button (shifted to x=222 to leave room for the outdoor temperature label)
-    lv_obj_t* gearBtn = makeBtn(topBar, 222, 2, 24, 24, LV_SYMBOL_SETTINGS, gearCb);
+    // Gear button: without MQTT icon, shifts right to x=244 (4 px gap before wifi at 272)
+    lv_obj_t* gearBtn = makeBtn(topBar, 244, 2, 24, 24, LV_SYMBOL_SETTINGS, gearCb);
     lv_obj_set_style_bg_color(gearBtn, lv_color_hex(C_TOPBAR), LV_PART_MAIN);
 
-    s_wifiDot = makeStatusIcon(250, LV_SYMBOL_WIFI,    C_WIFI_NO);
-    s_mqttDot = makeStatusIcon(272, LV_SYMBOL_LOOP,    C_MQTT_DIS);
+    s_wifiDot = makeStatusIcon(272, LV_SYMBOL_WIFI,    C_WIFI_NO);
     s_linDot  = makeStatusIcon(296, LV_SYMBOL_SHUFFLE, C_WIFI_NO);
 
     // ── Separators ───────────────────────────────────────────────────────
@@ -958,6 +954,7 @@ static void buildMainUI() {
     const int BB_W  = 34;                        // body width
     const int BB_X  = BC_X + (BC_W - BB_W) / 2; // body left edge (centered)
     const int BB_Y  = Y_CONT + 129;             // body top (baseline Y+168, 5px gap from SOC label)
+    s_battFillX = BB_X + 1;
     const int BB_H  = 39;                        // body height
     const int BF_IH = BB_H - 2;                 // fill inner height (37 px)
 
@@ -1172,7 +1169,7 @@ void cydUpdateBatt(const CydBattData& d) {
     if (fillH < 0)    fillH = 0;
     if (fillH > BF_IH) fillH = BF_IH;
     lv_obj_set_size(s_battFill, 32, fillH);   // 32 = body width (34) - 2 borders
-    lv_obj_set_pos(s_battFill, lv_obj_get_x(s_battFill),
+    lv_obj_set_pos(s_battFill, s_battFillX,
                                BB_Y + 1 + (BF_IH - fillH));
 
     // Color: green ≥50%, amber 20–49%, red <20% — only fill changes color
@@ -1194,7 +1191,7 @@ void cydRebuildUI() {
     s_errAcked     = false;
     // Null widget handles (pointers become dangling after lv_obj_clean)
     s_ambLbl = s_aguaLbl = s_fireLbl = s_extLbl = nullptr;
-    s_wifiDot = s_mqttDot = s_linDot = nullptr;
+    s_wifiDot = s_linDot = nullptr;
     s_heatBtn = s_heatBtnLbl = nullptr;
     s_spRow = s_spLbl = nullptr;
     s_fanHeatingRow = s_fanOffRow = s_fanLevelRow = nullptr;
@@ -1222,7 +1219,7 @@ void cydFreeMainUI() {
     s_lastErrCode  = 0;
     s_errAcked     = false;
     s_ambLbl = s_aguaLbl = s_fireLbl = s_extLbl = nullptr;
-    s_wifiDot = s_mqttDot = s_linDot = nullptr;
+    s_wifiDot = s_linDot = nullptr;
     s_heatBtn = s_heatBtnLbl = nullptr;
     s_spRow = s_spLbl = nullptr;
     s_fanHeatingRow = s_fanOffRow = s_fanLevelRow = nullptr;
@@ -1265,6 +1262,14 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     buildMainUI();          // populate before loading to avoid blank-screen flash
     lv_screen_load(s_scr);
 
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    Serial.printf("[lvgl] pool used=%u/%u free=%u frag=%u%%\n",
+        (unsigned)mon.total_size - mon.free_size,
+        (unsigned)mon.total_size,
+        (unsigned)mon.free_size,
+        (unsigned)mon.frag_pct);
+
     // Backlight fade task (Core 1, low priority)
     xTaskCreatePinnedToCore(backlightTask, "bckl", 1536, nullptr, 1, nullptr, 1);
 }
@@ -1272,8 +1277,8 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
 // ═══════════════════════════════════════════════════════════════════════════
 // cydDisplayUpdate  — called every loop() iteration
 // ═══════════════════════════════════════════════════════════════════════════
-void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
-                      bool truma_reset, bool inota, bool mqttEnabled,
+void cydDisplayUpdate(bool wifiok, bool trumaok,
+                      bool truma_reset, bool inota,
                       float roomTemp, float waterTemp, bool waterHeating,
                       float extTemp, uint8_t errClass, uint8_t errCode) {
 
@@ -1365,13 +1370,6 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
         lv_obj_set_style_text_color(s_wifiDot, c, LV_PART_MAIN);
     }
 
-    // ── MQTT icon ────────────────────────────────────────────────────────
-    if (s_mqttDot) {
-        lv_color_t c = lv_color_hex(!mqttEnabled ? C_MQTT_DIS :
-                                     mqttok       ? C_MQTT_OK  : C_MQTT_NO);
-        lv_obj_set_style_text_color(s_mqttDot, c, LV_PART_MAIN);
-    }
-
     // ── LIN bus icon ─────────────────────────────────────────────────────
     if (s_linDot)
         lv_obj_set_style_text_color(s_linDot,
@@ -1395,8 +1393,6 @@ void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
         } else {
             msg = t(TK::STATUS_NO_WIFI);   msgC = C_WIFI_NO;
         }
-    } else if (!mqttok && mqttEnabled) {
-        msg = t(TK::STATUS_NO_MQTT);       msgC = C_MQTT_NO;
     } else if (!trumaok) {
         // prepend a warning symbol; snprintf into the shared error buffer
         snprintf(s_errBuf, sizeof(s_errBuf), "%s %s", LV_SYMBOL_WARNING, t(TK::STATUS_NO_LIN));

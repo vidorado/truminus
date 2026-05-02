@@ -11,9 +11,8 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
                     TFanSetting*    fanMode);
 
 // Call in loop() — updates status indicators and controls.
-void cydDisplayUpdate(bool wifiok, bool mqttok, bool trumaok,
+void cydDisplayUpdate(bool wifiok, bool trumaok,
                       bool truma_reset, bool inota,
-                      bool mqttEnabled,
                       float   roomTemp     = -273.0f,
                       float   waterTemp    = -273.0f,
                       bool    waterHeating = false,
@@ -51,6 +50,11 @@ void          cydClearNavRequest();
 // Reload s_scr (call after returning from a settings screen).
 // Also turns the backlight on and clears any power-off overlay.
 void          cydReloadScreen();
+
+// Open the settings menu programmatically (used by main.cpp to return to the
+// menu after cancelling a sub-screen instead of dropping to the main UI).
+// Must be called under the LVGL mutex.
+void          cydOpenSettingsMenu();
 
 // ── Solar data display (call under LVGL mutex from loop()) ─────────────────
 struct CydSolarData {
