@@ -75,6 +75,37 @@
 
   </section>
 
+  <!-- Solar charge + battery panel — full width, hidden until configured -->
+  <section id="solar-panel" class="panel panel-full vis-hidden">
+
+    <!-- Victron solar charger -->
+    <div id="solar-section" class="solar-section vis-hidden">
+      <div class="solar-section-hdr">
+        <span class="p-title" data-i18n="solar_charge">CARGA SOLAR</span>
+        <span id="solar_state" class="solar-state-lbl"></span>
+      </div>
+      <div class="solar-row">
+        <span class="solar-kv">&#9728; <b id="solar_pvW">--</b>&thinsp;W</span>
+        <span class="solar-kv">&#9889; <b id="solar_kWh">--</b>&thinsp;kWh</span>
+        <span class="solar-kv">&#9889; <b id="solar_battV">--</b>&thinsp;V&ensp;<b id="solar_battA">--</b>&thinsp;A</span>
+      </div>
+    </div>
+
+    <!-- Ultimatron battery BMS -->
+    <div id="batt-section" class="solar-section vis-hidden">
+      <div class="p-sep" id="batt-sep" style="display:none"></div>
+      <div class="solar-section-hdr">
+        <span class="p-title" data-i18n="battery">BATERÍA</span>
+        <span id="batt_soc" class="batt-soc-lbl"></span>
+      </div>
+      <div class="solar-row">
+        <span class="solar-kv"><b id="batt_V">--</b>&thinsp;V&ensp;<b id="batt_A">--</b>&thinsp;A</span>
+        <span class="solar-kv">&#x1F321;&#xFE0E; <b id="batt_tempC">--</b>&thinsp;°C</span>
+      </div>
+    </div>
+
+  </section>
+
 </main>
 
 <!-- ── Error modal ────────────────────────────────────────────────────── -->

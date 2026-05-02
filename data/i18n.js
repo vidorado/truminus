@@ -2,6 +2,15 @@
 
 var LANG_STRINGS = {
     en: {
+        solar_charge: 'SOLAR CHARGE',
+        battery:      'BATTERY',
+        sol_off:      'Off',
+        sol_fault:    'Fault',
+        sol_bulk:     'Bulk',
+        sol_abs:      'Absorption',
+        sol_float:    'Float',
+        sol_equalize: 'Equalize',
+        sol_nodata:   'No data',
         heating:      'HEATING',
         heat_on:      'ON',
         heat_off:     'OFF',
@@ -20,6 +29,15 @@ var LANG_STRINGS = {
         err_locked:   'LOCKED',
     },
     es: {
+        solar_charge: 'CARGA SOLAR',
+        battery:      'BATERÍA',
+        sol_off:      'Apag.',
+        sol_fault:    'Fallo',
+        sol_bulk:     'Carga',
+        sol_abs:      'Absorción',
+        sol_float:    'Flotación',
+        sol_equalize: 'Ecualiz.',
+        sol_nodata:   'Sin datos',
         heating:      'CALEFACCIÓN',
         heat_on:      'ENCENDIDO',
         heat_off:     'APAGADO',

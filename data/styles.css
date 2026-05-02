@@ -345,5 +345,68 @@ body {
 }
 .err-modal-btn:active { background: var(--heat-on); }
 
+/* ── Panel full-width (solar / battery) ──────────────────────────────── */
+.panel-full {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.solar-section {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.solar-section + .solar-section {
+  border-top: 1px solid var(--sep);
+}
+
+.solar-section-hdr {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.solar-section-hdr .p-title {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin: 0;
+}
+
+.solar-state-lbl {
+  font-size: .9em;
+  color: var(--ok);
+  font-weight: 600;
+}
+.solar-state-off   { color: var(--lbl); }
+.solar-state-fault { color: var(--err); }
+.solar-state-bulk  { color: var(--amber); }
+.solar-state-abs   { color: var(--amber); }
+.solar-state-float { color: var(--ok); }
+
+.solar-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: baseline;
+}
+
+.solar-kv {
+  font-size: .95em;
+  color: var(--lbl);
+  white-space: nowrap;
+}
+.solar-kv b {
+  color: var(--txt);
+  font-size: 1.05em;
+}
+
+.batt-soc-lbl {
+  font-size: 1.1em;
+  font-weight: 700;
+  min-width: 44px;
+}
+
 /* ── Utilidades ──────────────────────────────────────────────────────── */
 .vis-hidden { display: none !important; }
