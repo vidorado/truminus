@@ -45,6 +45,53 @@ enum class TK : uint8_t {
     SOLAR_ADDR,        // solar setup label: "Direcc. MAC" / "MAC Address"
     SOLAR_KEY,         // solar setup label: "Clave cifrado" / "Enc. Key"
     SOLAR_NO_DATA,     // right panel when no data: "Sin datos" / "No data"
+    // ── Touch calibration ──────────────────────────────────────────────────
+    TOUCH_CAL_INSTR,   // "Toca lo mas cerca del centro del simbolo +" / "Tap as close as possible to the center of the + symbol"
+    TOUCH_CAL_DONE,    // "Calibracion completada!" / "Calibration complete!"
+    // ── WiFi setup ─────────────────────────────────────────────────────────
+    WIFI_TITLE,        // "TruMinus - Configuracion WiFi" / "TruMinus - WiFi Setup"
+    WIFI_NETWORK,      // "Red WiFi:" / "WiFi Network:"
+    PASSWORD,          // "Contrasena:" / "Password:"
+    PASSWORD_PH,       // placeholder: "contrasena..." / "password..."
+    CONNECT,           // "Conectar" / "Connect"
+    CONNECTING,        // "Conectando..." / "Connecting..."
+    CANCEL,            // "Cancelar" / "Cancel"
+    SKIP,              // "Omitir" / "Skip"
+    SAVE,              // "Guardar" / "Save"
+    // ── MQTT setup ─────────────────────────────────────────────────────────
+    MQTT_TITLE,        // "TruMinus - Configuracion MQTT" / "TruMinus - MQTT Setup"
+    MQTT_BROKER,       // "Broker:"
+    MQTT_PORT,         // "Puerto:" / "Port:"
+    USER_OPT,          // "Usuario (opcional):" / "User (optional):"
+    USER_PH,           // placeholder: "usuario..." / "user..."
+    PASSWORD_OPT_PH,   // placeholder: "contrasena (opcional)..." / "password (optional)..."
+    MQTT_INSTR,        // "Introduce los datos del broker MQTT" / "Enter MQTT broker details"
+    // ── Solar / Battery BLE setup ──────────────────────────────────────────
+    BLE_TITLE,         // "TruMinus - Config. BLE" / "TruMinus - BLE Setup"
+    BATT_SECTION,      // "Bateria Ultimatron" / "Ultimatron Battery"
+    MAC_BLE_LABEL,     // "MAC BLE (12 hex, sin \":\"):" / "MAC BLE (12 hex, no \":\"):"
+    ENC_KEY_LABEL,     // "Clave cifrado (32 hex):" / "Encryption Key (32 hex):"
+    BATT_INFO,         // "Bateria: opcional..." / "Battery: optional..."
+    BATT_MAC_PH,       // placeholder: "12100AE21001 (opcional)" / "12100AE21001 (optional)"
+    // ── BLE scan screens ───────────────────────────────────────────────────
+    SCAN_VICTRON,      // "Buscar dispositivos Victron" / "Scan Victron devices"
+    SCAN_BATT,         // "Buscar bateria BLE (Ultimatron)" / "Scan BLE battery (Ultimatron)"
+    SCANNING,          // "Buscando... 8 s" / "Scanning... 8 s"
+    NO_BLE_DEVS,       // "No se encontraron dispositivos BLE" / "No BLE devices found"
+    SEARCH,            // scan button: "Buscar" / "Search"
+    // ── Touch calibration / WiFi scan / status messages ───────────────────
+    TOUCH_CAL_STEP_FMT,    // "%d/3  Toca el centro de la cruz" / "%d/3  Tap the center of the cross"
+    WIFI_SCANNING,         // "Buscando redes WiFi..." / "Scanning WiFi networks..."
+    WIFI_NO_NETS,          // "No se encontraron redes." / "No networks found."
+    CONNECTING_TO_FMT,     // "Conectando a %s..." / "Connecting to %s..."
+    MQTT_ENTER_BROKER,     // "Introduce la IP o nombre del broker" / "Enter the broker IP or name"
+    MQTT_ENTER_PORT,       // "Introduce el puerto (por defecto: 1883)" / "Enter the port (default: 1883)"
+    CFG_SAVED,             // "Configuracion guardada" / "Configuration saved"
+    SCANNING_FMT,          // "Buscando... %u s" / "Scanning... %u s"
+    NO_VICTRON_DEVS,       // "No se encontraron dispositivos Victron" / "No Victron devices found"
+    VICTRON_KEY_PROMPT,    // "Clave cifrado Victron (32 hex sin \":\"):" / "Victron Encryption Key (32 hex no \":\"):"
+    DEVICES_FOUND_FMT,     // "%d dispositivo(s) — toca para seleccionar" / "%d device(s) — tap to select"
+    UNNAMED,               // "(sin nombre)" / "(unnamed)"
     _COUNT
 };
 

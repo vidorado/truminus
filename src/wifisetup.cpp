@@ -1,5 +1,6 @@
 #ifdef CYD
 #include "wifisetup.hpp"
+#include "i18n.hpp"
 #include "victronble.hpp"
 #include "ultimatronble.hpp"
 #include <Preferences.h>
@@ -121,11 +122,6 @@ static void lvRun(uint32_t ms = 10) {
 static const int     CAL_N   = 3;
 static const int32_t CAL_SX[CAL_N] = { 40, 280, 160 };  // screen X targets
 static const int32_t CAL_SY[CAL_N] = { 40,  40, 200 };  // screen Y targets
-static const char*   CAL_MSG[CAL_N] = {
-    "1/3  Toca el centro de la cruz",
-    "2/3  Toca el centro de la cruz",
-    "3/3  Toca el centro de la cruz",
-};
 
 static lv_point_t s_calTouchPts[CAL_N];
 static bool       s_calTapped;
@@ -176,13 +172,13 @@ static void calBuildStep(lv_obj_t* scr, int step) {
     // Step instruction
     lv_obj_t* lbl = lv_label_create(scr);
     lv_obj_set_style_text_color(lbl, lv_color_white(), LV_PART_MAIN);
-    lv_label_set_text(lbl, CAL_MSG[step]);
+    lv_label_set_text_fmt(lbl, t(TK::TOUCH_CAL_STEP_FMT), step + 1);
     lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 8);
 
     // Hint
     lv_obj_t* sub = lv_label_create(scr);
     lv_obj_set_style_text_color(sub, lv_color_make(160, 160, 160), LV_PART_MAIN);
-    lv_label_set_text(sub, "Toca lo mas cerca del centro del simbolo +");
+    lv_label_set_text(sub, t(TK::TOUCH_CAL_INSTR));
     lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 26);
 
     calDrawCross(scr, CAL_SX[step], CAL_SY[step]);
@@ -255,7 +251,7 @@ void runTouchCalibration() {
     lv_obj_clean(scr);
     lv_obj_t* done = lv_label_create(scr);
     lv_obj_set_style_text_color(done, lv_color_make(80, 255, 80), LV_PART_MAIN);
-    lv_label_set_text(done, "Calibracion completada!");
+    lv_label_set_text(done, t(TK::TOUCH_CAL_DONE));
     lv_obj_center(done);
     lvRun(1500);
 
@@ -302,7 +298,7 @@ static void doScan() {
     s_netCount = 0;
     lv_obj_remove_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_dropdown, LV_OBJ_FLAG_HIDDEN);
-    wifiSetStatus("Buscando redes WiFi...");
+    wifiSetStatus(t(TK::WIFI_SCANNING));
 
     // Reset WiFi to a clean STA state with no auto-reconnect.
     WiFi.setAutoReconnect(false);
@@ -323,7 +319,7 @@ static void doScan() {
     s_netCount = (n < 0) ? 0 : n;
     if (s_netCount <= 0) {
         lv_dropdown_set_options(s_dropdown, "---");
-        wifiSetStatus("No se encontraron redes.");
+        wifiSetStatus(t(TK::WIFI_NO_NETS));
         lvRun(20);
         return;
     }
@@ -356,10 +352,10 @@ static void connectCb(lv_event_t*) {
     String ssid  = WiFi.SSID(idx);
 
     char msg[64];
-    snprintf(msg, sizeof(msg), "Conectando a %s...", ssid.c_str());
+    snprintf(msg, sizeof(msg), t(TK::CONNECTING_TO_FMT), ssid.c_str());
     wifiSetStatus(msg);
     lv_obj_add_state(s_connectBtn, LV_STATE_DISABLED);
-    lv_label_set_text(s_connectLbl, "Conectando...");
+    lv_label_set_text(s_connectLbl, t(TK::CONNECTING));
     lv_obj_align(s_connectLbl, LV_ALIGN_LEFT_MID, 8, 0);
     lv_obj_remove_flag(s_connectSpinner, LV_OBJ_FLAG_HIDDEN);
     lv_obj_align(s_connectSpinner, LV_ALIGN_RIGHT_MID, -6, 0);
@@ -381,7 +377,7 @@ static void connectCb(lv_event_t*) {
         WiFi.disconnect();
         wifiSetStatus("Error de conexion. Revisa la contrasena.");
         lv_obj_add_flag(s_connectSpinner, LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(s_connectLbl, "Conectar");
+        lv_label_set_text(s_connectLbl, t(TK::CONNECT));
         lv_obj_center(s_connectLbl);
         lv_obj_remove_state(s_connectBtn, LV_STATE_DISABLED);
     }
@@ -453,13 +449,13 @@ bool runWifiSetup(String& ssid, String& pass) {
 
     // Title
     lv_obj_t* title = lv_label_create(s_panel);
-    lv_label_set_text(title, "TruMinus - Configuracion WiFi");
+    lv_label_set_text(title, t(TK::WIFI_TITLE));
     lv_obj_set_width(title, W);
     lv_obj_set_pos(title, 0, 0);
 
     // Network label
     lv_obj_t* netLbl = lv_label_create(s_panel);
-    lv_label_set_text(netLbl, "Red WiFi:");
+    lv_label_set_text(netLbl, t(TK::WIFI_NETWORK));
     lv_obj_set_pos(netLbl, 0, 22);
 
     // Spinner — visible mientras escanea, luego se oculta
@@ -479,7 +475,7 @@ bool runWifiSetup(String& ssid, String& pass) {
 
     // Password label
     lv_obj_t* passLbl = lv_label_create(s_panel);
-    lv_label_set_text(passLbl, "Contrasena:");
+    lv_label_set_text(passLbl, t(TK::PASSWORD));
     lv_obj_set_pos(passLbl, 0, 82);
 
     // passTA(264) + gap(4) + eyeBtn(34) = 302 px
@@ -488,7 +484,7 @@ bool runWifiSetup(String& ssid, String& pass) {
     lv_obj_set_pos(s_passTA, 0, 98);
     lv_textarea_set_one_line(s_passTA, true);
     lv_textarea_set_password_mode(s_passTA, true);
-    lv_textarea_set_placeholder_text(s_passTA, "contrasena...");
+    lv_textarea_set_placeholder_text(s_passTA, t(TK::PASSWORD_PH));
 
     lv_obj_t* eyeBtn = lv_btn_create(s_panel);
     lv_obj_set_size(eyeBtn, 34, 36);
@@ -509,7 +505,7 @@ bool runWifiSetup(String& ssid, String& pass) {
     lv_obj_set_style_bg_color(cancelBtn, lv_color_make(90, 90, 90), LV_STATE_PRESSED);
     lv_obj_add_event_cb(cancelBtn, wifiCancelCb, LV_EVENT_CLICKED, NULL);
     lv_obj_t* cancelLbl = lv_label_create(cancelBtn);
-    lv_label_set_text(cancelLbl, hasConfig ? "Cancelar" : "Omitir");
+    lv_label_set_text(cancelLbl, hasConfig ? t(TK::CANCEL) : t(TK::SKIP));
     lv_obj_center(cancelLbl);
 
     s_connectBtn = lv_btn_create(s_panel);
@@ -517,7 +513,7 @@ bool runWifiSetup(String& ssid, String& pass) {
     lv_obj_set_pos(s_connectBtn, halfW + 4, 144);
     lv_obj_add_event_cb(s_connectBtn, connectCb, LV_EVENT_CLICKED, NULL);
     s_connectLbl = lv_label_create(s_connectBtn);
-    lv_label_set_text(s_connectLbl, "Conectar");
+    lv_label_set_text(s_connectLbl, t(TK::CONNECT));
     lv_obj_center(s_connectLbl);
     s_connectSpinner = lv_spinner_create(s_connectBtn);
     lv_spinner_set_anim_params(s_connectSpinner, 800, 60);
@@ -611,11 +607,11 @@ static void mqttSaveCb(lv_event_t*) {
     const char* port = lv_textarea_get_text(sm_portTA);
 
     if (strlen(host) == 0) {
-        mqttSetStatus("Introduce la IP o nombre del broker");
+        mqttSetStatus(t(TK::MQTT_ENTER_BROKER));
         return;
     }
     if (strlen(port) == 0) {
-        mqttSetStatus("Introduce el puerto (por defecto: 1883)");
+        mqttSetStatus(t(TK::MQTT_ENTER_PORT));
         return;
     }
 
@@ -623,7 +619,7 @@ static void mqttSaveCb(lv_event_t*) {
     const char* pass = lv_textarea_get_text(sm_passTA);
 
     saveMqttConfig(String(host), String(port), String(user), String(pass));
-    mqttSetStatus("Configuracion guardada");
+    mqttSetStatus(t(TK::CFG_SAVED));
     lvRun(1000);
     sm_done = true;
 }
@@ -660,12 +656,12 @@ bool runMqttSetup(String& uri, String& user, String& pass) {
     lv_screen_load(scr);
 
     lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "TruMinus - Configuracion MQTT");
+    lv_label_set_text(title, t(TK::MQTT_TITLE));
     lv_obj_set_width(title, 310);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
 
     lv_obj_t* brokerLbl = lv_label_create(scr);
-    lv_label_set_text(brokerLbl, "Broker:");
+    lv_label_set_text(brokerLbl, t(TK::MQTT_BROKER));
     lv_obj_align(brokerLbl, LV_ALIGN_TOP_LEFT, 0, 22);
 
     sm_hostTA = lv_textarea_create(scr);
@@ -675,7 +671,7 @@ bool runMqttSetup(String& uri, String& user, String& pass) {
     lv_obj_align(sm_hostTA, LV_ALIGN_TOP_LEFT, 0, 38);
 
     lv_obj_t* portLbl = lv_label_create(scr);
-    lv_label_set_text(portLbl, "Puerto:");
+    lv_label_set_text(portLbl, t(TK::MQTT_PORT));
     lv_obj_align(portLbl, LV_ALIGN_TOP_LEFT, 236, 22);
 
     sm_portTA = lv_textarea_create(scr);
@@ -685,20 +681,20 @@ bool runMqttSetup(String& uri, String& user, String& pass) {
     lv_obj_align(sm_portTA, LV_ALIGN_TOP_LEFT, 236, 38);
 
     lv_obj_t* userLbl = lv_label_create(scr);
-    lv_label_set_text(userLbl, "Usuario (opcional):");
+    lv_label_set_text(userLbl, t(TK::USER_OPT));
     lv_obj_align(userLbl, LV_ALIGN_TOP_LEFT, 0, 80);
 
     sm_userTA = lv_textarea_create(scr);
     lv_obj_set_size(sm_userTA, 310, 36);
     lv_textarea_set_one_line(sm_userTA, true);
-    lv_textarea_set_placeholder_text(sm_userTA, "usuario...");
+    lv_textarea_set_placeholder_text(sm_userTA, t(TK::USER_PH));
     lv_obj_align(sm_userTA, LV_ALIGN_TOP_LEFT, 0, 96);
 
     sm_passTA = lv_textarea_create(scr);
     lv_obj_set_size(sm_passTA, 310, 36);
     lv_textarea_set_one_line(sm_passTA, true);
     lv_textarea_set_password_mode(sm_passTA, true);
-    lv_textarea_set_placeholder_text(sm_passTA, "contrasena (opcional)...");
+    lv_textarea_set_placeholder_text(sm_passTA, t(TK::PASSWORD_OPT_PH));
     lv_obj_align(sm_passTA, LV_ALIGN_TOP_LEFT, 0, 134);
 
     // "Omitir" / "Cancelar" (izquierda, gris oscuro)
@@ -713,7 +709,7 @@ bool runMqttSetup(String& uri, String& user, String& pass) {
         hasMqttConfig ? mqttCancelCb : mqttSkipCb,
         LV_EVENT_CLICKED, NULL);
     lv_obj_t* skipLbl = lv_label_create(skipBtn);
-    lv_label_set_text(skipLbl, hasMqttConfig ? "Cancelar" : "Omitir");
+    lv_label_set_text(skipLbl, hasMqttConfig ? t(TK::CANCEL) : t(TK::SKIP));
     lv_obj_set_style_text_color(skipLbl, lv_color_white(), LV_STATE_DEFAULT);
     lv_obj_center(skipLbl);
 
@@ -723,13 +719,13 @@ bool runMqttSetup(String& uri, String& user, String& pass) {
     lv_obj_align(saveBtn, LV_ALIGN_TOP_RIGHT, 0, 172);
     lv_obj_add_event_cb(saveBtn, mqttSaveCb, LV_EVENT_CLICKED, NULL);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
-    lv_label_set_text(saveLbl, "Guardar");
+    lv_label_set_text(saveLbl, t(TK::SAVE));
     lv_obj_center(saveLbl);
 
     sm_statusLbl = lv_label_create(scr);
     lv_obj_set_width(sm_statusLbl, 310);
     lv_label_set_long_mode(sm_statusLbl, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lv_label_set_text(sm_statusLbl, "Introduce los datos del broker MQTT");
+    lv_label_set_text(sm_statusLbl, t(TK::MQTT_INSTR));
     lv_obj_align(sm_statusLbl, LV_ALIGN_TOP_LEFT, 0, 210);
 
     sm_kb = lv_keyboard_create(scr);
@@ -862,14 +858,14 @@ static String runSolarScan() {
     lv_screen_load(scr);
 
     lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "Buscar dispositivos Victron");
+    lv_label_set_text(title, t(TK::SCAN_VICTRON));
     lv_obj_set_width(title, 310);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 2);
 
     lv_obj_t* statusLbl = lv_label_create(scr);
     lv_obj_set_width(statusLbl, 310);
     lv_label_set_long_mode(statusLbl, LV_LABEL_LONG_CLIP);
-    lv_label_set_text(statusLbl, "Buscando... 8 s");
+    lv_label_set_text(statusLbl, t(TK::SCANNING));
     lv_obj_align(statusLbl, LV_ALIGN_TOP_LEFT, 0, 22);
 
     lv_obj_t* bar = lv_bar_create(scr);
@@ -888,7 +884,7 @@ static String runSolarScan() {
     lv_obj_set_style_bg_color(cancelBtn, lv_color_make(60, 60, 60), LV_STATE_DEFAULT);
     lv_obj_add_event_cb(cancelBtn, scanAbortCb, LV_EVENT_CLICKED, NULL);
     lv_obj_t* cancelLbl = lv_label_create(cancelBtn);
-    lv_label_set_text(cancelLbl, "Cancelar");
+    lv_label_set_text(cancelLbl, t(TK::CANCEL));
     lv_obj_center(cancelLbl);
 
     // ── Event loop ────────────────────────────────────────────────────────
@@ -911,12 +907,15 @@ static String runSolarScan() {
         if (!scanDone && elapsed >= 8000) {
             scan->stop();
             scanDone = true;
+            // Force re-render of status label even if device count didn't change
+            // (otherwise "Buscando... 1 s" stays on screen when 0 devices were found).
+            lastCount = -1;
         }
 
         if (!scanDone) {
             char buf[28];
             uint32_t rem = (elapsed < 8000) ? (8000 - elapsed + 999) / 1000 : 0;
-            snprintf(buf, sizeof(buf), "Buscando... %u s", (unsigned)rem);
+            snprintf(buf, sizeof(buf), t(TK::SCANNING_FMT), (unsigned)rem);
             lv_label_set_text(statusLbl, buf);
         }
 
@@ -945,11 +944,11 @@ static String runSolarScan() {
                 if (scanDone) {
                     if (cnt == 0)
                         lv_label_set_text(statusLbl,
-                            "No se encontraron dispositivos Victron");
+                            t(TK::NO_VICTRON_DEVS));
                     else {
                         char buf[48];
                         snprintf(buf, sizeof(buf),
-                                 "%d dispositivo(s) — toca para seleccionar", cnt);
+                                 t(TK::DEVICES_FOUND_FMT), cnt);
                         lv_label_set_text(statusLbl, buf);
                     }
                 }
@@ -1025,16 +1024,16 @@ static void solarSaveCb(lv_event_t*) {
     const char* key      = lv_textarea_get_text(ss_keyTA);
     const char* battAddr = lv_textarea_get_text(ss_battAddrTA);
     if (strlen(addr) != 12) {
-        solarSetStatus("MAC Victron: 12 hex sin \":\" (ej. D8AC8D2C49FA)");
+        solarSetStatus("MAC Victron (12 hex sin \":\"):");
         return;
     }
     if (strlen(key) != 32) {
-        solarSetStatus("Clave Victron: 32 hex (ver VictronConnect > info)");
+        solarSetStatus(t(TK::VICTRON_KEY_PROMPT));
         return;
     }
     size_t battLen = strlen(battAddr);
     if (battLen != 0 && battLen != 12) {
-        solarSetStatus("MAC Bateria: 12 hex sin \":\" o dejar vacio");
+        solarSetStatus("MAC Bat. Ultimatron (12 hex sin \":\":");
         return;
     }
     String addrStr(addr);     addrStr.toUpperCase();
@@ -1085,7 +1084,7 @@ bool runSolarSetup(String& addr, String& key) {
 
     // Fixed title at top
     lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "TruMinus - Config. BLE");
+    lv_label_set_text(title, t(TK::BLE_TITLE));
     lv_obj_set_width(title, 320);
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 3);
@@ -1109,7 +1108,7 @@ bool runSolarSetup(String& addr, String& key) {
     //  46  : addr TA / scan btn (36px)
     //  86  : key label (18px)
     // 106  : key TA (36px)
-    // 148  : "Bateria BMS" title (22px)
+    // 148  : "Bateria Ultimatron" title (22px)
     // 174  : batt addr label (18px)
     // 194  : batt addr TA / batt scan btn (36px)
     // 236  : Cancel / Save buttons (34px) — scroll panel to see
@@ -1120,7 +1119,7 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_set_pos(solarSecLbl, 0, 0);
 
     lv_obj_t* addrLbl = lv_label_create(ss_contentPanel);
-    lv_label_set_text(addrLbl, "MAC BLE (12 hex, sin \":\" - ej. D8AC8D2C49FA):");
+    lv_label_set_text(addrLbl, t(TK::MAC_BLE_LABEL));
     lv_obj_set_width(addrLbl, 310);
     lv_obj_set_pos(addrLbl, 0, 26);
 
@@ -1139,11 +1138,11 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_set_style_bg_color(scanBtn, lv_color_make(0, 110, 190), LV_STATE_PRESSED);
     lv_obj_add_event_cb(scanBtn, solarScanCb, LV_EVENT_CLICKED, NULL);
     lv_obj_t* scanLbl = lv_label_create(scanBtn);
-    lv_label_set_text(scanLbl, LV_SYMBOL_REFRESH " Buscar");
+    lv_label_set_text_fmt(scanLbl, LV_SYMBOL_REFRESH " %s", t(TK::SEARCH));
     lv_obj_center(scanLbl);
 
     lv_obj_t* keyLbl = lv_label_create(ss_contentPanel);
-    lv_label_set_text(keyLbl, "Clave cifrado (32 hex, VictronConnect > info):");
+    lv_label_set_text(keyLbl, t(TK::ENC_KEY_LABEL));
     lv_obj_set_width(keyLbl, 310);
     lv_obj_set_pos(keyLbl, 0, 86);
 
@@ -1155,21 +1154,21 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_set_pos(ss_keyTA, 0, 106);
     if (hasConfig) lv_textarea_set_text(ss_keyTA, existKey.c_str());
 
-    // ── Bateria BMS (Ultimatron) ───────────────────────────────────
+    // ── Bateria Ultimatron ───────────────────────────────────
     lv_obj_t* battSecLbl = lv_label_create(ss_contentPanel);
     lv_obj_set_style_text_font(battSecLbl, &lv_font_montserrat_20, LV_PART_MAIN);
-    lv_label_set_text(battSecLbl, "Bateria BMS");
+    lv_label_set_text(battSecLbl, t(TK::BATT_SECTION));
     lv_obj_set_pos(battSecLbl, 0, 148);
 
     lv_obj_t* battAddrLbl = lv_label_create(ss_contentPanel);
-    lv_label_set_text(battAddrLbl, "MAC BLE (12 hex, sin \":\" - ej. 12100AE21001):");
+    lv_label_set_text(battAddrLbl, t(TK::MAC_BLE_LABEL));
     lv_obj_set_width(battAddrLbl, 310);
     lv_obj_set_pos(battAddrLbl, 0, 174);
 
     ss_battAddrTA = lv_textarea_create(ss_contentPanel);
     lv_obj_set_size(ss_battAddrTA, 198, 36);
     lv_textarea_set_one_line(ss_battAddrTA, true);
-    lv_textarea_set_placeholder_text(ss_battAddrTA, "12100AE21001 (opcional)");
+    lv_textarea_set_placeholder_text(ss_battAddrTA, t(TK::BATT_MAC_PH));
     lv_textarea_set_max_length(ss_battAddrTA, 12);
     lv_obj_set_pos(ss_battAddrTA, 0, 194);
     if (hasBattConfig) lv_textarea_set_text(ss_battAddrTA, existBattAddr.c_str());
@@ -1181,7 +1180,7 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_set_style_bg_color(battScanBtn, lv_color_make(0, 110, 190), LV_STATE_PRESSED);
     lv_obj_add_event_cb(battScanBtn, solarBattScanCb, LV_EVENT_CLICKED, NULL);
     lv_obj_t* battScanLbl = lv_label_create(battScanBtn);
-    lv_label_set_text(battScanLbl, LV_SYMBOL_REFRESH " Buscar");
+    lv_label_set_text_fmt(battScanLbl, LV_SYMBOL_REFRESH " %s", t(TK::SEARCH));
     lv_obj_center(battScanLbl);
 
     // Cancel / Save
@@ -1192,7 +1191,7 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_set_style_bg_color(cancelBtn, lv_color_make(80, 80, 80), LV_STATE_PRESSED);
     lv_obj_add_event_cb(cancelBtn, solarCancelCb, LV_EVENT_CLICKED, NULL);
     lv_obj_t* cancelLbl = lv_label_create(cancelBtn);
-    lv_label_set_text(cancelLbl, hasConfig ? "Cancelar" : "Omitir");
+    lv_label_set_text(cancelLbl, hasConfig ? t(TK::CANCEL) : t(TK::SKIP));
     lv_obj_center(cancelLbl);
 
     lv_obj_t* saveBtn = lv_btn_create(ss_contentPanel);
@@ -1200,13 +1199,13 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_set_pos(saveBtn, 162, 236);
     lv_obj_add_event_cb(saveBtn, solarSaveCb, LV_EVENT_CLICKED, NULL);
     lv_obj_t* saveLbl = lv_label_create(saveBtn);
-    lv_label_set_text(saveLbl, "Guardar");
+    lv_label_set_text(saveLbl, t(TK::SAVE));
     lv_obj_center(saveLbl);
 
     ss_statusLbl = lv_label_create(ss_contentPanel);
     lv_obj_set_width(ss_statusLbl, 310);
     lv_label_set_long_mode(ss_statusLbl, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(ss_statusLbl, "Bateria: opcional. Dejar vacio si no hay BMS.");
+    lv_label_set_text(ss_statusLbl, t(TK::BATT_INFO));
     lv_obj_set_pos(ss_statusLbl, 0, 274);
 
     // Keyboard: direct child of scr (not panel), fixed at bottom
@@ -1350,14 +1349,14 @@ static String runBattScan() {
     lv_screen_load(scr);
 
     lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "Buscar bateria BLE (Ultimatron)");
+    lv_label_set_text(title, t(TK::SCAN_BATT));
     lv_obj_set_width(title, 310);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 2);
 
     lv_obj_t* statusLbl = lv_label_create(scr);
     lv_obj_set_width(statusLbl, 310);
     lv_label_set_long_mode(statusLbl, LV_LABEL_LONG_CLIP);
-    lv_label_set_text(statusLbl, "Buscando... 8 s");
+    lv_label_set_text(statusLbl, t(TK::SCANNING));
     lv_obj_align(statusLbl, LV_ALIGN_TOP_LEFT, 0, 22);
 
     lv_obj_t* bar = lv_bar_create(scr);
@@ -1376,7 +1375,7 @@ static String runBattScan() {
     lv_obj_set_style_bg_color(cancelBtn, lv_color_make(60, 60, 60), LV_STATE_DEFAULT);
     lv_obj_add_event_cb(cancelBtn, battScanAbortCb, LV_EVENT_CLICKED, NULL);
     lv_obj_t* cancelLbl = lv_label_create(cancelBtn);
-    lv_label_set_text(cancelLbl, "Cancelar");
+    lv_label_set_text(cancelLbl, t(TK::CANCEL));
     lv_obj_center(cancelLbl);
 
     uint32_t scanStart      = millis();
@@ -1398,12 +1397,13 @@ static String runBattScan() {
         if (!scanDone && elapsed >= 8000) {
             scan->stop();
             scanDone = true;
+            lastCount = -1;  // force status-label re-render (see runSolarScan)
         }
 
         if (!scanDone) {
             char buf[28];
             uint32_t rem = (elapsed < 8000) ? (8000 - elapsed + 999) / 1000 : 0;
-            snprintf(buf, sizeof(buf), "Buscando... %u s", (unsigned)rem);
+            snprintf(buf, sizeof(buf), t(TK::SCANNING_FMT), (unsigned)rem);
             lv_label_set_text(statusLbl, buf);
         }
 
@@ -1421,7 +1421,7 @@ static String runBattScan() {
                              m[6],m[7], m[8],m[9], m[10],m[11]);
                     char buf[52];
                     snprintf(buf, sizeof(buf), "%.18s  ...%s  %d dBm",
-                             bc_devices[i].name.isEmpty() ? "(sin nombre)"
+                             bc_devices[i].name.isEmpty() ? t(TK::UNNAMED)
                                                           : bc_devices[i].name.c_str(),
                              tail, (int)bc_devices[i].rssi);
                     lv_obj_t* btn = lv_list_add_button(list, LV_SYMBOL_BLUETOOTH, buf);
@@ -1430,11 +1430,11 @@ static String runBattScan() {
                 }
                 if (scanDone) {
                     if (cnt == 0)
-                        lv_label_set_text(statusLbl, "No se encontraron dispositivos BLE");
+                        lv_label_set_text(statusLbl, t(TK::NO_BLE_DEVS));
                     else {
                         char buf[48];
                         snprintf(buf, sizeof(buf),
-                                 "%d dispositivo(s) — toca para seleccionar", cnt);
+                                 t(TK::DEVICES_FOUND_FMT), cnt);
                         lv_label_set_text(statusLbl, buf);
                     }
                 }

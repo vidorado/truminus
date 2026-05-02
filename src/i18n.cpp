@@ -20,7 +20,7 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "CONFIGURACION",            // SETTINGS
     "WiFi Config",              // WIFI_CFG
     "MQTT Config",              // MQTT_CFG
-    "Pantalla",                 // DISPLAY
+    "Pantalla",                 // DISP_CFG
     "Idioma",                   // LANGUAGE
     "Volver",                   // BACK
     "PANTALLA",                 // DISPLAY_TITLE
@@ -46,6 +46,47 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Direcc. MAC",              // SOLAR_ADDR
     "Clave cifrado",            // SOLAR_KEY
     "Sin datos",                // SOLAR_NO_DATA
+    "Toca lo mas cerca del centro del simbolo +",   // TOUCH_CAL_INSTR
+    "Calibracion completada!",                      // TOUCH_CAL_DONE
+    "TruMinus - Configuracion WiFi",                // WIFI_TITLE
+    "Red WiFi:",                                    // WIFI_NETWORK
+    "Contrasena:",                                  // PASSWORD
+    "contrasena...",                                // PASSWORD_PH
+    "Conectar",                                     // CONNECT
+    "Conectando...",                                // CONNECTING
+    "Cancelar",                                     // CANCEL
+    "Omitir",                                       // SKIP
+    "Guardar",                                      // SAVE
+    "TruMinus - Configuracion MQTT",                // MQTT_TITLE
+    "Broker:",                                      // MQTT_BROKER
+    "Puerto:",                                      // MQTT_PORT
+    "Usuario (opcional):",                          // USER_OPT
+    "usuario...",                                   // USER_PH
+    "contrasena (opcional)...",                     // PASSWORD_OPT_PH
+    "Introduce los datos del broker MQTT",          // MQTT_INSTR
+    "TruMinus - Config. BLE",                       // BLE_TITLE
+    "Bateria Ultimatron",                           // BATT_SECTION
+    "MAC BLE (12 hex, sin \":\"):",                  // MAC_BLE_LABEL
+    "Clave cifrado (32 hex):",                      // ENC_KEY_LABEL
+    "Bateria: opcional. Dejar vacio si no hay bateria Ultimatron.", // BATT_INFO
+    "12100AE21001 (opcional)",                      // BATT_MAC_PH
+    "Buscar dispositivos Victron",                  // SCAN_VICTRON
+    "Buscar bateria BLE (Ultimatron)",              // SCAN_BATT
+    "Buscando... 8 s",                              // SCANNING
+    "No se encontraron dispositivos BLE",           // NO_BLE_DEVS
+    "Buscar",                                       // SEARCH
+    "%d/3  Toca el centro de la cruz",              // TOUCH_CAL_STEP_FMT
+    "Buscando redes WiFi...",                       // WIFI_SCANNING
+    "No se encontraron redes.",                     // WIFI_NO_NETS
+    "Conectando a %s...",                           // CONNECTING_TO_FMT
+    "Introduce la IP o nombre del broker",          // MQTT_ENTER_BROKER
+    "Introduce el puerto (por defecto: 1883)",      // MQTT_ENTER_PORT
+    "Configuracion guardada",                       // CFG_SAVED
+    "Buscando... %u s",                             // SCANNING_FMT
+    "No se encontraron dispositivos Victron",       // NO_VICTRON_DEVS
+    "Clave cifrado Victron (32 hex sin \":\"):",     // VICTRON_KEY_PROMPT
+    "%d dispositivo(s) - toca para seleccionar",    // DEVICES_FOUND_FMT
+    "(sin nombre)",                                 // UNNAMED
 };
 
 static const char* EN_STRINGS[(int)TK::_COUNT] = {
@@ -63,7 +104,7 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "SETTINGS",                 // SETTINGS
     "WiFi Config",              // WIFI_CFG
     "MQTT Config",              // MQTT_CFG
-    "Display",                  // DISPLAY
+    "Display",                  // DISP_CFG
     "Language",                 // LANGUAGE
     "Back",                     // BACK
     "DISPLAY",                  // DISPLAY_TITLE
@@ -89,6 +130,47 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "MAC Address",              // SOLAR_ADDR
     "Enc. Key",                 // SOLAR_KEY
     "No data",                  // SOLAR_NO_DATA
+    "Tap as close as possible to the center of the + symbol",  // TOUCH_CAL_INSTR
+    "Calibration complete!",                        // TOUCH_CAL_DONE
+    "TruMinus - WiFi Setup",                        // WIFI_TITLE
+    "WiFi Network:",                                // WIFI_NETWORK
+    "Password:",                                    // PASSWORD
+    "password...",                                  // PASSWORD_PH
+    "Connect",                                      // CONNECT
+    "Connecting...",                                // CONNECTING
+    "Cancel",                                       // CANCEL
+    "Skip",                                         // SKIP
+    "Save",                                         // SAVE
+    "TruMinus - MQTT Setup",                        // MQTT_TITLE
+    "Broker:",                                      // MQTT_BROKER
+    "Port:",                                        // MQTT_PORT
+    "User (optional):",                             // USER_OPT
+    "user...",                                      // USER_PH
+    "password (optional)...",                       // PASSWORD_OPT_PH
+    "Enter MQTT broker details",                    // MQTT_INSTR
+    "TruMinus - BLE Setup",                         // BLE_TITLE
+    "Ultimatron Battery",                           // BATT_SECTION
+    "MAC BLE (12 hex, no \":\"):",                   // MAC_BLE_LABEL
+    "Encryption Key (32 hex):",                     // ENC_KEY_LABEL
+    "Battery: optional. Leave empty if no Ultimatron battery.", // BATT_INFO
+    "12100AE21001 (optional)",                      // BATT_MAC_PH
+    "Scan Victron devices",                         // SCAN_VICTRON
+    "Scan BLE battery (Ultimatron)",                // SCAN_BATT
+    "Scanning... 8 s",                              // SCANNING
+    "No BLE devices found",                         // NO_BLE_DEVS
+    "Search",                                       // SEARCH
+    "%d/3  Tap the center of the cross",            // TOUCH_CAL_STEP_FMT
+    "Scanning WiFi networks...",                    // WIFI_SCANNING
+    "No networks found.",                           // WIFI_NO_NETS
+    "Connecting to %s...",                          // CONNECTING_TO_FMT
+    "Enter the broker IP or name",                  // MQTT_ENTER_BROKER
+    "Enter the port (default: 1883)",               // MQTT_ENTER_PORT
+    "Configuration saved",                          // CFG_SAVED
+    "Scanning... %u s",                             // SCANNING_FMT
+    "No Victron devices found",                     // NO_VICTRON_DEVS
+    "Victron Encryption Key (32 hex no \":\"):",     // VICTRON_KEY_PROMPT
+    "%d device(s) - tap to select",                 // DEVICES_FOUND_FMT
+    "(unnamed)",                                    // UNNAMED
 };
 
 const char* t(TK key) {
