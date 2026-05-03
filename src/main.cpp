@@ -1267,17 +1267,6 @@ void wsConnected() {
     snprintf(buf, sizeof(buf), "{\"command\":\"setting\",\"id\":\"/energy_idx\",\"value\":\"%d\"}", (int)s_energyIdx);
     ws.textAll(buf);
   }
-  // Send MQTT connectivity state and whether MQTT is configured
-  {
-    char buf[64];
-    snprintf(buf, sizeof(buf), "{\"command\":\"status\",\"id\":\"mqttok\",\"value\":\"%s\"}", mqttok ? "1" : "0");
-    ws.textAll(buf);
-  }
-  {
-    char buf[64];
-    snprintf(buf, sizeof(buf), "{\"command\":\"status\",\"id\":\"mqttEnabled\",\"value\":\"%s\"}", mqttEnabled ? "1" : "0");
-    ws.textAll(buf);
-  }
   // Send outdoor temperature if available
   if (s_extTemp > -200.0f) {
     char buf[64];

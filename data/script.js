@@ -5,8 +5,6 @@ var gateway = 'ws://' + window.location.hostname +
               (window.location.port ? ':' + window.location.port : '') + '/ws';
 var wserror      = true;
 var linerror     = false;
-var s_mqttOk     = false;
-var s_mqttEnabled = true;
 
 // ── Application state ─────────────────────────────────────────────────────
 var s_temp        = 20.0;
@@ -55,10 +53,8 @@ ws.onopen = function () {
 };
 ws.onclose = function () {
     wserror = true;
-    s_mqttOk = false;
     updateStatusBar();
     setDot('dot-wifi', 'err');
-    setDot('dot-mqtt', 'dis');
     setDot('dot-lin',  'err');
 };
 ws.onmessage = function (event) {
@@ -82,10 +78,6 @@ function send(id, value) {
 function setDot(id, state) {
     var el = document.getElementById(id);
     if (el) el.className = 'sdot sdot-' + state;
-}
-
-function updateMqttDot() {
-    setDot('dot-mqtt', !s_mqttEnabled ? 'dis' : (s_mqttOk ? 'ok' : 'err'));
 }
 
 // ── Settings received from device ─────────────────────────────────────────
@@ -119,16 +111,6 @@ function applyStatus(id, value) {
         linerror = parseInt(value) !== 1;
         updateStatusBar();
         setDot('dot-lin', linerror ? 'err' : 'ok');
-    }
-
-    if (id === 'mqttok') {
-        s_mqttOk = parseInt(value) === 1;
-        updateMqttDot();
-    }
-
-    if (id === 'mqttEnabled') {
-        s_mqttEnabled = parseInt(value) === 1;
-        updateMqttDot();
     }
 
     if (id === 'water_heating') {

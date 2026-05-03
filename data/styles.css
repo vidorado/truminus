@@ -70,14 +70,14 @@ body {
 
 .tbadge {
   color: var(--temp-c);
-  font-size: .96em;
+  font-size: 1.05em;
   white-space: nowrap;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
 }
-.tbadge .fi { font-size: 1.05em; }
-.fi-sm { font-size: .65em; vertical-align: middle; }
+.tbadge .fi { font-size: 1.15em; }
+.fi-sm { font-size: .7em; vertical-align: middle; }
 .tbadge-ext  { color: var(--amber); }
 
 /* Indicadores tint (boiler) y fire (calefacción) */
@@ -90,18 +90,18 @@ body {
 #ind-tint.ind-on,
 #ind-tint.ind-active { color: #55aaff; }
 
-.topbar-icons { display: flex; gap: 7px; flex-shrink: 0; align-items: center; }
+.topbar-icons { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
 
-/* Estado WiFi / LIN / MQTT */
+/* Estado WiFi / LIN */
 .sdot {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 3px;
+  padding: 4px;
   border-radius: 3px;
   line-height: 0;
 }
-.sdot .fi { font-size: 1em; line-height: 1; }
+.sdot .fi { font-size: 1.15em; line-height: 1; }
 .sdot-ok   { color: var(--ok); }
 .sdot-warn { color: var(--warn); }
 .sdot-err  { color: var(--err); }
@@ -298,8 +298,8 @@ body {
   justify-content: center;
   gap: 1px;
 }
-.sb-msg { font-size: .9em; }
-.sb-ip  { font-size: .9em; color: #88aaff; }
+.sb-msg { font-size: 1em; }
+.sb-ip  { font-size: 1em; color: #88aaff; }
 
 .footer-logo {
   height: 32px;
