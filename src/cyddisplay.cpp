@@ -825,14 +825,16 @@ static void buildMainUI() {
     // Tint icon (left) — blinks when boiler is heating
     s_aguaLbl = lv_label_create(topBar);
     lv_obj_set_style_text_font(s_aguaLbl, &symbols_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_aguaLbl, lv_color_hex(C_LABEL), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_aguaLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
+    lv_obj_set_style_text_opa(s_aguaLbl, LV_OPA_20, LV_PART_MAIN);
     lv_label_set_text(s_aguaLbl, MY_SYMBOL_TINT);
     lv_obj_set_pos(s_aguaLbl, 5, 7);
 
     // Flame icon — blinks when heating is active and demanding
     s_fireLbl = lv_label_create(topBar);
     lv_obj_set_style_text_font(s_fireLbl, &symbols_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_fireLbl, lv_color_hex(C_LABEL), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_fireLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
+    lv_obj_set_style_text_opa(s_fireLbl, LV_OPA_20, LV_PART_MAIN);
     lv_label_set_text(s_fireLbl, MY_SYMBOL_FIRE);
     lv_obj_set_pos(s_fireLbl, 22, 7);
 
@@ -861,9 +863,15 @@ static void buildMainUI() {
         return lbl;
     };
 
-    // Gear button: without MQTT icon, shifts right to x=244 (4 px gap before wifi at 272)
-    lv_obj_t* gearBtn = makeBtn(topBar, 244, 2, 24, 24, LV_SYMBOL_SETTINGS, gearCb);
-    lv_obj_set_style_bg_color(gearBtn, lv_color_hex(C_TOPBAR), LV_PART_MAIN);
+    // Config button: centered between outdoor temp (~x=180) and WiFi icon (x=272)
+    {
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%s %s", LV_SYMBOL_SETTINGS, t(TK::CONF));
+        lv_obj_t* confBtn = makeBtn(topBar, 186, 4, 72, 20, buf, gearCb);
+        lv_obj_set_style_bg_color(confBtn, lv_color_hex(C_BTN_OFF), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(confBtn, lv_color_hex(C_BTN_ON), LV_STATE_PRESSED);
+        lv_obj_set_style_text_color(lv_obj_get_child(confBtn, 0), lv_color_white(), LV_PART_MAIN);
+    }
 
     s_wifiDot = makeStatusIcon(272, LV_SYMBOL_WIFI,    C_WIFI_NO);
     s_linDot  = makeStatusIcon(296, LV_SYMBOL_SHUFFLE, C_WIFI_NO);
@@ -1088,9 +1096,11 @@ static void buildMainUI() {
     lv_obj_align(s_statusLbl, LV_ALIGN_BOTTOM_LEFT, 5, -18);
 
     s_ipLbl = lv_label_create(s_scr);
-    lv_obj_set_style_text_font(s_ipLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_ipLbl, &lv_font_montserrat_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ipLbl, lv_color_hex(0x88aaff), LV_PART_MAIN);
     lv_label_set_text(s_ipLbl, "");
+    lv_obj_set_width(s_ipLbl, 310);
+    lv_label_set_long_mode(s_ipLbl, LV_LABEL_LONG_DOT);
     lv_obj_align(s_ipLbl, LV_ALIGN_BOTTOM_LEFT, 5, -2);
 
     refreshControls();
@@ -1335,21 +1345,26 @@ void cydDisplayUpdate(bool wifiok, bool trumaok,
             // the burner stops, but temperature comparison is authoritative.
             bool   wAtTemp   = boilerOn && (waterTemp > 0.0f) && ((double)waterTemp >= wSetpoint - 1.0);
             lv_color_t c;
-            if (!boilerOn)                     c = lv_color_hex(C_LABEL);   // off: grey
-            else if (!waterHeating || wAtTemp) c = lv_color_hex(0xaaccff); // at temp: solid blue
-            else if (blinkPhase)               c = lv_color_hex(0xaaccff); // heating: visible phase
-            else                               c = lv_color_hex(C_TOPBAR); // heating: dark phase
+            lv_opa_t   opa;
+            if (!boilerOn)                     { c = lv_color_hex(0xaaccff); opa = LV_OPA_20; } // off: dim blue
+            else if (!waterHeating || wAtTemp) { c = lv_color_hex(0xaaccff); opa = LV_OPA_COVER; } // at temp: solid blue
+            else if (blinkPhase)               { c = lv_color_hex(0xaaccff); opa = LV_OPA_COVER; } // heating: visible phase
+            else                               { c = lv_color_hex(C_TOPBAR); opa = LV_OPA_COVER; } // heating: dark phase
             lv_obj_set_style_text_color(s_aguaLbl, c, LV_PART_MAIN);
+            lv_obj_set_style_text_opa(s_aguaLbl, opa, LV_PART_MAIN);
         }
         if (s_fireLbl) {
             bool  heatOn     = s_heatOn && (s_heatOn->getIntValue() != 0);
             float sp         = (s_roomSp && heatOn) ? s_roomSp->getFloatValue() : 0.0f;
             bool  heatDemand = heatOn && trumaok && (roomTemp > -200.0f) && (roomTemp < sp - 0.3f);
-            lv_color_t c = !heatOn     ? lv_color_hex(C_LABEL)  // off: grey
-                         : !heatDemand ? lv_color_hex(0xff8844) // at temp: solid orange
-                         : blinkPhase  ? lv_color_hex(0xff8844) // heating: visible phase
-                                       : lv_color_hex(C_TOPBAR);// heating: dark phase
+            lv_color_t c;
+            lv_opa_t   opa;
+            if (!heatOn)      { c = lv_color_hex(0xaaccff); opa = LV_OPA_20; } // off: dim blue
+            else if (!heatDemand) { c = lv_color_hex(0xff8844); opa = LV_OPA_COVER; } // at temp: solid orange
+            else if (blinkPhase)  { c = lv_color_hex(0xff8844); opa = LV_OPA_COVER; } // heating: visible phase
+            else                  { c = lv_color_hex(C_TOPBAR);  opa = LV_OPA_COVER; } // heating: dark phase
             lv_obj_set_style_text_color(s_fireLbl, c, LV_PART_MAIN);
+            lv_obj_set_style_text_opa(s_fireLbl, opa, LV_PART_MAIN);
         }
     }
 
@@ -1394,9 +1409,16 @@ void cydDisplayUpdate(bool wifiok, bool trumaok,
         lv_obj_set_style_text_color(s_linDot,
             lv_color_hex(trumaok ? C_WIFI_OK : C_WIFI_NO), LV_PART_MAIN);
 
-    // ── IP address ───────────────────────────────────────────────────────
-    if (s_ipLbl)
-        lv_label_set_text(s_ipLbl, wifiok ? WiFi.localIP().toString().c_str() : "");
+    // ── SSID / IP address ────────────────────────────────────────────────
+    if (s_ipLbl) {
+        if (wifiok) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%s  %s", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+            lv_label_set_text(s_ipLbl, buf);
+        } else {
+            lv_label_set_text(s_ipLbl, "");
+        }
+    }
 
     // ── Status message ───────────────────────────────────────────────────
     static char s_errBuf[48];

@@ -21,6 +21,7 @@ enum class TK : uint8_t {
     MQTT_CFG,          // settings menu item: "MQTT Config"
     DISP_CFG,          // settings menu item: "Pantalla" / "Display"
     LANGUAGE,          // settings menu item: "Idioma" / "Language"
+    CONF,              // config button label: "Conf." / "Conf."
     BACK,              // back button: "Volver" / "Back"
     DISPLAY_TITLE,     // display settings title: "PANTALLA" / "DISPLAY"
     TIMEOUT_LABEL,     // display settings subtitle: "Apagado de pantalla" / "Auto screen-off"

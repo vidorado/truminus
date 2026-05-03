@@ -22,6 +22,7 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "MQTT Config",              // MQTT_CFG
     "Pantalla",                 // DISP_CFG
     "Idioma",                   // LANGUAGE
+    "Conf.",                    // CONF
     "Volver",                   // BACK
     "PANTALLA",                 // DISPLAY_TITLE
     "Apagado de pantalla",      // TIMEOUT_LABEL
@@ -106,6 +107,7 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "MQTT Config",              // MQTT_CFG
     "Display",                  // DISP_CFG
     "Language",                 // LANGUAGE
+    "Conf.",                    // CONF
     "Back",                     // BACK
     "DISPLAY",                  // DISPLAY_TITLE
     "Auto screen-off",          // TIMEOUT_LABEL
