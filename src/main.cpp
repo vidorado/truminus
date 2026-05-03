@@ -823,11 +823,11 @@ static void linBusTask(void*) {
           s_energyIdx = cydEm;
           #ifdef WEBSERVER
           {
-            JsonDocument d;
-            d["command"] = "setting";
-            d["id"]      = "/energy_idx";
-            d["value"]   = String(s_energyIdx);
-            ws.textAll(d.as<String>());
+            char buf[64];
+            snprintf(buf, sizeof(buf),
+                     "{\"command\":\"setting\",\"id\":\"/energy_idx\",\"value\":\"%d\"}",
+                     s_energyIdx);
+            wsQueueSend(buf);
           }
           #endif
         }
@@ -953,11 +953,12 @@ void loop() {
       // After a language change, broadcast the new language to all web clients
       if (nav == CydNavRequest::LangChange) {
         #ifdef WEBSERVER
-        JsonDocument d;
-        d["command"] = "setting";
-        d["id"]      = "/lang";
-        d["value"]   = (currentLanguage() == Language::EN) ? "en" : "es";
-        ws.textAll(d.as<String>());
+        const char* lang = (currentLanguage() == Language::EN) ? "en" : "es";
+        char buf[64];
+        snprintf(buf, sizeof(buf),
+                 "{\"command\":\"setting\",\"id\":\"/lang\",\"value\":\"%s\"}",
+                 lang);
+        wsQueueSend(buf);
         #endif
       }
     }
@@ -977,11 +978,14 @@ void loop() {
       // Difundir temperatura exterior a clientes WS
       #ifdef WEBSERVER
       {
-        JsonDocument d;
-        d["command"] = "status";
-        d["id"]      = "outdoor_temp";
-        d["value"]   = (s_extTemp > -200.0f) ? String(s_extTemp, 1) : "--";
-        ws.textAll(d.as<String>());
+        char buf[64];
+        if (s_extTemp > -200.0f)
+            snprintf(buf, sizeof(buf),
+                     "{\"command\":\"status\",\"id\":\"outdoor_temp\",\"value\":\"%.1f\"}",
+                     s_extTemp);
+        else
+            strcpy(buf, "{\"command\":\"status\",\"id\":\"outdoor_temp\",\"value\":\"--\"}");
+        wsQueueSend(buf);
       }
       #endif
     }
@@ -1143,6 +1147,8 @@ void loop() {
     }
   }
   #ifdef WEBSERVER
+  // Drain any messages queued from Core 0 (linBusTask) before servicing clients.
+  wsQueueDrain();
   // Limit concurrent WS clients to keep heap usage bounded; matches WS_MAX_CLIENTS
   // in webserver.cpp. Inactive/stale clients past the limit are evicted here.
   #ifdef CYD
@@ -1201,11 +1207,11 @@ void handleSetting(const String& topic, const String& payload, boolean local)  {
         #endif
         #ifdef WEBSERVER
         {
-          JsonDocument d;
-          d["command"] = "setting";
-          d["id"]      = "/energy_idx";
-          d["value"]   = String(idx);
-          ws.textAll(d.as<String>());
+          char buf[64];
+          snprintf(buf, sizeof(buf),
+                   "{\"command\":\"setting\",\"id\":\"/energy_idx\",\"value\":\"%d\"}",
+                   idx);
+          wsQueueSend(buf);
         }
         #endif
       }
@@ -1262,44 +1268,19 @@ void wsConnected() {
     MqttSetpoint[i]->PublishValue(false);
   }
   // Send current energy mode index
-  {
-    JsonDocument d;
-    d["command"] = "setting";
-    d["id"]      = "/energy_idx";
-    d["value"]   = String((int)s_energyIdx);
-    ws.textAll(d.as<String>());
-  }
+  ws.textAll("{\"command\":\"setting\",\"id\":\"/energy_idx\",\"value\":\"" + String((int)s_energyIdx) + "\"}");
   // Send MQTT connectivity state and whether MQTT is configured
-  {
-    JsonDocument d;
-    d["command"] = "status";
-    d["id"]      = "mqttok";
-    d["value"]   = mqttok ? "1" : "0";
-    ws.textAll(d.as<String>());
-  }
-  {
-    JsonDocument d;
-    d["command"] = "status";
-    d["id"]      = "mqttEnabled";
-    d["value"]   = mqttEnabled ? "1" : "0";
-    ws.textAll(d.as<String>());
-  }
+  ws.textAll("{\"command\":\"status\",\"id\":\"mqttok\",\"value\":\"" + String(mqttok ? "1" : "0") + "\"}");
+  ws.textAll("{\"command\":\"status\",\"id\":\"mqttEnabled\",\"value\":\"" + String(mqttEnabled ? "1" : "0") + "\"}");
   // Send outdoor temperature if available
   if (s_extTemp > -200.0f) {
-    JsonDocument d;
-    d["command"] = "status";
-    d["id"]      = "outdoor_temp";
-    d["value"]   = String(s_extTemp, 1);
-    ws.textAll(d.as<String>());
+    ws.textAll("{\"command\":\"status\",\"id\":\"outdoor_temp\",\"value\":\"" + String(s_extTemp, 1) + "\"}");
   }
   // Send current UI language so the web follows the CYD setting
   #ifdef CYD
   {
-    JsonDocument d;
-    d["command"] = "setting";
-    d["id"]      = "/lang";
-    d["value"]   = (currentLanguage() == Language::EN) ? "en" : "es";
-    ws.textAll(d.as<String>());
+    String lang = (currentLanguage() == Language::EN) ? "en" : "es";
+    ws.textAll("{\"command\":\"setting\",\"id\":\"/lang\",\"value\":\"" + lang + "\"}");
   }
   #endif
   //force publish the next received data
@@ -1313,32 +1294,30 @@ void wsConnected() {
 void publishSolarBatt() {
   {
     VictronData vd = victronGetData();
-    JsonDocument d;
-    d["command"]    = "solar";
-    d["configured"] = victronIsConfigured();
-    d["valid"]      = vd.valid;
+    String msg = "{\"command\":\"solar\",\"configured\":" + String(victronIsConfigured() ? "true" : "false") +
+                 ",\"valid\":" + String(vd.valid ? "true" : "false");
     if (vd.valid) {
-      d["state"] = vd.state;
-      d["battV"] = String(vd.battV, 2);
-      d["battA"] = String(vd.battA, 1);
-      d["pvW"]   = (int)vd.pvW;
-      d["kWh"]   = String(vd.kWhToday, 2);
+      msg += ",\"state\":" + String(vd.state) +
+             ",\"battV\":\"" + String(vd.battV, 2) + "\"" +
+             ",\"battA\":\"" + String(vd.battA, 1) + "\"" +
+             ",\"pvW\":" + String((int)vd.pvW) +
+             ",\"kWh\":\"" + String(vd.kWhToday, 2) + "\"";
     }
-    ws.textAll(d.as<String>());
+    msg += "}";
+    ws.textAll(msg);
   }
   {
     UltratronData ud = ultimatronGetData();
-    JsonDocument d;
-    d["command"]    = "batt";
-    d["configured"] = ultimatronIsConfigured();
-    d["valid"]      = ud.valid;
+    String msg = "{\"command\":\"batt\",\"configured\":" + String(ultimatronIsConfigured() ? "true" : "false") +
+                 ",\"valid\":" + String(ud.valid ? "true" : "false");
     if (ud.valid) {
-      d["soc"]   = ud.soc;
-      d["V"]     = String(ud.battV, 1);
-      d["A"]     = String(ud.battA, 2);
-      d["tempC"] = String(ud.tempC, 1);
+      msg += ",\"soc\":" + String(ud.soc) +
+             ",\"V\":\"" + String(ud.battV, 1) + "\"" +
+             ",\"A\":\"" + String(ud.battA, 2) + "\"" +
+             ",\"tempC\":\"" + String(ud.tempC, 1) + "\"";
     }
-    ws.textAll(d.as<String>());
+    msg += "}";
+    ws.textAll(msg);
   }
 }
 #endif

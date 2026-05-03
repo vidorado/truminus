@@ -42,6 +42,8 @@ class TMqttSetting: public TAutoDiscovery{
     String getStringValue() { return fstringvalue; };
     int32_t getIntValue()  { return fintvalue; };
     double  getFloatValue() { return ffloatvalue; };
+    String getTopic()      { return ftopic; }
+    String getValueString();
     // Control whether this setting is published to MQTT with retain=true.
     // Set to false for transient states that should not survive a reboot.
     TMqttSetting* setRetain(bool r) { fretain = r; return this; }

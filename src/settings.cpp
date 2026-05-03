@@ -35,14 +35,25 @@ void TMqttSetting::PublishValue(bool local)
     #endif
 }
 
+String TMqttSetting::getValueString()
+{
+    switch (fkind) {
+        case SKFloat:  return String(ffloatvalue, 1);
+        case SKInt:    return String(fintvalue);
+        case SKString: return fstringvalue;
+    }
+    return "";
+}
+
 #ifdef WEBSERVER
 void TMqttSetting::sendToWebsocket(const String &value)
 {
-    JsonDocument doc;
-    doc["command"]="setting";
-    doc["id"]=ftopic;
-    doc["value"]=value;
-    ws.textAll(doc.as<String>());
+    // Manual JSON via stack buffer to avoid heap allocation in hot path
+    char buf[200];
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"setting\",\"id\":\"%s\",\"value\":\"%s\"}",
+             ftopic.c_str(), value.c_str());
+    wsQueueSend(buf);
 }
 #endif
 

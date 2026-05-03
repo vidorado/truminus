@@ -38,6 +38,9 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
     Serial.print("Received websocket message ");
     Serial.println(message);
     if (message=="settings") {
+      // Drain any pending bus messages before sending the init burst,
+      // so we don't compete with queued traffic for the per-client queue.
+      wsQueueDrain();
       if (wsConn!=NULL) { wsConn(); }
       return;
     }
@@ -80,12 +83,14 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
         client->close(1013, "busy");
         break;
       }
-      Serial.printf("WebSocket client #%u connected from %s\n",
-                    client->id(), client->remoteIP().toString().c_str());
+      Serial.printf("WebSocket client #%u connected from %s  heap=%u\n",
+                    client->id(), client->remoteIP().toString().c_str(),
+                    ESP.getFreeHeap());
       if (wsCb!=NULL) { wsCb("/ping","1"); }
       break;
     case WS_EVT_DISCONNECT:
-      Serial.printf("WebSocket client #%u disconnected\n", client->id());
+      Serial.printf("WebSocket client #%u disconnected  heap=%u\n",
+                    client->id(), ESP.getFreeHeap());
       break;
     case WS_EVT_DATA:
       handleWebSocketMessage(arg, data, len);
@@ -102,11 +107,44 @@ void initWebSocket() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Thread-safe WS queue (Core 0 -> Core 1)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Max queued messages and max payload length (bytes)
+static constexpr uint8_t  WS_QUEUE_LEN  = 32;
+static constexpr uint16_t WS_QUEUE_SIZE = 200;
+
+bool wsQueueSend(const char* msg)
+{
+    if (!wsQueue || !msg) return false;
+    size_t len = strlen(msg);
+    if (len >= WS_QUEUE_SIZE) len = WS_QUEUE_SIZE - 1;
+    char buf[WS_QUEUE_SIZE];
+    memcpy(buf, msg, len);
+    buf[len] = '\0';
+    return xQueueSend(wsQueue, buf, 0) == pdTRUE;
+}
+
+void wsQueueDrain()
+{
+    if (!wsQueue) return;
+    char buf[WS_QUEUE_SIZE];
+    while (xQueueReceive(wsQueue, buf, 0) == pdTRUE) {
+        ws.textAll(buf);
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // StartServer
 // ═════════════════════════════════════════════════════════════════════════════
 void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
   wsCb   = cb;
   wsConn = conn;
+
+  // Create the cross-core WS message queue once.
+  if (!wsQueue) {
+    wsQueue = xQueueCreate(WS_QUEUE_LEN, WS_QUEUE_SIZE);
+  }
 
   initWebSocket();
 

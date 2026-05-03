@@ -41,12 +41,12 @@ void TMqttPublisherBase::setValue(uint32_t newvalue)
     /* the asyncwebsocket gets bogged down if it has to send too many messages
        just send when the value has changed or a new client just connected */
     if (valuechanged || fforcesend) {
-        JsonDocument doc;
-        doc["command"]="status";
-        doc["id"]=ftopic;
-        doc["value"]=payload;
-        ws.textAll(doc.as<String>());
-    }  
+        char buf[200];
+        snprintf(buf, sizeof(buf),
+                 "{\"command\":\"status\",\"id\":\"%s\",\"value\":\"%s\"}",
+                 ftopic.c_str(), payload.c_str());
+        wsQueueSend(buf);
+    }
     #endif
     if (valuechanged || fforcesend || elapsed>10000) {
         flastsent=now;

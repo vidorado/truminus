@@ -327,35 +327,42 @@ static void refreshControls() {
     int  fanVal = s_fanMode->getIntValue();   // -1=eco, -2=high, 0=off, 1-10=numeric
 
     // ── Heating button ────────────────────────────────────────────────────
-    lv_label_set_text(s_heatBtnLbl, heat ? t(TK::HEAT_ON) : t(TK::HEAT_OFF));
-    lv_obj_set_style_bg_color(s_heatBtn,
-        lv_color_hex(heat ? C_HEAT_ON : C_BTN_OFF), LV_PART_MAIN);
+    if (s_heatBtnLbl)
+        lv_label_set_text(s_heatBtnLbl, heat ? t(TK::HEAT_ON) : t(TK::HEAT_OFF));
+    if (s_heatBtn)
+        lv_obj_set_style_bg_color(s_heatBtn,
+            lv_color_hex(heat ? C_HEAT_ON : C_BTN_OFF), LV_PART_MAIN);
 
     // ── Temperature setpoint ─────────────────────────────────────────────
-    if (heat) {
-        lv_obj_remove_flag(s_spRow, LV_OBJ_FLAG_HIDDEN);
-        char buf[12];
-        snprintf(buf, sizeof(buf), "%.1f\xc2\xb0""C", s_roomSp->getFloatValue());
-        lv_label_set_text(s_spLbl, buf);
-    } else {
-        lv_obj_add_flag(s_spRow, LV_OBJ_FLAG_HIDDEN);
+    if (s_spRow) {
+        if (heat) {
+            lv_obj_remove_flag(s_spRow, LV_OBJ_FLAG_HIDDEN);
+            if (s_spLbl) {
+                char buf[12];
+                snprintf(buf, sizeof(buf), "%.1f\xc2\xb0""C", s_roomSp->getFloatValue());
+                lv_label_set_text(s_spLbl, buf);
+            }
+        } else {
+            lv_obj_add_flag(s_spRow, LV_OBJ_FLAG_HIDDEN);
+        }
     }
 
     // ── Fan ───────────────────────────────────────────────────────────────
     if (heat) {
-        lv_obj_remove_flag(s_fanHeatingRow, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(s_fanOffRow,   LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(s_fanLevelRow, LV_OBJ_FLAG_HIDDEN);
+        if (s_fanHeatingRow) lv_obj_remove_flag(s_fanHeatingRow, LV_OBJ_FLAG_HIDDEN);
+        if (s_fanOffRow)     lv_obj_add_flag(s_fanOffRow,   LV_OBJ_FLAG_HIDDEN);
+        if (s_fanLevelRow)   lv_obj_add_flag(s_fanLevelRow, LV_OBJ_FLAG_HIDDEN);
 
         String fanStr = s_fanMode->getStringValue();
         for (int i = 0; i < FAN_HEAT_N; i++) {
-            lv_obj_set_style_bg_color(s_fanBtn[i],
-                lv_color_hex((fanStr == FAN_STR[i]) ? C_BTN_ON : C_BTN_OFF),
-                LV_PART_MAIN);
+            if (s_fanBtn[i])
+                lv_obj_set_style_bg_color(s_fanBtn[i],
+                    lv_color_hex((fanStr == FAN_STR[i]) ? C_BTN_ON : C_BTN_OFF),
+                    LV_PART_MAIN);
         }
     } else {
-        lv_obj_add_flag(s_fanHeatingRow, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(s_fanOffRow,  LV_OBJ_FLAG_HIDDEN);
+        if (s_fanHeatingRow) lv_obj_add_flag(s_fanHeatingRow, LV_OBJ_FLAG_HIDDEN);
+        if (s_fanOffRow)     lv_obj_remove_flag(s_fanOffRow,  LV_OBJ_FLAG_HIDDEN);
 
         bool fanOn       = (fanVal != 0);
         bool boilerActive = (s_waterSp && s_waterSp->getStringValue() != "off");
@@ -363,34 +370,40 @@ static void refreshControls() {
         if (fanVal > 0) s_fanLevel = fanVal;
 
         // Show level row only when fan is on and boiler is idle
-        if (fanOn && !boilerActive) lv_obj_remove_flag(s_fanLevelRow, LV_OBJ_FLAG_HIDDEN);
-        else                        lv_obj_add_flag   (s_fanLevelRow, LV_OBJ_FLAG_HIDDEN);
-
-        // Disable fan On/Off when the boiler is active (Truma ignores fan commands while boiling)
-        if (boilerActive) {
-            lv_obj_add_state(s_fanOnBtn,  LV_STATE_DISABLED);
-            lv_obj_add_state(s_fanOffBtn, LV_STATE_DISABLED);
-        } else {
-            lv_obj_remove_state(s_fanOnBtn,  LV_STATE_DISABLED);
-            lv_obj_remove_state(s_fanOffBtn, LV_STATE_DISABLED);
+        if (s_fanLevelRow) {
+            if (fanOn && !boilerActive) lv_obj_remove_flag(s_fanLevelRow, LV_OBJ_FLAG_HIDDEN);
+            else                        lv_obj_add_flag   (s_fanLevelRow, LV_OBJ_FLAG_HIDDEN);
         }
 
-        lv_obj_set_style_bg_color(s_fanOnBtn,
-            lv_color_hex(fanOn  ? C_BTN_ON : C_BTN_OFF), LV_PART_MAIN);
-        lv_obj_set_style_bg_color(s_fanOffBtn,
-            lv_color_hex(!fanOn ? C_BTN_ON : C_BTN_OFF), LV_PART_MAIN);
+        // Disable fan On/Off when the boiler is active (Truma ignores fan commands while boiling)
+        if (s_fanOnBtn && s_fanOffBtn) {
+            if (boilerActive) {
+                lv_obj_add_state(s_fanOnBtn,  LV_STATE_DISABLED);
+                lv_obj_add_state(s_fanOffBtn, LV_STATE_DISABLED);
+            } else {
+                lv_obj_remove_state(s_fanOnBtn,  LV_STATE_DISABLED);
+                lv_obj_remove_state(s_fanOffBtn, LV_STATE_DISABLED);
+            }
+            lv_obj_set_style_bg_color(s_fanOnBtn,
+                lv_color_hex(fanOn  ? C_BTN_ON : C_BTN_OFF), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(s_fanOffBtn,
+                lv_color_hex(!fanOn ? C_BTN_ON : C_BTN_OFF), LV_PART_MAIN);
+        }
 
-        char buf[4];
-        snprintf(buf, sizeof(buf), "%d", s_fanLevel);
-        lv_label_set_text(s_fanLevelLbl, buf);
+        if (s_fanLevelLbl) {
+            char buf[4];
+            snprintf(buf, sizeof(buf), "%d", s_fanLevel);
+            lv_label_set_text(s_fanLevelLbl, buf);
+        }
     }
 
     // ── Boiler / Hot water ───────────────────────────────────────────────
     String boiler = s_waterSp->getStringValue();
     for (int i = 0; i < BOILER_N; i++) {
-        lv_obj_set_style_bg_color(s_boilerBtn[i],
-            lv_color_hex((boiler == BOILER_STR[i]) ? C_BTN_ON : C_BTN_OFF),
-            LV_PART_MAIN);
+        if (s_boilerBtn[i])
+            lv_obj_set_style_bg_color(s_boilerBtn[i],
+                lv_color_hex((boiler == BOILER_STR[i]) ? C_BTN_ON : C_BTN_OFF),
+                LV_PART_MAIN);
     }
 }
 
@@ -1362,6 +1375,12 @@ void cydDisplayUpdate(bool wifiok, bool trumaok,
 
     // ── WiFi icon ────────────────────────────────────────────────────────
     static bool s_everConnected = false;
+    static bool s_lastWifiOk = false;
+    if (wifiok != s_lastWifiOk) {
+        s_lastWifiOk = wifiok;
+        Serial.printf("[wifi] wifiok changed: %s  heap=%u\n",
+                      wifiok ? "true" : "false", ESP.getFreeHeap());
+    }
     if (wifiok) s_everConnected = true;
     if (s_wifiDot) {
         lv_color_t c = lv_color_hex(wifiok          ? C_WIFI_OK   :
