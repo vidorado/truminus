@@ -771,6 +771,11 @@ bool runMqttSetup(String& uri, String& user, String& pass) {
 }
 
 // =======================================================================
+// BLE Victron + Ultimatron setup screens — only compiled when BLE enabled
+// =======================================================================
+#if defined(CYD) && defined(BLE)
+
+// =======================================================================
 // Victron BLE device scan (called from the Solar config screen)
 // Scans 8 s for devices with Victron company ID (0xE1 0x02).
 // Shows results in a list; returns the selected normalised MAC (12 uppercase
@@ -1479,5 +1484,7 @@ void saveBattConfig(const String& addr) {
     p.putString(NVS_BATT_ADDR, addr);
     p.end();
 }
+
+#endif // CYD && BLE
 
 #endif // CYD

@@ -380,10 +380,12 @@ void setup() {
   // BLE init before WiFi: heap is unfragmented here, making the large BT
   // controller allocation more likely to succeed. Tasks themselves wait before
   // their first poll so WiFi/MQTT will be up by then.
+  #if defined(CYD) && defined(BLE)
   logMem("before BLE init");
   victronBleInit();
   ultimatronBleInit();
   logMem("after BLE init");
+  #endif
   #endif
 
   //starts the wifi (loop will check if it's connected)
@@ -930,7 +932,9 @@ void loop() {
         // main UI and the setup screen simultaneously.
         cydFreeMainUI();
         // runSolarSetup already saves to NVS; restart so victronBleInit() picks it up.
+        #if defined(CYD) && defined(BLE)
         needRestart = runSolarSetup(addr, key);
+        #endif
         cydRebuildUI();   // rebuild main UI (replaces the freed widgets)
       }
       cydReloadScreen();

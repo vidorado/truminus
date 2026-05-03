@@ -1,4 +1,4 @@
-#ifdef CYD
+#if defined(CYD) && defined(BLE)
 #include "victronble.hpp"
 #include <Preferences.h>
 #include <NimBLEDevice.h>
