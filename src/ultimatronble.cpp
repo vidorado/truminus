@@ -30,7 +30,7 @@ static String        s_targetAddr;        // 12 uppercase hex (no colons)
 
 static SemaphoreHandle_t s_dataMux    = nullptr;
 static SemaphoreHandle_t s_rxSem      = nullptr;
-static UltratronData     s_data       = {};
+static UltimatronData     s_data       = {};
 
 static TaskHandle_t  s_taskHandle     = nullptr;
 
@@ -89,7 +89,7 @@ static void parseResponse(const uint8_t* d, int len) {
     uint16_t rawV = ((uint16_t)d[4] << 8) | d[5];
     int16_t  rawA = (int16_t)(((uint16_t)d[6] << 8) | d[7]);
 
-    UltratronData ud = {};
+    UltimatronData ud = {};
     ud.battV  = rawV / 100.0f;
     ud.battA  = rawA / 100.0f;
     ud.soc    = d[23];
@@ -214,8 +214,8 @@ static void ultimatronTask(void* /*arg*/) {
 // ── Public API ────────────────────────────────────────────────────────────
 bool ultimatronIsConfigured() { return s_configured; }
 
-UltratronData ultimatronGetData() {
-    UltratronData copy = {};
+UltimatronData ultimatronGetData() {
+    UltimatronData copy = {};
     if (s_dataMux) {
         xSemaphoreTake(s_dataMux, portMAX_DELAY);
         copy = s_data;

@@ -2,7 +2,7 @@
 #ifdef CYD
 #include <Arduino.h>
 
-struct UltratronData {
+struct UltimatronData {
     uint8_t  soc;       // state of charge [%] 0-100
     float    battV;     // pack voltage [V]
     float    battA;     // current [A] (negative = charging in BMS convention)
@@ -14,7 +14,7 @@ struct UltratronData {
 // Call once from setup() before WiFi.begin(). No-op if NVS not configured.
 void ultimatronBleInit();
 
-UltratronData ultimatronGetData();
+UltimatronData ultimatronGetData();
 bool          ultimatronIsConfigured();
 
 void ultimatronBleSuspend();

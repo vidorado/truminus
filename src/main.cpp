@@ -1014,7 +1014,7 @@ void loop() {
       };
       cydUpdateSolar(sd);
 
-      UltratronData ud = ultimatronGetData();
+      UltimatronData ud = ultimatronGetData();
       CydBattData bd = {
           ultimatronIsConfigured(),
           ud.valid,
@@ -1309,7 +1309,7 @@ void publishSolarBatt() {
     ws.textAll(msg);
   }
   {
-    UltratronData ud = ultimatronGetData();
+    UltimatronData ud = ultimatronGetData();
     String msg = "{\"command\":\"batt\",\"configured\":" + String(ultimatronIsConfigured() ? "true" : "false") +
                  ",\"valid\":" + String(ud.valid ? "true" : "false");
     if (ud.valid) {
