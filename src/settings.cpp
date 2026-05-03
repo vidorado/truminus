@@ -2,6 +2,7 @@
 #include <type_traits>
 #ifdef WEBSERVER
 #include <ArduinoJson.h>
+#include "webserver.hpp"
 #endif
 #ifdef CYD
 #include <Preferences.h>

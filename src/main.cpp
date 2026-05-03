@@ -35,7 +35,7 @@
 #include "webserver.hpp"
 #endif
 #include <ArduinoOTA.h>
-#if defined(CYD) && defined(WEBSERVER)
+#if defined(CYD) && defined(BLE)
 void publishSolarBatt();
 #endif
 #include <esp_task_wdt.h>
@@ -1002,6 +1002,7 @@ void loop() {
                      wHeating, s_extTemp,
                      getErrorInfo ? getErrorInfo->getErrorClass() : 0,
                      getErrorInfo ? getErrorInfo->getErrorCode()  : 0);
+    #if defined(CYD) && defined(BLE)
     {
       VictronData vd = victronGetData();
       CydSolarData sd = {
@@ -1022,10 +1023,11 @@ void loop() {
       };
       cydUpdateBatt(bd);
     }
+    #endif
     xSemaphoreGive(s_lvglMutex);
   }
   // Publish solar/battery to WebSocket every 10 s
-  #if defined(CYD) && defined(WEBSERVER)
+  #if defined(CYD) && defined(BLE)
   {
     static uint32_t lastSolarWs = 0;
     if (wifistarted && millis() - lastSolarWs > 10000) {
@@ -1285,12 +1287,12 @@ void wsConnected() {
   #endif
   //force publish the next received data
   doforcesend=true;
-  #ifdef CYD
+  #if defined(CYD) && defined(BLE)
   publishSolarBatt();
   #endif
 }
 
-#ifdef CYD
+#if defined(CYD) && defined(BLE)
 void publishSolarBatt() {
   {
     VictronData vd = victronGetData();

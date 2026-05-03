@@ -163,6 +163,9 @@ void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
   server.on("/errors.js", HTTP_GET, [](AsyncWebServerRequest* r) {
     sendMemFile(r, wf_errors_js, wf_errors_js_size, "application/javascript", wf_errors_js_gzipped);
   });
+  server.on("/i18n.js", HTTP_GET, [](AsyncWebServerRequest* r) {
+    sendMemFile(r, wf_i18n_js, wf_i18n_js_size, "application/javascript", wf_i18n_js_gzipped);
+  });
   server.on("/reconnecting-websocket.min.js", HTTP_GET, [](AsyncWebServerRequest* r) {
     sendMemFile(r, wf_reconnecting_websocket_min_js,
                    wf_reconnecting_websocket_min_js_size, "application/javascript",

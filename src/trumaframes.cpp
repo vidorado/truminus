@@ -3,6 +3,7 @@
 #include <string.h>
 #ifdef WEBSERVER
 #include <ArduinoJson.h>
+#include "webserver.hpp"
 #endif
 double RawKelvinToTemp(const uint16_t RawValue) {
   return RawValue / 10.0 - 273.0;
