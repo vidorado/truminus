@@ -345,7 +345,7 @@ body {
 }
 .err-modal-btn:active { background: var(--heat-on); }
 
-/* ── Panel full-width (solar / battery) ──────────────────────────────── */
+/* ── Solar + Battery panel (two columns, mimics CYD screen) ─────────── */
 .panel-full {
   grid-column: 1 / -1;
   display: flex;
@@ -353,59 +353,102 @@ body {
   gap: 0;
 }
 
+.solar-batt-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: start;
+}
+
+/* ── Solar (left column) ─────────────────────────────────────────────── */
 .solar-section {
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-.solar-section + .solar-section {
-  border-top: 1px solid var(--sep);
+  gap: 8px;
 }
 
-.solar-section-hdr {
+.solar-lines {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-.solar-section-hdr .p-title {
-  border-bottom: none;
-  padding-bottom: 0;
-  margin: 0;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.solar-state-lbl {
-  font-size: .9em;
-  color: var(--ok);
-  font-weight: 600;
-}
-.solar-state-off   { color: var(--lbl); }
-.solar-state-fault { color: var(--err); }
-.solar-state-bulk  { color: var(--amber); }
-.solar-state-abs   { color: var(--amber); }
-.solar-state-float { color: var(--ok); }
-
-.solar-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  align-items: baseline;
-}
-
-.solar-kv {
-  font-size: .95em;
-  color: var(--lbl);
-  white-space: nowrap;
-}
-.solar-kv b {
-  color: var(--txt);
+.solar-line {
   font-size: 1.05em;
 }
 
+/* state = white, V/A = light blue, W/kWh = yellow */
+.solar-st { color: #ffffff; }
+.solar-va { color: #88ccff; }
+.solar-wh { color: #ffdd66; }
+
+/* ── Battery (right column) ──────────────────────────────────────────── */
+.batt-section {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  min-width: 90px;
+}
+
+.batt-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
 .batt-soc-lbl {
-  font-size: 1.1em;
-  font-weight: 700;
-  min-width: 44px;
+  font-size: 1.3em;
+  color: #ffffff;
+}
+
+/* Battery icon: outer body */
+.batt-body {
+  width: 60px;
+  height: 46px;
+  border: 2px solid #8888aa;
+  border-radius: 3px;
+  position: relative;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 1px;
+}
+
+/* Battery left nub */
+.batt-body::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 15%;
+  width: 7px;
+  height: 4px;
+  background: #8888aa;
+  border-radius: 1px 1px 0 0;
+}
+
+/* Battery right nub */
+.batt-body::after {
+  content: '';
+  position: absolute;
+  top: -5px;
+  right: 15%;
+  width: 7px;
+  height: 4px;
+  background: #8888aa;
+  border-radius: 1px 1px 0 0;
+}
+
+/* Green fill that grows from bottom */
+.batt-fill {
+  width: 100%;
+  background: #44bb44;
+  border-radius: 1px;
+  transition: height 0.4s ease, background 0.3s ease;
 }
 
 /* ── Utilidades ──────────────────────────────────────────────────────── */

@@ -20,10 +20,10 @@
 #include "wifisetup.hpp"
 #include "cyddisplay.hpp"
 #include "i18n.hpp"
-#include "victronble.hpp"
-#include "ultimatronble.hpp"
 #include <DHTesp.h>
 #endif
+#include "victronble.hpp"
+#include "ultimatronble.hpp"
 #include "globals.hpp"
 #include "trumaframes.hpp"
 #include "autodiscovery.hpp"
@@ -35,7 +35,7 @@
 #include "webserver.hpp"
 #endif
 #include <ArduinoOTA.h>
-#if defined(CYD) && defined(BLE)
+#ifdef WEBSERVER
 void publishSolarBatt();
 #endif
 #include <esp_task_wdt.h>
@@ -376,17 +376,11 @@ void setup() {
   PublishReset.setADComponent(CKBinary_sensor)->setADName("Resetting")->setADIcon("mdi:sync")->setADDevice_class("connectivity");
   PublishLinOk.setADComponent(CKBinary_sensor)->setADName("LIN bus status")->setADIcon("mdi:serial-port")->setADDevice_class("connectivity");
 
-  #ifdef CYD
-  // BLE init before WiFi: heap is unfragmented here, making the large BT
-  // controller allocation more likely to succeed. Tasks themselves wait before
-  // their first poll so WiFi/MQTT will be up by then.
-  #if defined(CYD) && defined(BLE)
+  // BLE init (or simulated stubs when BLE is disabled)
   logMem("before BLE init");
   victronBleInit();
   ultimatronBleInit();
   logMem("after BLE init");
-  #endif
-  #endif
 
   //starts the wifi (loop will check if it's connected)
   WiFi.mode(WIFI_STA);
@@ -932,7 +926,7 @@ void loop() {
         // main UI and the setup screen simultaneously.
         cydFreeMainUI();
         // runSolarSetup already saves to NVS; restart so victronBleInit() picks it up.
-        #if defined(CYD) && defined(BLE)
+        #if defined(BLE)
         needRestart = runSolarSetup(addr, key);
         #endif
         cydRebuildUI();   // rebuild main UI (replaces the freed widgets)
@@ -1002,7 +996,6 @@ void loop() {
                      wHeating, s_extTemp,
                      getErrorInfo ? getErrorInfo->getErrorClass() : 0,
                      getErrorInfo ? getErrorInfo->getErrorCode()  : 0);
-    #if defined(CYD) && defined(BLE)
     {
       VictronData vd = victronGetData();
       CydSolarData sd = {
@@ -1023,11 +1016,10 @@ void loop() {
       };
       cydUpdateBatt(bd);
     }
-    #endif
     xSemaphoreGive(s_lvglMutex);
   }
+  #ifdef WEBSERVER
   // Publish solar/battery to WebSocket every 10 s
-  #if defined(CYD) && defined(BLE)
   {
     static uint32_t lastSolarWs = 0;
     if (wifistarted && millis() - lastSolarWs > 10000) {
@@ -1270,59 +1262,77 @@ void wsConnected() {
     MqttSetpoint[i]->PublishValue(false);
   }
   // Send current energy mode index
-  ws.textAll("{\"command\":\"setting\",\"id\":\"/energy_idx\",\"value\":\"" + String((int)s_energyIdx) + "\"}");
+  {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"command\":\"setting\",\"id\":\"/energy_idx\",\"value\":\"%d\"}", (int)s_energyIdx);
+    ws.textAll(buf);
+  }
   // Send MQTT connectivity state and whether MQTT is configured
-  ws.textAll("{\"command\":\"status\",\"id\":\"mqttok\",\"value\":\"" + String(mqttok ? "1" : "0") + "\"}");
-  ws.textAll("{\"command\":\"status\",\"id\":\"mqttEnabled\",\"value\":\"" + String(mqttEnabled ? "1" : "0") + "\"}");
+  {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"command\":\"status\",\"id\":\"mqttok\",\"value\":\"%s\"}", mqttok ? "1" : "0");
+    ws.textAll(buf);
+  }
+  {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"command\":\"status\",\"id\":\"mqttEnabled\",\"value\":\"%s\"}", mqttEnabled ? "1" : "0");
+    ws.textAll(buf);
+  }
   // Send outdoor temperature if available
   if (s_extTemp > -200.0f) {
-    ws.textAll("{\"command\":\"status\",\"id\":\"outdoor_temp\",\"value\":\"" + String(s_extTemp, 1) + "\"}");
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"command\":\"status\",\"id\":\"outdoor_temp\",\"value\":\"%.1f\"}", s_extTemp);
+    ws.textAll(buf);
   }
   // Send current UI language so the web follows the CYD setting
   #ifdef CYD
   {
-    String lang = (currentLanguage() == Language::EN) ? "en" : "es";
-    ws.textAll("{\"command\":\"setting\",\"id\":\"/lang\",\"value\":\"" + lang + "\"}");
+    const char* lang = (currentLanguage() == Language::EN) ? "en" : "es";
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"command\":\"setting\",\"id\":\"/lang\",\"value\":\"%s\"}", lang);
+    ws.textAll(buf);
   }
   #endif
   //force publish the next received data
   doforcesend=true;
-  #if defined(CYD) && defined(BLE)
   publishSolarBatt();
-  #endif
 }
 
-#if defined(CYD) && defined(BLE)
 void publishSolarBatt() {
   {
     VictronData vd = victronGetData();
-    String msg = "{\"command\":\"solar\",\"configured\":" + String(victronIsConfigured() ? "true" : "false") +
-                 ",\"valid\":" + String(vd.valid ? "true" : "false");
+    char buf[200];
     if (vd.valid) {
-      msg += ",\"state\":" + String(vd.state) +
-             ",\"battV\":\"" + String(vd.battV, 2) + "\"" +
-             ",\"battA\":\"" + String(vd.battA, 1) + "\"" +
-             ",\"pvW\":" + String((int)vd.pvW) +
-             ",\"kWh\":\"" + String(vd.kWhToday, 2) + "\"";
+      snprintf(buf, sizeof(buf),
+               "{\"command\":\"solar\",\"configured\":%s,\"valid\":true,"
+               "\"state\":%u,\"battV\":\"%.2f\",\"battA\":\"%.1f\","
+               "\"pvW\":%d,\"kWh\":\"%.2f\"}",
+               victronIsConfigured() ? "true" : "false",
+               vd.state, vd.battV, vd.battA, (int)vd.pvW, vd.kWhToday);
+    } else {
+      snprintf(buf, sizeof(buf),
+               "{\"command\":\"solar\",\"configured\":%s,\"valid\":false}",
+               victronIsConfigured() ? "true" : "false");
     }
-    msg += "}";
-    ws.textAll(msg);
+    ws.textAll(buf);
   }
   {
     UltimatronData ud = ultimatronGetData();
-    String msg = "{\"command\":\"batt\",\"configured\":" + String(ultimatronIsConfigured() ? "true" : "false") +
-                 ",\"valid\":" + String(ud.valid ? "true" : "false");
+    char buf[160];
     if (ud.valid) {
-      msg += ",\"soc\":" + String(ud.soc) +
-             ",\"V\":\"" + String(ud.battV, 1) + "\"" +
-             ",\"A\":\"" + String(ud.battA, 2) + "\"" +
-             ",\"tempC\":\"" + String(ud.tempC, 1) + "\"";
+      snprintf(buf, sizeof(buf),
+               "{\"command\":\"batt\",\"configured\":%s,\"valid\":true,"
+               "\"soc\":%u,\"V\":\"%.1f\",\"A\":\"%.2f\",\"tempC\":\"%.1f\"}",
+               ultimatronIsConfigured() ? "true" : "false",
+               ud.soc, ud.battV, ud.battA, ud.tempC);
+    } else {
+      snprintf(buf, sizeof(buf),
+               "{\"command\":\"batt\",\"configured\":%s,\"valid\":false}",
+               ultimatronIsConfigured() ? "true" : "false");
     }
-    msg += "}";
-    ws.textAll(msg);
+    ws.textAll(buf);
   }
 }
-#endif
 #endif
 
 void PublishMqttAutoDiscovery() {

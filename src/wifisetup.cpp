@@ -6,9 +6,11 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp32_smartdisplay.h>
-#include <NimBLEDevice.h>
 #include <vector>
 #include <esp_task_wdt.h>
+#if defined(BLE)
+#include <NimBLEDevice.h>
+#endif
 
 // -----------------------------------------------------------------------
 // NVS — Touch calibration
@@ -773,7 +775,7 @@ bool runMqttSetup(String& uri, String& user, String& pass) {
 // =======================================================================
 // BLE Victron + Ultimatron setup screens — only compiled when BLE enabled
 // =======================================================================
-#if defined(CYD) && defined(BLE)
+#if defined(BLE)
 
 // =======================================================================
 // Victron BLE device scan (called from the Solar config screen)
@@ -1485,6 +1487,6 @@ void saveBattConfig(const String& addr) {
     p.end();
 }
 
-#endif // CYD && BLE
+#endif // BLE
 
 #endif // CYD

@@ -76,31 +76,28 @@
   </section>
 
   <!-- Solar charge + battery panel — full width, hidden until configured -->
-  <section id="solar-panel" class="panel panel-full vis-hidden">
+  <section id="solar-panel" class="panel panel-full">
 
-    <!-- Victron solar charger -->
-    <div id="solar-section" class="solar-section vis-hidden">
-      <div class="solar-section-hdr">
-        <span class="p-title" data-i18n="solar_charge">CARGA SOLAR</span>
-        <span id="solar_state" class="solar-state-lbl"></span>
+    <div class="solar-batt-grid">
+      <!-- Victron solar charger (left) -->
+      <div id="solar-section" class="solar-section">
+        <div class="p-title" data-i18n="solar_charge">CARGA SOLAR</div>
+        <div class="solar-lines">
+          <div id="solar_state" class="solar-line solar-st">--</div>
+          <div class="solar-line solar-va"><b id="solar_battV">--</b>&thinsp;V&ensp;<b id="solar_battA">--</b>&thinsp;A</div>
+          <div class="solar-line solar-wh"><b id="solar_pvW">--</b>&thinsp;W&ensp;<b id="solar_kWh">--</b>&thinsp;kWh</div>
+        </div>
       </div>
-      <div class="solar-row">
-        <span class="solar-kv">&#9728; <b id="solar_pvW">--</b>&thinsp;W</span>
-        <span class="solar-kv">&#9889; <b id="solar_kWh">--</b>&thinsp;kWh</span>
-        <span class="solar-kv">&#9889; <b id="solar_battV">--</b>&thinsp;V&ensp;<b id="solar_battA">--</b>&thinsp;A</span>
-      </div>
-    </div>
 
-    <!-- Ultimatron battery BMS -->
-    <div id="batt-section" class="solar-section vis-hidden">
-      <div class="p-sep" id="batt-sep" style="display:none"></div>
-      <div class="solar-section-hdr">
-        <span class="p-title" data-i18n="battery">BATERÍA</span>
-        <span id="batt_soc" class="batt-soc-lbl"></span>
-      </div>
-      <div class="solar-row">
-        <span class="solar-kv"><b id="batt_V">--</b>&thinsp;V&ensp;<b id="batt_A">--</b>&thinsp;A</span>
-        <span class="solar-kv">&#x1F321;&#xFE0E; <b id="batt_tempC">--</b>&thinsp;°C</span>
+      <!-- Ultimatron battery BMS (right) -->
+      <div id="batt-section" class="batt-section">
+        <div class="p-title" data-i18n="battery">BATERÍA</div>
+        <div class="batt-wrap">
+          <div id="batt_soc" class="batt-soc-lbl">--%</div>
+          <div class="batt-body">
+            <div id="batt_fill" class="batt-fill"></div>
+          </div>
+        </div>
       </div>
     </div>
 

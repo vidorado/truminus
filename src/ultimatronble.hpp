@@ -1,5 +1,4 @@
 #pragma once
-#ifdef CYD
 #include <Arduino.h>
 
 struct UltimatronData {
@@ -23,5 +22,3 @@ void ultimatronBleResume();
 // NVS helpers used by wifisetup.
 bool ultimatronLoadConfig(String& addr);
 void ultimatronSaveConfig(const String& addr);
-
-#endif // CYD

@@ -1,5 +1,6 @@
-#if defined(CYD) && defined(BLE)
 #include "victronble.hpp"
+#include <math.h>
+#if defined(BLE)
 #include <Preferences.h>
 #include <NimBLEDevice.h>
 #include <mbedtls/aes.h>
@@ -206,7 +207,7 @@ void victronBleInit() {
     s_bleScan->setWindow(99);
     s_bleScan->setMaxResults(0);       // no caching — fire onResult for every adv
 
-    xTaskCreate(bleTask, "ble_vic", 4096, nullptr, 1, &s_bleTaskHandle);
+    xTaskCreate(bleTask, "ble_vic", 3072, nullptr, 1, &s_bleTaskHandle);
     Serial.printf("[ble] Victron BLE init ok, target=%s\n", s_targetAddr.c_str());
 }
 
@@ -221,4 +222,29 @@ void victronBleResume() {
     if (s_bleTaskHandle) vTaskResume(s_bleTaskHandle);
 }
 
-#endif // CYD
+#else // !BLE — simulated data for web UI development
+
+static VictronData s_fakeVictron = {
+    13.2f,  5.5f, 120.0f, 1.25f,
+    3, 0, true, 0
+};
+
+void victronBleInit() {}
+
+VictronData victronGetData() {
+    float t = millis() / 1000.0f;
+    s_fakeVictron.pvW      = 80.0f + 40.0f * sinf(t * 0.8f);
+    s_fakeVictron.battA    = 3.0f + 2.5f * sinf(t * 0.5f);
+    s_fakeVictron.battV    = 13.0f + 0.3f * sinf(t * 1.2f);
+    s_fakeVictron.kWhToday = 1.25f + 0.01f * t;
+    s_fakeVictron.lastMs   = millis();
+    return s_fakeVictron;
+}
+
+bool victronIsConfigured() { return true; }
+void victronBleSuspend() {}
+void victronBleResume() {}
+bool victronLoadConfig(String& addr, String& key) { (void)addr; (void)key; return false; }
+void victronSaveConfig(const String& addr, const String& key) { (void)addr; (void)key; }
+
+#endif // BLE

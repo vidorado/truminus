@@ -1,5 +1,4 @@
 #pragma once
-#ifdef CYD
 #include <Arduino.h>
 
 struct VictronData {
@@ -24,5 +23,3 @@ void               victronBleResume();  // resume scan task after suspension
 // NVS helpers (used by wifisetup / solar config screen).
 bool victronLoadConfig(String& addr, String& key);
 void victronSaveConfig(const String& addr, const String& key);
-
-#endif // CYD

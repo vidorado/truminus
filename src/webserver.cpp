@@ -23,7 +23,13 @@ static void sendMemFile(AsyncWebServerRequest* req,
         });
     if (!r) { req->send(503); return; }
     if (gzipped) r->addHeader("Content-Encoding", "gzip");
-    r->addHeader("Cache-Control", "max-age=86400");
+    // immutable: browsers will not revalidate during the max-age period,
+    // eliminating concurrent requests on page reload.
+    r->addHeader("Cache-Control", "max-age=31536000, immutable");
+    // Force-close each HTTP connection so the browser cannot keep 6 parallel
+    // TCP sockets open.  On ESP32 WROOM + BLE there is not enough contiguous
+    // heap to hold that many AsyncClient objects simultaneously.
+    r->addHeader("Connection", "close");
     req->send(r);
 }
 
@@ -111,8 +117,8 @@ void initWebSocket() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 // Max queued messages and max payload length (bytes)
-static constexpr uint8_t  WS_QUEUE_LEN  = 32;
-static constexpr uint16_t WS_QUEUE_SIZE = 200;
+static constexpr uint8_t  WS_QUEUE_LEN  = 16;
+static constexpr uint16_t WS_QUEUE_SIZE = 150;
 
 bool wsQueueSend(const char* msg)
 {

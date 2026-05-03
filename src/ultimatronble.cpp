@@ -1,6 +1,7 @@
-#if defined(CYD) && defined(BLE)
 #include "ultimatronble.hpp"
 #include "victronble.hpp"
+#include <math.h>
+#if defined(BLE)
 #include <Preferences.h>
 #include <NimBLEDevice.h>
 
@@ -242,8 +243,32 @@ void ultimatronBleInit() {
     s_rxSem       = xSemaphoreCreateBinary();
 
     // NimBLE already initialised by victronBleInit(); calling init("") is idempotent.
-    xTaskCreate(ultimatronTask, "ult_batt", 4096, nullptr, 1, &s_taskHandle);
+    xTaskCreate(ultimatronTask, "ult_batt", 3072, nullptr, 1, &s_taskHandle);
     Serial.printf("[ult] Ultimatron init ok, target=%s\n", s_targetAddr.c_str());
 }
 
-#endif // CYD
+#else // !BLE — simulated data for web UI development
+
+static UltimatronData s_fakeUltimatron = {
+    78, 13.1f, -2.3f, 18.5f, true, 0
+};
+
+void ultimatronBleInit() {}
+
+UltimatronData ultimatronGetData() {
+    float t = millis() / 1000.0f;
+    s_fakeUltimatron.soc     = (uint8_t)(60 + (int)(20.0f * sinf(t * 0.6f)));
+    s_fakeUltimatron.battA   = -1.5f + 1.0f * sinf(t * 0.9f);
+    s_fakeUltimatron.battV   = 13.0f + 0.2f * sinf(t * 1.1f);
+    s_fakeUltimatron.tempC   = 18.0f + 3.0f * sinf(t * 0.4f);
+    s_fakeUltimatron.lastMs  = millis();
+    return s_fakeUltimatron;
+}
+
+bool ultimatronIsConfigured() { return true; }
+void ultimatronBleSuspend() {}
+void ultimatronBleResume() {}
+bool ultimatronLoadConfig(String& addr) { (void)addr; return false; }
+void ultimatronSaveConfig(const String& addr) { (void)addr; }
+
+#endif // BLE

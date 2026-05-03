@@ -336,10 +336,6 @@ var SOLAR_STATES = {
     4: 'sol_abs', 5: 'sol_float', 7: 'sol_equalize',
     245: 'sol_bulk', 247: 'sol_equalize', 252: 'sol_off'
 };
-var SOLAR_STATE_CSS = {
-    0: 'solar-state-off', 2: 'solar-state-fault', 3: 'solar-state-bulk',
-    4: 'solar-state-abs', 5: 'solar-state-float', 7: 'solar-state-abs'
-};
 
 function applySolar(d) {
     var sec    = document.getElementById('solar-section');
@@ -353,17 +349,13 @@ function applySolar(d) {
     var stateLbl = document.getElementById('solar_state');
     if (!d.valid) {
         stateLbl.textContent = t('sol_nodata');
-        stateLbl.className   = 'solar-state-lbl solar-state-off';
         document.getElementById('solar_pvW').textContent  = '--';
         document.getElementById('solar_kWh').textContent  = '--';
         document.getElementById('solar_battV').textContent = '--';
         document.getElementById('solar_battA').textContent = '--';
         return;
     }
-    var stateKey = SOLAR_STATES[d.state] || 'sol_off';
-    var stateCss = SOLAR_STATE_CSS[d.state] || 'solar-state-off';
-    stateLbl.textContent = t(stateKey);
-    stateLbl.className   = 'solar-state-lbl ' + stateCss;
+    stateLbl.textContent = t(SOLAR_STATES[d.state] || 'sol_off');
     document.getElementById('solar_pvW').textContent   = d.pvW;
     document.getElementById('solar_kWh').textContent   = d.kWh;
     document.getElementById('solar_battV').textContent = d.battV;
@@ -372,33 +364,30 @@ function applySolar(d) {
 
 function applyBatt(d) {
     var sec   = document.getElementById('batt-section');
-    var sep   = document.getElementById('batt-sep');
     var panel = document.getElementById('solar-panel');
     if (!sec || !panel) return;
 
-    if (!d.configured) { sec.classList.add('vis-hidden'); if (sep) sep.style.display = 'none'; updateSolarPanel(); return; }
+    if (!d.configured) { sec.classList.add('vis-hidden'); updateSolarPanel(); return; }
     sec.classList.remove('vis-hidden');
     panel.classList.remove('vis-hidden');
 
-    // Show separator only when solar section is also visible
-    var solarVisible = !document.getElementById('solar-section').classList.contains('vis-hidden');
-    if (sep) sep.style.display = solarVisible ? '' : 'none';
-
     var socLbl = document.getElementById('batt_soc');
+    var fill   = document.getElementById('batt_fill');
     if (!d.valid) {
         socLbl.textContent = '--%';
-        socLbl.style.color = '';
-        document.getElementById('batt_V').textContent     = '--';
-        document.getElementById('batt_A').textContent     = '--';
-        document.getElementById('batt_tempC').textContent = '--';
+        if (fill) fill.style.height = '0%';
         return;
     }
     var soc = parseInt(d.soc) || 0;
     socLbl.textContent = soc + '%';
-    socLbl.style.color = soc >= 50 ? 'var(--ok)' : soc >= 20 ? 'var(--amber)' : 'var(--err)';
-    document.getElementById('batt_V').textContent     = d.V;
-    document.getElementById('batt_A').textContent     = d.A;
-    document.getElementById('batt_tempC').textContent = d.tempC;
+
+    // Battery fill height (0–100% of 42px inner height)
+    if (fill) {
+        fill.style.height = Math.min(100, Math.max(0, soc)) + '%';
+        // Colour matches CYD: green ≥50, amber ≥20, red <20
+        var col = soc >= 50 ? '#44bb44' : soc >= 20 ? '#ffaa00' : '#ff4444';
+        fill.style.background = col;
+    }
 }
 
 function updateSolarPanel() {
