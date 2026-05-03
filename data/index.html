@@ -32,8 +32,8 @@
 
     <button id="heatBtn" class="btn-heat btn-off" onclick="toggleHeating()">APAGADO</button>
 
-    <!-- Temperature setpoint (visible only when heat ON) -->
-    <div id="spRow" class="sp-row vis-hidden">
+    <!-- Temperature setpoint (space reserved, toggled via visibility) -->
+    <div id="spRow" class="sp-row sp-hidden">
       <button class="btn-step" onclick="changeTemp(-0.5)">&#9660;</button>
       <span id="spVal" class="sp-val">20.0&nbsp;°C</span>
       <button class="btn-step" onclick="changeTemp(0.5)">&#9650;</button>
@@ -75,32 +75,38 @@
 
   </section>
 
-  <!-- Solar charge + battery panel — full width, hidden until configured -->
-  <section id="solar-panel" class="panel panel-full">
-
-    <div class="solar-batt-grid">
-      <!-- Victron solar charger (left) -->
-      <div id="solar-section" class="solar-section">
-        <div class="p-title" data-i18n="solar_charge">CARGA SOLAR</div>
-        <div class="solar-lines">
-          <div id="solar_state" class="solar-line solar-st">--</div>
-          <div class="solar-line solar-va"><b id="solar_battV">--</b>&thinsp;V&ensp;<b id="solar_battA">--</b>&thinsp;A</div>
-          <div class="solar-line solar-wh"><b id="solar_pvW">--</b>&thinsp;W&ensp;<b id="solar_kWh">--</b>&thinsp;kWh</div>
-        </div>
+  <!-- Solar panel -->
+  <section id="solar-panel" class="panel">
+    <div class="p-title" data-i18n="solar_charge">CARGA SOLAR</div>
+    <div class="solar-lines">
+      <div class="solar-line solar-st">
+        <span class="solar-lbl" data-i18n="solar_state_lbl">Estado</span>
+        <span id="solar_state" class="solar-val">--</span>
       </div>
-
-      <!-- Ultimatron battery BMS (right) -->
-      <div id="batt-section" class="batt-section">
-        <div class="p-title" data-i18n="battery">BATERÍA</div>
-        <div class="batt-wrap">
-          <div id="batt_soc" class="batt-soc-lbl">--%</div>
-          <div class="batt-body">
-            <div id="batt_fill" class="batt-fill"></div>
-          </div>
-        </div>
+      <div class="solar-line solar-v">
+        <span class="solar-lbl" data-i18n="solar_voltage">Voltaje</span>
+        <span class="solar-val"><b id="solar_battV">--</b>&thinsp;V</span>
+      </div>
+      <div class="solar-line solar-a">
+        <span class="solar-lbl" data-i18n="solar_load">Carga</span>
+        <span class="solar-val"><b id="solar_battA">--</b>&thinsp;A&ensp;<b id="solar_pvW">--</b>&thinsp;W</span>
+      </div>
+      <div class="solar-line solar-kwh">
+        <span class="solar-lbl" data-i18n="solar_yield">Producc. hoy</span>
+        <span class="solar-val"><b id="solar_kWh">--</b>&thinsp;kWh</span>
       </div>
     </div>
+  </section>
 
+  <!-- Battery panel -->
+  <section id="batt-panel" class="panel">
+    <div class="p-title" data-i18n="battery">BATERÍA</div>
+    <div class="batt-wrap">
+      <div id="batt_soc" class="batt-soc-lbl">--%</div>
+      <div class="batt-body">
+        <div id="batt_fill" class="batt-fill"></div>
+      </div>
+    </div>
   </section>
 
 </main>

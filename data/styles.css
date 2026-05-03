@@ -107,18 +107,25 @@ body {
 .sdot-err  { color: var(--err); }
 .sdot-dis  { color: var(--lbl); }
 
-/* ── Cuadrícula de dos paneles ────────────────────────────────────────── */
+/* ── Four equal panels in one row ────────────────────────────────────── */
 .panels {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1.2fr 0.8fr;
   gap: 1px;
   background: var(--sep);
-  max-width: 700px;
   margin: 0 auto;
 }
 
 @media (max-width: 480px) {
-  .panels { grid-template-columns: 1fr; }
+  .panels {
+    grid-template-columns: 1.3fr 0.7fr;
+    grid-template-rows: auto auto 1fr;
+    min-height: calc(100vh - var(--bar-h) - var(--foot-h));
+  }
+  .panel:nth-child(1),
+  .panel:nth-child(2) {
+    grid-column: 1 / -1;
+  }
 }
 
 /* ── Panel ────────────────────────────────────────────────────────────── */
@@ -136,8 +143,7 @@ body {
   color: var(--lbl);
   letter-spacing: 0.5px;
   text-transform: uppercase;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--sep);
+  padding-bottom: 4px;
 }
 
 .sec-lbl {
@@ -156,10 +162,10 @@ body {
 /* ── Botón grande calefacción ─────────────────────────────────────────── */
 .btn-heat {
   width: 100%;
-  padding: 16px;
-  font-size: 1.1em;
+  padding: 10px;
+  font-size: 0.95em;
   font-weight: 700;
-  letter-spacing: .07em;
+  letter-spacing: .05em;
   border: none;
   border-radius: var(--radius);
   cursor: pointer;
@@ -175,6 +181,13 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
+}
+
+/* Reserve space so appearing setpoint doesn't push content down */
+.sp-row.sp-hidden {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .sp-val {
@@ -346,69 +359,60 @@ body {
 .err-modal-btn:active { background: var(--heat-on); }
 
 /* ── Solar + Battery panel (two columns, mimics CYD screen) ─────────── */
-.panel-full {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-.solar-batt-grid {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 16px;
-  align-items: start;
-}
-
-/* ── Solar (left column) ─────────────────────────────────────────────── */
-.solar-section {
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.solar-lines {
+/* ── Solar panel ─────────────────────────────────────────────────────── */
+#solar-panel .solar-lines {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.solar-line {
-  font-size: 1.05em;
-}
-
 /* state = white, V/A = light blue, W/kWh = yellow */
-.solar-st { color: #ffffff; }
-.solar-va { color: #88ccff; }
-.solar-wh { color: #ffdd66; }
-
-/* ── Battery (right column) ──────────────────────────────────────────── */
-.batt-section {
-  padding: 10px 12px;
+.solar-line {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 8px;
-  align-items: center;
-  min-width: 90px;
+  margin-bottom: 0.2em;
 }
 
-.batt-wrap {
+.solar-lbl {
+  font-size: 1em;
+  color: var(--lbl);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.solar-val {
+  font-size: 1.2em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.solar-st  .solar-val { color: #ffffff; }
+.solar-v   .solar-val { color: #ffffff; }
+.solar-a   .solar-val { color: #88ccff; }
+.solar-kwh .solar-val { color: #ffdd66; }
+
+/* ── Battery panel ───────────────────────────────────────────────────── */
+#batt-panel .batt-wrap {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  flex: 1;
 }
 
 .batt-soc-lbl {
-  font-size: 1.3em;
+  font-size: 1.6em;
   color: #ffffff;
+  margin-bottom: 10px;
 }
 
 /* Battery icon: outer body */
 .batt-body {
-  width: 60px;
-  height: 46px;
+  width: 60%;
+  height: 100%;
   border: 2px solid #8888aa;
   border-radius: 3px;
   position: relative;
@@ -423,10 +427,10 @@ body {
 .batt-body::before {
   content: '';
   position: absolute;
-  top: -5px;
+  top: -8px;
   left: 15%;
-  width: 7px;
-  height: 4px;
+  width: 12px;
+  height: 6px;
   background: #8888aa;
   border-radius: 1px 1px 0 0;
 }
@@ -435,10 +439,10 @@ body {
 .batt-body::after {
   content: '';
   position: absolute;
-  top: -5px;
+  top: -8px;
   right: 15%;
-  width: 7px;
-  height: 4px;
+  width: 12px;
+  height: 6px;
   background: #8888aa;
   border-radius: 1px 1px 0 0;
 }
@@ -449,6 +453,29 @@ body {
   background: #44bb44;
   border-radius: 1px;
   transition: height 0.4s ease, background 0.3s ease;
+}
+
+/* ── Landscape overrides (must be LAST to win over defaults) ─────────── */
+@media (min-width: 481px) {
+  .panels {
+    min-height: calc(100vh - var(--bar-h) - var(--foot-h));
+  }
+  .btn-heat {
+    padding: 8px;
+    font-size: 0.9em;
+    letter-spacing: .05em;
+  }
+  .p-title {
+    padding-bottom: 3px;
+    font-size: 1.0em;
+  }
+  .sp-row { gap: 6px; }
+  .sp-val { font-size: 1.2em; min-width: 72px; }
+  .btn-step { width: 36px; height: 36px; font-size: 0.9em; }
+  .btn-row { gap: 4px; }
+  .btn-fan { padding: 8px 2px; font-size: 0.9em; }
+  #solar-panel .solar-lines { gap: 1px; }
+  #batt-panel .batt-wrap { gap: 2px; }
 }
 
 /* ── Utilidades ──────────────────────────────────────────────────────── */

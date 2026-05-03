@@ -178,7 +178,7 @@ function refreshHeat() {
     btn.textContent = s_heat ? t('heat_on') : t('heat_off');
     btn.classList.toggle('btn-heat-on', s_heat);
     btn.classList.toggle('btn-off',    !s_heat);
-    cls('spRow',      'vis-hidden', !s_heat);
+    cls('spRow',      'sp-hidden', !s_heat);
     cls('fanHeatRow', 'vis-hidden', !s_heat);
     cls('fanSbyRow',  'vis-hidden',  s_heat);
     if (s_heat) cls('fanLvlRow', 'vis-hidden', true);
@@ -338,12 +338,10 @@ var SOLAR_STATES = {
 };
 
 function applySolar(d) {
-    var sec    = document.getElementById('solar-section');
-    var panel  = document.getElementById('solar-panel');
-    if (!sec || !panel) return;
+    var panel = document.getElementById('solar-panel');
+    if (!panel) return;
 
-    if (!d.configured) { sec.classList.add('vis-hidden'); updateSolarPanel(); return; }
-    sec.classList.remove('vis-hidden');
+    if (!d.configured) { panel.classList.add('vis-hidden'); return; }
     panel.classList.remove('vis-hidden');
 
     var stateLbl = document.getElementById('solar_state');
@@ -363,12 +361,10 @@ function applySolar(d) {
 }
 
 function applyBatt(d) {
-    var sec   = document.getElementById('batt-section');
-    var panel = document.getElementById('solar-panel');
-    if (!sec || !panel) return;
+    var panel = document.getElementById('batt-panel');
+    if (!panel) return;
 
-    if (!d.configured) { sec.classList.add('vis-hidden'); updateSolarPanel(); return; }
-    sec.classList.remove('vis-hidden');
+    if (!d.configured) { panel.classList.add('vis-hidden'); return; }
     panel.classList.remove('vis-hidden');
 
     var socLbl = document.getElementById('batt_soc');
@@ -388,12 +384,6 @@ function applyBatt(d) {
         var col = soc >= 50 ? '#44bb44' : soc >= 20 ? '#ffaa00' : '#ff4444';
         fill.style.background = col;
     }
-}
-
-function updateSolarPanel() {
-    var solarHidden = document.getElementById('solar-section').classList.contains('vis-hidden');
-    var battHidden  = document.getElementById('batt-section').classList.contains('vis-hidden');
-    cls('solar-panel', 'vis-hidden', solarHidden && battHidden);
 }
 
 // ── Initialisation ────────────────────────────────────────────────────────
