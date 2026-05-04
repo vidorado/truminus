@@ -977,7 +977,7 @@ static void buildMainUI() {
     const int BB_X  = BC_X + (BC_W - BB_W) / 2; // body left edge (centered)
     const int BB_H  = 39;                        // body height
     const int BF_IH = BB_H - 2;                 // fill inner height (37 px)
-    const int BB_Y  = Y_CONT + 107;             // body top (centered in battery column area)
+    const int BB_Y  = Y_CONT + 118;             // body top (16 px gap below SOC label)
 
     // Section label — uppercase like HEATING/FAN/HOT_WATER
     makeSecLabel(s_scr, rx, Y_CONT + 88,
@@ -993,9 +993,9 @@ static void buildMainUI() {
     lv_label_set_long_mode(s_solarStateLbl, LV_LABEL_LONG_DOT);
     lv_label_set_text(s_solarStateLbl, "--");
 
-    // Voltage line — "Volt.: 12.6V"
+    // Voltage line — "Volt.: 12.6V"  (montserrat_12 fits more chars in 106 px)
     s_solarVoltLbl = lv_label_create(s_scr);
-    lv_obj_set_style_text_font(s_solarVoltLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_solarVoltLbl, &lv_font_montserrat_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarVoltLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
     lv_obj_set_size(s_solarVoltLbl, SC_W, 14);
     lv_obj_set_pos(s_solarVoltLbl, rx, Y_CONT + 121);
@@ -1003,7 +1003,7 @@ static void buildMainUI() {
 
     // Load line — "Carga: 5.2A / 35W"
     s_solarLoadLbl = lv_label_create(s_scr);
-    lv_obj_set_style_text_font(s_solarLoadLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_solarLoadLbl, &lv_font_montserrat_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarLoadLbl, lv_color_hex(0x88ccff), LV_PART_MAIN);
     lv_obj_set_size(s_solarLoadLbl, SC_W, 14);
     lv_obj_set_pos(s_solarLoadLbl, rx, Y_CONT + 135);
@@ -1011,14 +1011,14 @@ static void buildMainUI() {
 
     // Production line — "Prod.: 1.45kWh"
     s_solarProdLbl = lv_label_create(s_scr);
-    lv_obj_set_style_text_font(s_solarProdLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_solarProdLbl, &lv_font_montserrat_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarProdLbl, lv_color_hex(0xffdd66), LV_PART_MAIN);
     lv_obj_set_size(s_solarProdLbl, SC_W, 14);
     lv_obj_set_pos(s_solarProdLbl, rx, Y_CONT + 149);
     lv_label_set_text(s_solarProdLbl, "--");
 
-    // Vertical separator between solar and battery columns
-    makeSep(s_scr, rx + SC_W + 1, Y_CONT + 88, 1, 77);
+    // Vertical separator between solar and battery columns (covers full height)
+    makeSep(s_scr, rx + SC_W + 1, Y_CONT + 88, 1, 85);
 
     // ── Battery column ────────────────────────────────────────────────────
     // SOC % label — centered in battery column
@@ -1034,8 +1034,8 @@ static void buildMainUI() {
     auto makeBattNub = [&](int x) -> lv_obj_t* {
         lv_obj_t* n = lv_obj_create(s_scr);
         lv_obj_remove_style_all(n);
-        lv_obj_set_size(n, 5, 4);
-        lv_obj_set_pos(n, x, BB_Y - 4);
+        lv_obj_set_size(n, 12, 6);
+        lv_obj_set_pos(n, x, BB_Y - 5);
         lv_obj_set_style_bg_opa(n, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_bg_color(n, lv_color_hex(0x888888), LV_PART_MAIN);
         lv_obj_set_style_radius(n, 1, LV_PART_MAIN);
@@ -1045,7 +1045,9 @@ static void buildMainUI() {
     s_battNub  = makeBattNub(BB_X + 3);               // left terminal
     s_battNub2 = makeBattNub(BB_X + BB_W - 5 - 3);   // right terminal
 
-    // Battery body: border-only vertical rect 30×44 px
+    s_battFillX = BB_X + 1;   // cached for cydUpdateBatt()
+
+    // Battery body: border-only vertical rect 34×39 px
     s_battBody = lv_obj_create(s_scr);
     lv_obj_remove_style_all(s_battBody);
     lv_obj_set_size(s_battBody, BB_W, BB_H);
@@ -1185,7 +1187,7 @@ void cydUpdateBatt(const CydBattData& d) {
     if (!s_battSocLbl) return;
 
     // These must match the static constants in buildMainUI()
-    static const int BB_Y  = Y_CONT + 129;
+    static const int BB_Y  = Y_CONT + 118;
     static const int BF_IH = 37;   // fill inner height
 
     bool fresh = d.configured && d.valid && d.ageMs < 120000;
