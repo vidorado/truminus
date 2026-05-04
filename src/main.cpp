@@ -994,25 +994,31 @@ void loop() {
                      wHeating, s_extTemp,
                      getErrorInfo ? getErrorInfo->getErrorClass() : 0,
                      getErrorInfo ? getErrorInfo->getErrorCode()  : 0);
+    // Throttle solar/battery display updates to ~1/3 Hz to avoid LVGL redraw
+    // overhead interfering with screen dimming animations.
     {
-      VictronData vd = victronGetData();
-      CydSolarData sd = {
-          victronIsConfigured(),
-          vd.valid,
-          vd.battV, vd.battA, vd.pvW, vd.kWhToday,
-          vd.state, vd.errCode,
-          vd.valid ? (uint32_t)(millis() - vd.lastMs) : 999999u
-      };
-      cydUpdateSolar(sd);
+      static uint32_t lastSolarDisp = 0;
+      if (millis() - lastSolarDisp > 3333) {
+        lastSolarDisp = millis();
+        VictronData vd = victronGetData();
+        CydSolarData sd = {
+            victronIsConfigured(),
+            vd.valid,
+            vd.battV, vd.battA, vd.pvW, vd.kWhToday,
+            vd.state, vd.errCode,
+            vd.valid ? (uint32_t)(millis() - vd.lastMs) : 999999u
+        };
+        cydUpdateSolar(sd);
 
-      UltimatronData ud = ultimatronGetData();
-      CydBattData bd = {
-          ultimatronIsConfigured(),
-          ud.valid,
-          ud.soc, ud.battV, ud.battA,
-          ud.valid ? (uint32_t)(millis() - ud.lastMs) : 999999u
-      };
-      cydUpdateBatt(bd);
+        UltimatronData ud = ultimatronGetData();
+        CydBattData bd = {
+            ultimatronIsConfigured(),
+            ud.valid,
+            ud.soc, ud.battV, ud.battA,
+            ud.valid ? (uint32_t)(millis() - ud.lastMs) : 999999u
+        };
+        cydUpdateBatt(bd);
+      }
     }
     xSemaphoreGive(s_lvglMutex);
   }
