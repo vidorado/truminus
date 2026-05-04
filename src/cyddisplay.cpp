@@ -45,10 +45,10 @@ LV_FONT_DECLARE(symbols_14);
 #define Y_STAT    205
 #define CONT_H    (Y_SEP2 - Y_CONT)   // 175
 
-#define X_DIV     153          // vertical separator x
-#define X_R       154          // right panel start x
-#define W_L       153          // left panel width
-#define W_R       166          // right panel width
+#define X_DIV     141          // vertical separator x (narrower heating panel)
+#define X_R       142          // right panel start x
+#define W_L       141          // left panel width
+#define W_R       178          // right panel width
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Mode value tables  (protocol strings, not displayed — no translation needed)
@@ -902,10 +902,10 @@ static void buildMainUI() {
     makeBtn(s_spRow, 0, 0, 36, 35, LV_SYMBOL_DOWN, spDownCb);
 
     s_spLbl = lv_label_create(s_spRow);
-    lv_obj_set_style_text_font(s_spLbl, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_spLbl, &lv_font_montserrat_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_spLbl, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_align(s_spLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_size(s_spLbl, 70, 35);
+    lv_obj_set_size(s_spLbl, 52, 35);
     lv_obj_set_pos(s_spLbl, 38, 10);
     lv_label_set_text(s_spLbl, "20.0\xc2\xb0""C");
 
@@ -941,11 +941,11 @@ static void buildMainUI() {
     lv_obj_set_style_text_font(s_fanLevelLbl, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_fanLevelLbl, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_align(s_fanLevelLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_size(s_fanLevelLbl, 70, 28);
+    lv_obj_set_size(s_fanLevelLbl, 50, 28);
     lv_obj_set_pos(s_fanLevelLbl, 38, 7);
     lv_label_set_text(s_fanLevelLbl, "5");
 
-    makeBtn(s_fanLevelRow, 110, 0, 36, 28, LV_SYMBOL_UP, fanLevelUpCb);
+    makeBtn(s_fanLevelRow, lw - 36, 0, 36, 28, LV_SYMBOL_UP, fanLevelUpCb);
 
     // ════════════════════════════════════════════════════════════════════
     // RIGHT PANEL — HOT WATER
@@ -967,12 +967,12 @@ static void buildMainUI() {
     }
 
     // ── Solar data (left column) + Battery SOC (right column) ────────────
-    // Layout: solar 106 px | 1 px sep | battery 54 px  (total = rw = 161 px + 1)
+    // Layout: solar 126 px | 1 px sep | battery 46 px  (total = rw = 174 px + 1)
     // Solar column: y=88..165, battery column: y=88..165
-    const int SC_W  = 106;               // solar column width
+    const int SC_W  = 126;               // solar column width (was 106, +20)
     const int BC_X  = rx + SC_W + 2;    // battery column x (~264)
-    const int BC_W  = rw - SC_W - 2;    // battery column width (~54 px)
-    // Battery pill icon (vertical): body 34×39, two nubs 12×6 above body
+    const int BC_W  = rw - SC_W - 2;    // battery column width (~46 px)
+    // Battery pill icon (vertical): body 34×39, two nubs 6×6 above body
     const int BB_W  = 34;                        // body width
     const int BB_X  = BC_X + (BC_W - BB_W) / 2; // body left edge (centered)
     const int BB_H  = 39;                        // body height
@@ -1034,7 +1034,7 @@ static void buildMainUI() {
     auto makeBattNub = [&](int x) -> lv_obj_t* {
         lv_obj_t* n = lv_obj_create(s_scr);
         lv_obj_remove_style_all(n);
-        lv_obj_set_size(n, 12, 6);
+        lv_obj_set_size(n, 6, 6);
         lv_obj_set_pos(n, x, BB_Y - 5);
         lv_obj_set_style_bg_opa(n, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_bg_color(n, lv_color_hex(0x888888), LV_PART_MAIN);
@@ -1042,8 +1042,8 @@ static void buildMainUI() {
         lv_obj_clear_flag(n, (lv_obj_flag_t)LV_OBJ_FLAG_SCROLLABLE);
         return n;
     };
-    s_battNub  = makeBattNub(BB_X + 3);               // left terminal
-    s_battNub2 = makeBattNub(BB_X + BB_W - 5 - 3);   // right terminal
+    s_battNub  = makeBattNub(BB_X + 6);               // left terminal
+    s_battNub2 = makeBattNub(BB_X + BB_W - 6 - 6);   // right terminal
 
     s_battFillX = BB_X + 1;   // cached for cydUpdateBatt()
 
