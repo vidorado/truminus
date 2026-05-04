@@ -975,21 +975,21 @@ static void buildMainUI() {
     // Battery pill icon (vertical): body 34×39, two nubs 6×6 above body
     const int BB_W  = 34;                        // body width
     const int BB_X  = BC_X + (BC_W - BB_W) / 2; // body left edge (centered)
-    const int BB_H  = 39;                        // body height
-    const int BF_IH = BB_H - 2;                 // fill inner height (37 px)
-    const int BB_Y  = Y_CONT + 118;             // body top (16 px gap below SOC label)
+    const int BB_H  = 47;                        // body height (+8 px, top fixed)
+    const int BF_IH = BB_H - 2;                 // fill inner height (45 px)
+    const int BB_Y  = Y_CONT + 118;             // body top (unchanged)
 
     // Section label — uppercase like HEATING/FAN/HOT_WATER
     makeSecLabel(s_scr, rx, Y_CONT + 88,
         currentLanguage() == Language::EN ? "SOLAR CHARGE" : "CARGA SOLAR");
 
-    // Solar data: 4 rows × 14 px = 56 px, starting Y+107
+    // Solar data: 4 rows × 16 px = 64 px, starting Y+108 (looser gap from title)
     // State line — e.g. "Bulk" / "Float" / "--"
     s_solarStateLbl = lv_label_create(s_scr);
     lv_obj_set_style_text_font(s_solarStateLbl, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarStateLbl, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_size(s_solarStateLbl, SC_W, 14);
-    lv_obj_set_pos(s_solarStateLbl, rx, Y_CONT + 107);
+    lv_obj_set_size(s_solarStateLbl, SC_W, 16);
+    lv_obj_set_pos(s_solarStateLbl, rx, Y_CONT + 108);
     lv_label_set_long_mode(s_solarStateLbl, LV_LABEL_LONG_DOT);
     lv_label_set_text(s_solarStateLbl, "--");
 
@@ -997,24 +997,24 @@ static void buildMainUI() {
     s_solarVoltLbl = lv_label_create(s_scr);
     lv_obj_set_style_text_font(s_solarVoltLbl, &lv_font_montserrat_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarVoltLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
-    lv_obj_set_size(s_solarVoltLbl, SC_W, 14);
-    lv_obj_set_pos(s_solarVoltLbl, rx, Y_CONT + 121);
+    lv_obj_set_size(s_solarVoltLbl, SC_W, 16);
+    lv_obj_set_pos(s_solarVoltLbl, rx, Y_CONT + 125);
     lv_label_set_text(s_solarVoltLbl, "--");
 
     // Load line — "Carga: 5.2A / 35W"
     s_solarLoadLbl = lv_label_create(s_scr);
     lv_obj_set_style_text_font(s_solarLoadLbl, &lv_font_montserrat_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarLoadLbl, lv_color_hex(0x88ccff), LV_PART_MAIN);
-    lv_obj_set_size(s_solarLoadLbl, SC_W, 14);
-    lv_obj_set_pos(s_solarLoadLbl, rx, Y_CONT + 135);
+    lv_obj_set_size(s_solarLoadLbl, SC_W, 16);
+    lv_obj_set_pos(s_solarLoadLbl, rx, Y_CONT + 142);
     lv_label_set_text(s_solarLoadLbl, "--");
 
     // Production line — "Prod.: 1.45kWh"
     s_solarProdLbl = lv_label_create(s_scr);
     lv_obj_set_style_text_font(s_solarProdLbl, &lv_font_montserrat_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarProdLbl, lv_color_hex(0xffdd66), LV_PART_MAIN);
-    lv_obj_set_size(s_solarProdLbl, SC_W, 14);
-    lv_obj_set_pos(s_solarProdLbl, rx, Y_CONT + 149);
+    lv_obj_set_size(s_solarProdLbl, SC_W, 16);
+    lv_obj_set_pos(s_solarProdLbl, rx, Y_CONT + 159);
     lv_label_set_text(s_solarProdLbl, "--");
 
     // Vertical separator between solar and battery columns (covers full height)
@@ -1188,7 +1188,7 @@ void cydUpdateBatt(const CydBattData& d) {
 
     // These must match the static constants in buildMainUI()
     static const int BB_Y  = Y_CONT + 118;
-    static const int BF_IH = 37;   // fill inner height
+    static const int BF_IH = 45;   // fill inner height
 
     bool fresh = d.configured && d.valid && d.ageMs < 120000;
 
@@ -1428,7 +1428,7 @@ void cydDisplayUpdate(bool wifiok, bool trumaok,
     if (s_ipLbl) {
         if (wifiok) {
             char buf[64];
-            snprintf(buf, sizeof(buf), "%s  %s", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+            snprintf(buf, sizeof(buf), "%s / %s", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
             lv_label_set_text(s_ipLbl, buf);
         } else {
             lv_label_set_text(s_ipLbl, "");
