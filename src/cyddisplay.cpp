@@ -147,8 +147,9 @@ static lv_obj_t* s_energyDd      = nullptr;
 
 // Right panel — Solar data (compact, no section label)
 static lv_obj_t* s_solarStateLbl = nullptr;
-static lv_obj_t* s_solarBattLbl  = nullptr;
-static lv_obj_t* s_solarPvLbl    = nullptr;
+static lv_obj_t* s_solarVoltLbl  = nullptr;
+static lv_obj_t* s_solarLoadLbl  = nullptr;
+static lv_obj_t* s_solarProdLbl  = nullptr;
 
 // Right panel — Battery SOC (below solar data)
 static lv_obj_t* s_battSocLbl = nullptr;
@@ -955,63 +956,69 @@ static void buildMainUI() {
 
     makeSecLabel(s_scr, rx, Y_CONT + 2, t(TK::HOT_WATER));
 
-    // 4 boiler buttons in a 2×2 grid
-    // button width: (162 - 9) / 2 = 76 px,  gap = 9 px
+    // 4 boiler buttons in a 2×2 grid (height reduced from 38 to 30 to make room for 4 solar lines)
+    // button width: (162 - 9) / 2 = 76 px,  gap = 9 px, row gap = 6 px
     const int bw = (rw - 9) / 2;
     int bx[4] = {rx,      rx + bw + 9, rx,      rx + bw + 9};
-    int by[4] = {Y_CONT + 20, Y_CONT + 20, Y_CONT + 62, Y_CONT + 62};
+    int by[4] = {Y_CONT + 20, Y_CONT + 20, Y_CONT + 54, Y_CONT + 54};
     for (int i = 0; i < BOILER_N; i++) {
-        s_boilerBtn[i] = makeBtn(s_scr, bx[i], by[i], bw, 38,
+        s_boilerBtn[i] = makeBtn(s_scr, bx[i], by[i], bw, 30,
                                   boilerLabel(i), boilerCb, (void*)(intptr_t)i);
     }
 
     // ── Solar data (left column) + Battery SOC (right column) ────────────
     // Layout: solar 106 px | 1 px sep | battery 54 px  (total = rw = 161 px + 1)
-    // Solar column: y=104..175, battery column: y=104..175
+    // Solar column: y=88..165, battery column: y=88..165
     const int SC_W  = 106;               // solar column width
     const int BC_X  = rx + SC_W + 2;    // battery column x (~264)
     const int BC_W  = rw - SC_W - 2;    // battery column width (~54 px)
-    // Battery pill icon (vertical): body 34×39, two nubs 5×4 above body
+    // Battery pill icon (vertical): body 34×39, two nubs 12×6 above body
     const int BB_W  = 34;                        // body width
     const int BB_X  = BC_X + (BC_W - BB_W) / 2; // body left edge (centered)
-    const int BB_Y  = Y_CONT + 129;             // body top (baseline Y+168, 5px gap from SOC label)
-    s_battFillX = BB_X + 1;
     const int BB_H  = 39;                        // body height
     const int BF_IH = BB_H - 2;                 // fill inner height (37 px)
+    const int BB_Y  = Y_CONT + 107;             // body top (centered in battery column area)
 
     // Section label — uppercase like HEATING/FAN/HOT_WATER
-    makeSecLabel(s_scr, rx, Y_CONT + 104,
+    makeSecLabel(s_scr, rx, Y_CONT + 88,
         currentLanguage() == Language::EN ? "SOLAR CHARGE" : "CARGA SOLAR");
 
-    // Solar data: 3 rows × 14 px = 42 px, centered in 50 px below section label+3px gap
-    // (section label h≈16, 3px margin → data area Y+123..Y+173, top pad 4px → Y+127)
+    // Solar data: 4 rows × 14 px = 56 px, starting Y+107
     // State line — e.g. "Bulk" / "Float" / "--"
     s_solarStateLbl = lv_label_create(s_scr);
     lv_obj_set_style_text_font(s_solarStateLbl, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_solarStateLbl, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_size(s_solarStateLbl, SC_W, 14);
-    lv_obj_set_pos(s_solarStateLbl, rx, Y_CONT + 127);
+    lv_obj_set_pos(s_solarStateLbl, rx, Y_CONT + 107);
     lv_label_set_long_mode(s_solarStateLbl, LV_LABEL_LONG_DOT);
     lv_label_set_text(s_solarStateLbl, "--");
 
-    // Battery/current line — "12.6V 1.5A"
-    s_solarBattLbl = lv_label_create(s_scr);
-    lv_obj_set_style_text_font(s_solarBattLbl, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_solarBattLbl, lv_color_hex(0x88ccff), LV_PART_MAIN);
-    lv_obj_set_size(s_solarBattLbl, SC_W, 14);
-    lv_obj_set_pos(s_solarBattLbl, rx, Y_CONT + 141);
-    lv_label_set_text(s_solarBattLbl, "--");
+    // Voltage line — "Volt.: 12.6V"
+    s_solarVoltLbl = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_solarVoltLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_solarVoltLbl, lv_color_hex(0xaaccff), LV_PART_MAIN);
+    lv_obj_set_size(s_solarVoltLbl, SC_W, 14);
+    lv_obj_set_pos(s_solarVoltLbl, rx, Y_CONT + 121);
+    lv_label_set_text(s_solarVoltLbl, "--");
 
-    // PV + kWh line — "120W 0.8kWh"
-    s_solarPvLbl = lv_label_create(s_scr);
-    lv_obj_set_style_text_font(s_solarPvLbl, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_solarPvLbl, lv_color_hex(0xffdd66), LV_PART_MAIN);
-    lv_obj_set_size(s_solarPvLbl, SC_W, 14);
-    lv_obj_set_pos(s_solarPvLbl, rx, Y_CONT + 155);
-    lv_label_set_text(s_solarPvLbl, "--");
+    // Load line — "Carga: 5.2A / 35W"
+    s_solarLoadLbl = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_solarLoadLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_solarLoadLbl, lv_color_hex(0x88ccff), LV_PART_MAIN);
+    lv_obj_set_size(s_solarLoadLbl, SC_W, 14);
+    lv_obj_set_pos(s_solarLoadLbl, rx, Y_CONT + 135);
+    lv_label_set_text(s_solarLoadLbl, "--");
+
+    // Production line — "Prod.: 1.45kWh"
+    s_solarProdLbl = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_solarProdLbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_solarProdLbl, lv_color_hex(0xffdd66), LV_PART_MAIN);
+    lv_obj_set_size(s_solarProdLbl, SC_W, 14);
+    lv_obj_set_pos(s_solarProdLbl, rx, Y_CONT + 149);
+    lv_label_set_text(s_solarProdLbl, "--");
 
     // Vertical separator between solar and battery columns
-    makeSep(s_scr, rx + SC_W + 1, Y_CONT + 104, 1, 69);
+    makeSep(s_scr, rx + SC_W + 1, Y_CONT + 88, 1, 77);
 
     // ── Battery column ────────────────────────────────────────────────────
     // SOC % label — centered in battery column
@@ -1020,7 +1027,7 @@ static void buildMainUI() {
     lv_obj_set_style_text_color(s_battSocLbl, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_align(s_battSocLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_size(s_battSocLbl, BC_W, 14);
-    lv_obj_set_pos(s_battSocLbl, BC_X, Y_CONT + 106);
+    lv_obj_set_pos(s_battSocLbl, BC_X, Y_CONT + 90);
     lv_label_set_text(s_battSocLbl, "--");
 
     // Battery terminals (two nubs above body, left and right)
@@ -1129,12 +1136,13 @@ static const char* solarStateName(uint8_t s) {
 void cydUpdateSolar(const CydSolarData& d) {
     if (!s_solarStateLbl) return;
 
-    char buf[32];
+    char buf[40];
 
     if (!d.configured) {
         lv_label_set_text(s_solarStateLbl, t(TK::SOLAR_NO_DATA));
-        lv_label_set_text(s_solarBattLbl,  "");
-        lv_label_set_text(s_solarPvLbl,    "");
+        lv_label_set_text(s_solarVoltLbl,  "");
+        lv_label_set_text(s_solarLoadLbl,  "");
+        lv_label_set_text(s_solarProdLbl,  "");
         return;
     }
 
@@ -1143,8 +1151,9 @@ void cydUpdateSolar(const CydSolarData& d) {
 
     if (!fresh) {
         lv_label_set_text(s_solarStateLbl, "--");
-        lv_label_set_text(s_solarBattLbl,  "--");
-        lv_label_set_text(s_solarPvLbl,    "--");
+        lv_label_set_text(s_solarVoltLbl,  "--");
+        lv_label_set_text(s_solarLoadLbl,  "--");
+        lv_label_set_text(s_solarProdLbl,  "--");
         return;
     }
 
@@ -1156,13 +1165,17 @@ void cydUpdateSolar(const CydSolarData& d) {
     }
     lv_label_set_text(s_solarStateLbl, buf);
 
-    // Battery line: "12.6V 1.5A"  (single space — narrower column)
-    snprintf(buf, sizeof(buf), "%.1fV %.1fA", d.battV, d.battA);
-    lv_label_set_text(s_solarBattLbl, buf);
+    // Voltage line: "Volt.: 12.6V"
+    snprintf(buf, sizeof(buf), "%s %.1fV", t(TK::SOLAR_VOLT), d.battV);
+    lv_label_set_text(s_solarVoltLbl, buf);
 
-    // PV line: "120W 0.8kWh"
-    snprintf(buf, sizeof(buf), "%.0fW %.1fkWh", d.pvW, d.kWhToday);
-    lv_label_set_text(s_solarPvLbl, buf);
+    // Load line: "Carga: 5.2A / 35W"
+    snprintf(buf, sizeof(buf), "%s %.1fA / %.0fW", t(TK::SOLAR_LOAD), d.battA, d.pvW);
+    lv_label_set_text(s_solarLoadLbl, buf);
+
+    // Production line: "Prod.: 1.45kWh"
+    snprintf(buf, sizeof(buf), "%s %.2fkWh", t(TK::SOLAR_PROD), d.kWhToday);
+    lv_label_set_text(s_solarProdLbl, buf);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1222,7 +1235,7 @@ void cydRebuildUI() {
     for (int i = 0; i < BOILER_N; i++) s_boilerBtn[i] = nullptr;
     s_fanOnBtn = s_fanOffBtn = s_fanLevelLbl = nullptr;
     s_energyDd = s_statusLbl = s_ipLbl = nullptr;
-    s_solarStateLbl = s_solarBattLbl = s_solarPvLbl = nullptr;
+    s_solarStateLbl = s_solarVoltLbl = s_solarLoadLbl = s_solarProdLbl = nullptr;
     s_battSocLbl = s_battBody = s_battFill = s_battNub = s_battNub2 = nullptr;
 
     lv_obj_clean(s_scr);   // delete all children
@@ -1250,7 +1263,7 @@ void cydFreeMainUI() {
     for (int i = 0; i < BOILER_N; i++) s_boilerBtn[i] = nullptr;
     s_fanOnBtn = s_fanOffBtn = s_fanLevelLbl = nullptr;
     s_energyDd = s_statusLbl = s_ipLbl = nullptr;
-    s_solarStateLbl = s_solarBattLbl = s_solarPvLbl = nullptr;
+    s_solarStateLbl = s_solarVoltLbl = s_solarLoadLbl = s_solarProdLbl = nullptr;
     s_battSocLbl = s_battBody = s_battFill = s_battNub = s_battNub2 = nullptr;
     lv_obj_clean(s_scr);
 }

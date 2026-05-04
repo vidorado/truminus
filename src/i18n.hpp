@@ -46,6 +46,9 @@ enum class TK : uint8_t {
     SOLAR_ADDR,        // solar setup label: "Direcc. MAC" / "MAC Address"
     SOLAR_KEY,         // solar setup label: "Clave cifrado" / "Enc. Key"
     SOLAR_NO_DATA,     // right panel when no data: "Sin datos" / "No data"
+    SOLAR_VOLT,        // solar panel label: "Volt.:" / "Volt.:"
+    SOLAR_LOAD,        // solar panel label: "Carga:" / "Load:"
+    SOLAR_PROD,        // solar panel label: "Prod.:" / "Yield:"
     // ── Touch calibration ──────────────────────────────────────────────────
     TOUCH_CAL_INSTR,   // "Toca lo mas cerca del centro del simbolo +" / "Tap as close as possible to the center of the + symbol"
     TOUCH_CAL_DONE,    // "Calibracion completada!" / "Calibration complete!"

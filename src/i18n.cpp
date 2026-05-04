@@ -47,6 +47,9 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Direcc. MAC",              // SOLAR_ADDR
     "Clave cifrado",            // SOLAR_KEY
     "Sin datos",                // SOLAR_NO_DATA
+    "Volt.:",                   // SOLAR_VOLT
+    "Carga:",                   // SOLAR_LOAD
+    "Prod.:",                   // SOLAR_PROD
     "Toca lo mas cerca del centro del simbolo +",   // TOUCH_CAL_INSTR
     "Calibracion completada!",                      // TOUCH_CAL_DONE
     "TruMinus - Configuracion WiFi",                // WIFI_TITLE
@@ -132,6 +135,9 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "MAC Address",              // SOLAR_ADDR
     "Enc. Key",                 // SOLAR_KEY
     "No data",                  // SOLAR_NO_DATA
+    "Volt.:",                   // SOLAR_VOLT
+    "Load:",                    // SOLAR_LOAD
+    "Yield:",                   // SOLAR_PROD
     "Tap as close as possible to the center of the + symbol",  // TOUCH_CAL_INSTR
     "Calibration complete!",                        // TOUCH_CAL_DONE
     "TruMinus - WiFi Setup",                        // WIFI_TITLE
