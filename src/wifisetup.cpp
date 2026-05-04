@@ -293,9 +293,8 @@ static void wifiSetStatus(const char* msg) {
     lvRun(20);
 }
 
-// Synchronous scan: blocks ~2-3 s but guarantees results even when queued
-// WiFi events (STA_DISCONNECTED from a previous reconnect loop) would
-// corrupt the async _scanStarted flag mid-flight.
+// Asynchronous scan: starts in background and polls while keeping LVGL alive
+// so the spinner continues to animate.
 static void doScan() {
     s_netCount = 0;
     lv_obj_remove_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
@@ -310,10 +309,18 @@ static void doScan() {
     lvRun(500);          // wait for esp_wifi_start()
 
     WiFi.scanDelete();
-    // Synchronous scan: blocks until SCAN_DONE semaphore fires — immune to
-    // _scanStarted being reset early by unrelated WiFi events.
-    int n = WiFi.scanNetworks(/*async=*/false);
-    Serial.printf("[wifisetup] scanNetworks(sync)=%d\n", n);
+    int n = WiFi.scanNetworks(/*async=*/true);
+    Serial.printf("[wifisetup] scanNetworks(async start)=%d\n", n);
+
+    if (n >= 0) {
+        // Scan finished immediately (cached results?)
+    } else {
+        // Poll until scan completes, feeding LVGL so the spinner keeps spinning.
+        while ((n = WiFi.scanComplete()) == -1) {
+            lvRun(100);
+        }
+    }
+    Serial.printf("[wifisetup] scanNetworks(async done)=%d\n", n);
 
     lv_obj_add_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_dropdown, LV_OBJ_FLAG_HIDDEN);
@@ -974,6 +981,8 @@ static String runSolarScan() {
     return result;
 }
 
+#endif // BLE
+
 // =======================================================================
 // Solar (Victron BLE) config screen
 // Two text areas: MAC (12 hex chars) and encryption key (32 hex chars).
@@ -1004,7 +1013,9 @@ void saveSolarConfig(const String& addr, const String& key) {
     p.end();
 }
 
-static String runBattScan();  // forward declaration
+// Forward declarations (defined after runSolarSetup)
+bool loadBattConfig(String& addr);
+void saveBattConfig(const String& addr);
 
 static lv_obj_t* ss_addrTA            = nullptr;
 static lv_obj_t* ss_keyTA             = nullptr;
@@ -1138,6 +1149,7 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_set_pos(ss_addrTA, 0, 46);
     if (hasConfig) lv_textarea_set_text(ss_addrTA, existAddr.c_str());
 
+#if defined(BLE)
     lv_obj_t* scanBtn = lv_btn_create(ss_contentPanel);
     lv_obj_set_size(scanBtn, 107, 36);
     lv_obj_set_pos(scanBtn, 203, 46);
@@ -1147,6 +1159,7 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_t* scanLbl = lv_label_create(scanBtn);
     lv_label_set_text_fmt(scanLbl, LV_SYMBOL_REFRESH " %s", t(TK::SEARCH));
     lv_obj_center(scanLbl);
+#endif
 
     lv_obj_t* keyLbl = lv_label_create(ss_contentPanel);
     lv_label_set_text(keyLbl, t(TK::ENC_KEY_LABEL));
@@ -1180,6 +1193,7 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_set_pos(ss_battAddrTA, 0, 194);
     if (hasBattConfig) lv_textarea_set_text(ss_battAddrTA, existBattAddr.c_str());
 
+#if defined(BLE)
     lv_obj_t* battScanBtn = lv_btn_create(ss_contentPanel);
     lv_obj_set_size(battScanBtn, 107, 36);
     lv_obj_set_pos(battScanBtn, 203, 194);
@@ -1189,6 +1203,7 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_t* battScanLbl = lv_label_create(battScanBtn);
     lv_label_set_text_fmt(battScanLbl, LV_SYMBOL_REFRESH " %s", t(TK::SEARCH));
     lv_obj_center(battScanLbl);
+#endif
 
     // Cancel / Save
     lv_obj_t* cancelBtn = lv_btn_create(ss_contentPanel);
@@ -1243,7 +1258,10 @@ bool runSolarSetup(String& addr, String& key) {
             if (ss_kb) { lv_obj_delete(ss_kb); ss_kb = nullptr; }
             if (ss_contentPanel) lv_obj_set_height(ss_contentPanel, 220);
 
-            String picked = forBatt ? runBattScan() : runSolarScan();
+            String picked;
+#if defined(BLE)
+            picked = forBatt ? runBattScan() : runSolarScan();
+#endif
 
             // Rebuild keyboard now that scan screen is gone.
             ss_kb = lv_keyboard_create(scr);
@@ -1278,6 +1296,7 @@ bool runSolarSetup(String& addr, String& key) {
     return saved;
 }
 
+#if defined(BLE)
 // =======================================================================
 // Battery (Ultimatron BLE) device scan
 // Scans 8 s for all BLE devices so the user can find their battery by name/MAC.
@@ -1463,6 +1482,8 @@ static String runBattScan() {
     return result;
 }
 
+#endif // BLE
+
 // =======================================================================
 // Battery (Ultimatron BLE) config screen
 // One text area: MAC address (12 hex chars) + scan + cancel/save.
@@ -1486,7 +1507,5 @@ void saveBattConfig(const String& addr) {
     p.putString(NVS_BATT_ADDR, addr);
     p.end();
 }
-
-#endif // BLE
 
 #endif // CYD

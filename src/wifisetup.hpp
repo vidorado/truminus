@@ -35,9 +35,8 @@ void saveMqttConfig(const String& host, const String& port,
 bool runMqttSetup(String& uri, String& user, String& pass);
 
 // -----------------------------------------------------------------------
-// Solar (Victron BLE) config (NVS) — only when BLE is enabled
+// Solar (Victron BLE) config (NVS)
 // -----------------------------------------------------------------------
-#if defined(BLE)
 // addr: 12 uppercase hex chars (no separators), e.g. "AABBCCDDEEFF"
 // key:  32 uppercase hex chars (128-bit AES key from VictronConnect)
 bool loadSolarConfig(String& addr, String& key);
@@ -53,6 +52,5 @@ bool runSolarSetup(String& addr, String& key);
 // addr: 12 uppercase hex chars (no separators), e.g. "AABBCCDDEEFF"
 bool loadBattConfig(String& addr);
 void saveBattConfig(const String& addr);
-#endif // BLE
 
 #endif // CYD

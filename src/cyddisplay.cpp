@@ -850,7 +850,7 @@ static void buildMainUI() {
     lv_obj_set_style_text_font(s_extLbl, &symbols_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_extLbl, lv_color_hex(0xffcc88), LV_PART_MAIN);
     lv_label_set_text(s_extLbl, MY_SYMBOL_THERM_EXT " " MY_SYMBOL_CHEVRON_R " --\xc2\xb0""C");
-    lv_obj_set_pos(s_extLbl, 122, 7);
+    lv_obj_set_pos(s_extLbl, 117, 7);
     lv_obj_clear_flag(s_extLbl, LV_OBJ_FLAG_CLICKABLE);
 
     auto makeStatusIcon = [&](int x, const char* sym, uint32_t col) -> lv_obj_t* {

@@ -926,9 +926,7 @@ void loop() {
         // main UI and the setup screen simultaneously.
         cydFreeMainUI();
         // runSolarSetup already saves to NVS; restart so victronBleInit() picks it up.
-        #if defined(BLE)
         needRestart = runSolarSetup(addr, key);
-        #endif
         cydRebuildUI();   // rebuild main UI (replaces the freed widgets)
       }
       cydReloadScreen();
