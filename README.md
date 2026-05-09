@@ -1,140 +1,187 @@
-# Cp plus emulator for a truma combi D
+# TruMinus — CYD edition
 
-This project uses an esp32 to emulate a cp-plus to control a truma combi D (the model with the square cowl).
+A fork of [olivluca/TruMinus](https://github.com/olivluca/TruMinus) that turns an
+**ESP32-2432S028R "Cheap Yellow Display" (CYD)** into a full replacement for the
+Truma **CP Plus** control panel of a **Truma Combi D** heater, with a built-in
+2.8" touchscreen, web UI and Bluetooth integration with the motorhome's solar
+charger and battery BMS.
 
-![square cowl](doc/cowl.png)
+The story behind this fork — why I built it, the dead ends, the custom PCB and
+the 3D-printed enclosure — is written up here:
+**[Advanced motorhome Truma control panel — a custom ESP32 CYD journey](https://www.victordorado.es/2026/05/05/advanced-motorhome-truma-control-panel-a-custom-esp32-cyd-journey/)**.
 
-It connects to an mqtt broker to get the settings for the heating, boiler and fan and to report back the status of the combi.
+![CYD display](doc/cyd-screen.png)
 
-It also provides a simple web interface to control the combi. The settings can also be given using the serial port.
+> This software is not provided, endorsed, supported, or sponsored by Truma.
+> See the [LICENSE](LICENSE) — no warranty of any kind.
 
-This software is not provided, endorsed, supported, or sponsored by Truma. It may or may not be working with their products. 
-Please read the [license file](LICENSE), in particular:
+---
 
-IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING WILL ANY COPYRIGHT HOLDER,
-OR ANY OTHER PARTY WHO MODIFIES AND/OR CONVEYS THE PROGRAM AS PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES,
-INCLUDING ANY GENERAL, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE USE OR INABILITY TO
-USE THE PROGRAM.
+## Relation to the upstream projects
 
-## build it
+This repository started as a fork of two sibling projects by **olivluca**:
 
-To build it you'll need [platformio](https://platformio.org/). You should also create a `wifi_config.h` file with the details of your wifi access point and
-of your mqtt broker, please see the comments in `main.cpp`.
+- **[TruMinus](https://github.com/olivluca/TruMinus)** — ESP32 firmware that
+  emulates a CP Plus on the LIN bus and exposes the Combi D over MQTT, a small
+  web UI and a serial CLI. All of the LIN protocol work, the MQTT topic layout,
+  the Home Assistant autodiscovery and the original web interface come from
+  there.
+- **[TrumaDisplay](https://github.com/olivluca/TrumaDisplay)** — a separate
+  CYD-based MQTT client that talks to a TruMinus instance and renders a touch
+  UI built with Squareline Studio.
 
-Change the settings in `platformio.ini` to suit your board and your preferences.
+This fork **merges both ideas into a single firmware** that runs on the CYD:
+the ESP32 acts as the LIN master *and* drives the touchscreen directly, with no
+second device or MQTT round-trip required between the controller and the
+display. **MQTT has been dropped on the CYD build** to free up RAM (the NimBLE
+stack plus LVGL plus the WebSocket server already leave very little headroom on
+the WROOM-32); the remaining ways to talk to the device are the touchscreen,
+the embedded web UI and the serial CLI.
 
-The boards I used (for which I provide some defines) are a GOOUUU ESP32 C3 (the one I'm actually using), a Wroom32 based board and a c3 supermini (not field tested but it should work just the same as the GOOUUU).
+If you have a non-CYD board (GOOUUU C3, Wroom32, C3 Supermini), the original
+TruMinus is the better starting point — this fork keeps the build flags for
+those boards working, but the CYD path is the one I actively use and test.
 
-If you want to use the webserver don't forget to `Build Filesystem Image` and to `Upload Filesystem Image`.
+---
 
-## connection to the combi
+## What's new vs. upstream TruMinus
 
-To connect to the combi you can follow the "Hardware requirements" section of the [inetbox.py](https://github.com/danielfett/inetbox.py) project 
-(of course you don't need a cp-plus and instead of connecting the transceiver to the raspberry pi you'll have to connect it to the esp32).
-I used pin 19 for TX (connected to the RX of the transceiver) and pin 18 for RX (connected to the TX of the transceiver) but you can change the pins
-with the defines in `main.cpp` (since the c3 supermini doesn't break out those pin, I defined pin 6 for TX and pin 7 for RX).
+Hardware target
 
-Also, since this is the master on the lin-bus, if you use the same [transceiver](https://www.aliexpress.com/item/4001054538389.html) you should bridge the `LIN` and `INH` terminals of the transceiver.
+- **Primary board: ESP32-2432S028R (CYD)** with ILI9341 320×240 TFT and XPT2046
+  resistive touch. LIN bus on `TX=GPIO27`, `RX=GPIO22` (the only pins still
+  free on this board).
+- External **AM2301 / DHT22** outdoor temperature sensor on `GPIO17`
+  (repurposed from the on-board RGB LED blue channel).
+- Custom sandwich-style PCB and a 3D-printed enclosure designed to drop into
+  the original CP Plus opening of the motorhome — see the blog post above.
 
-## web interface
+On-device touchscreen UI (LVGL)
 
-It's a simple web interface to control the combi
+- Four-panel landscape layout: heating, fan, hot water, and a combined
+  solar/battery panel.
+- Boiler modes (off / 40 °C / 60 °C / 60 °C boost), heating fan modes, energy
+  selector (Gas / Gas+Elec 850 W / Gas+Elec 1700 W / Elec 850 W / Elec 1700 W),
+  room and water setpoints, three-state tint and fire indicators, error modal.
+- First-boot guided setup screens for **WiFi**, **touch calibration**,
+  **screen timeout** (30 s / 1 min / 3 min / never with dim warning +
+  wake-overlay) and **language** (Spanish / English, persisted in NVS).
 
-![web interface screenshot](doc/webintf.png)
+Bluetooth integrations (off-grid telemetry)
 
-There are two tabs, the Controls tab allows you to control the combi and see the basic operating data, while the Details tab will show a lot of 
-details about the operation of the combi.
+- **Victron SmartSolar MPPT** via the BLE *Instant Readout* protocol (active
+  scan, AES-CTR decryption, fixed for newer firmware revisions). Shows state,
+  battery voltage, charge current and PV power.
+- **Ultimatron LiFePO4 BMS** via its GATT protocol. Shows SOC as a vertical
+  battery icon with colour-coded fill.
+- BLE peer MACs and the Victron encryption key are entered from the on-screen
+  *Carga solar* setup and stored in NVS.
+- **BLE is disabled by default on CYD builds** (`-DBLE` opt-in). The NimBLE
+  stack costs ~60 KB of heap, which on the WROOM-32 leaves too little for
+  concurrent HTTP requests and triggers OOM aborts. Without `-DBLE` the
+  firmware still builds and the UI is fed with simulated data so the panels
+  remain testable.
 
-The settings made from the web interface will be replicated to the mqtt broker, and the settings made from the mqtt broker will be shown on the web interface.
+Web interface
 
-If you don't need it or you find it crashes your esp32 (it works ok on an esp32-c3 but I had some issues on a wroom module) you can omit the
-`-DWEBSERVER` define in the platformio.ini file.
+- Rebuilt to mirror the CYD layout, including the solar/battery panel.
+- Static assets are **embedded into the firmware** (`scripts/compress_fs.py`
+  → `src/webfiles.h`) instead of being served from LittleFS. This avoids a
+  class of OOM crashes that affected the original webserver on WROOM modules,
+  but it means a **firmware reflash is required** after any change under
+  `data/` (`uploadfs` alone is not enough).
+- Thread-safe WebSocket queue with a client/queue cap, JSON built without heap
+  fragmentation, and 300 ms debounce on user actions.
 
-## serial interface
+Protocol & robustness
 
-Connecting to the serial interface of the esp32 (115200/N/8/1), apart from seeing some status information, you
-can also give commands. Just issue the `help` command to get a list of the available commands.
-Since you can adjust the setpoints from the serial interface, they will be replicated to the mqtt broker and 
-to the web interface.
+- Frame 0x21 / 0x22 (CP Plus D) parsing for room temperature, water heating
+  state, water temperature and rolling counter.
+- Persistent setpoints (heating / boiler / fan) across reboots in NVS.
+- Multi-language i18n with first-boot selector (`src/i18n.{hpp,cpp}`).
+- Error / warning modal in both web and CYD UIs with class-aware reset
+  handling.
+- LIN bus task pinned to Core 0 so blocking serial reads can't starve WiFi /
+  MQTT / LVGL on Core 1.
 
-## mqtt setpoints
+---
 
-The setpoints received from the mqtt broker are under the `truma/set` topic and are:
+## Build
 
-|topic|value|notes
-|--|--|--|
-|truma/set/simultemp|from -273.0 to 30.0|used to simulate the room temperature, set it to -273.0 to use the real temperature|
-|truma/set/temp|from 5.0 to 30.0|room temperature setpoint|
-|truma/set/heating|0 or 1|0 to turn off heating, 1 to turn it on|
-|truma/set/boiler|off, eco, high or boost|hot water setting|
-|truma/set/fan|off, eco, high or from 0 to 10|use 1 to 10 for ventilation (heating must be off), with the heating on 2 is equivalent to "high" and any other value (including "off") is equivalent to "eco"|
-|truma/set/reset|1|use it to request an error reset, be sure to make it not retaining|
-|truma/set/refresh|not relevant|it can be used by an mqtt client to request a refresh of the data, like the reset make sure to make it not retaining|
+This project uses **PlatformIO**. See [`CLAUDE.md`](CLAUDE.md) for the full
+architecture notes — the short version:
 
-## mqtt status
+```bash
+# firmware
+pio run --target upload
 
-The status information is reported under the `truma/status` topic, each topic is refreshed only when its value has changed, 
-a connection to the broker has just been established or 10 seconds have passed from the last update (in the latter two cases
-only when the value has been read from the combi).
-
-There are a lot of topics that I won't describe here but you can see them in the "Details" tab of the web interface.
-The main topics are:
-
-|topic|value|notes|
-|--|--|--|
-|truma/status/room_temp|temperature in ºC|the current room temperature (only refreshed if the combi is active)|
-|truma/status/water_temp|temperature in ºC|the current water temperature (only refreshed if the combi is active)|
-|truma/status/voltage|supply voltage in V|the current supply voltage (only refreshed if the combi is active)|
-|truma/status/antifreeze|0 or 1|antifreeze status, 1 ok, 0 not ok|
-|truma/status/supply220|0 or 1|I guess it's 1 when there's 220V supply, 0 when there isn't, I don't have a combi E|
-|truma/status/window|0 or 1|0 window open, 1 window closed|
-|truma/status/roomdemand|0 or 1|1 when the burner is on to heat the room|
-|truma/status/waterdemand|0 or 1|1 when the burner is on to heat the water|
-|truma/status/error|0 or 1|1 when there is an error condition|
-|truma/status/err_class|0,1,2,10,20,30,40|0=no error, 1,2=warning, 10,20,30=error, 40=locked|
-|truma/status/err_code|0 to 255|0=no error otherwise an error/warning code|
-|truma/status/err_short|0 to ?|the short error code (number of times the error led blinks)|
-
-There are some special topics that don't come from the combi but are generated locally, they are:
-
-|topic|value|notes|
-|--|--|--
-|truma/status/reset|0 or 1|indicates that an error reset is underway (when the value is 1)|
-|truma/status/linok|0 or 1|indicates that the lin bus connection is healthy (1) or faulty (0)|
-|truma/status/waterboost|from 0 to 40|indicates the remaining waterboost minutes (or 0 if the waterboost is not active)|
-
-## led
-
-The led is used to show some error conditions blinking with a pause of 500ms between each blinking cycle.
-Only one error condition can be shown at a time. 
-
-|number of blinks|meaning|
-|--|--|
-|steady on|everything ok|
-|1|no wifi connection|
-|2|no mqtt connection|
-|3|lin bus error|
-|4|performing error reset|
-
-## display
-
-The companion repository
-[TrumaDisplay](https://github.com/olivluca/TrumaDisplay) implements a simple
-display using the topics made available by this project.
-
-## home assistant integration
-
-The program publishes mqtt auto-discovery topics for easy integration into home assistant.
-You can tweak the topics with the defines in `globals.hpp`
-
-```
-//mqtt autodiscovery parameters
-#define HA_DEVICE_ID "truma_boiler_01"
-#define HA_DEVICE_NAME "Combi D"
-#define HA_DEVICE_MODEL "Combi Heater"
-#define HA_DEVICE_MANUFACTURER "Truma"
-#define HA_DISCOVERY_TOPIC "homeassistant/"
+# web assets are embedded — reflash the firmware after editing data/
+pio run --target upload
 ```
 
-If you don't want to clobber your mqtt broker with these topics, simply remove the `-DAUTODISCOVERY` line from `platformio.ini`.
+Pick a board by uncommenting the matching `build_flags` block in
+`platformio.ini`:
 
+| Board                     | Flag             | Notes                                  |
+|---------------------------|------------------|----------------------------------------|
+| **CYD** (ESP32-2432S028R) | `-DCYD`          | Primary target of this fork            |
+| GOOUUU ESP32 C3           | `-DGOOUUUC3`     | Upstream default                       |
+| Wroom32                   | `-DWROOM32`      |                                        |
+| C3 Supermini              | `-DC3SUPERMINI`  | Needs `-DARDUINO_USB_CDC_ON_BOOT=1`    |
+
+On CYD builds WiFi is configured from the touch UI on first boot and stored in
+NVS, so no extra files are needed. For the legacy non-CYD boards the upstream
+[`wifi_config.h`](https://github.com/olivluca/TruMinus) convention still
+applies.
+
+LIN-bus wiring follows the [`inetbox.py`](https://github.com/danielfett/inetbox.py)
+"Hardware requirements" notes (transceiver with `LIN`/`INH` bridged, master on
+the ESP32 side). On CYD use `TX=GPIO27`, `RX=GPIO22`; on the other boards the
+upstream defaults (`TX=19`, `RX=18`, or `6/7` on C3 Supermini) still apply.
+
+---
+
+## Interfaces
+
+### Touchscreen (CYD only)
+
+Built with [esp32-smartdisplay](https://github.com/rzeldent/esp32-smartdisplay)
+and LVGL. Top bar shows outdoor temperature, a settings button, and WiFi / LIN
+status dots; the status bar shows `SSID  IP` and the latest status message.
+Settings (WiFi, solar/battery BLE, timeout, language) are reachable from the
+`⚙ Conf.` button.
+
+### Web UI
+
+Same 4-panel layout as the device, served from embedded flash and synced over
+WebSocket. Reachable at `http://truminus.local/` once the device is on the
+network.
+
+![web interface portrait](doc/web-interface-portrait.png)
+![web interface landscape](doc/web-interface-landscape.png)
+
+### Serial CLI
+
+Connect at 115200/N/8/1 and type `help` for the list of commands. Setpoints
+made from the CLI are mirrored to the web and CYD UIs.
+
+---
+
+## Credits
+
+- **[olivluca/TruMinus](https://github.com/olivluca/TruMinus)** — original
+  CP Plus emulator, LIN protocol work and web UI. Everything in this fork
+  stands on top of that work.
+- **[olivluca/TrumaDisplay](https://github.com/olivluca/TrumaDisplay)** —
+  reference for a CYD-based UI talking to a TruMinus controller; the
+  inspiration for merging controller and display into one device.
+- **[danielfett/inetbox.py](https://github.com/danielfett/inetbox.py)** —
+  hardware-side reference for the LIN transceiver wiring.
+- **[chrisj7903/Read-Victron-advertised-data](https://github.com/chrisj7903/Read-Victron-advertised-data)**
+  — Victron Instant Readout reference implementation.
+- **[sergkh/node-ultimatron-battery](https://github.com/sergkh/node-ultimatron-battery)**
+  — Ultimatron BMS GATT protocol reference.
+
+## License
+
+GPL — see [LICENSE](LICENSE).
