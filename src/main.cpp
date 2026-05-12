@@ -76,9 +76,12 @@ void publishSolarBatt();
 // Display boards (CYD / CYD_C5)
 // Status shown on LVGL display — no LED used.
 #ifdef CYD_C5
-// ESP32-C5-WROOM-1 variant
-#define TX_PIN 9
-#define RX_PIN 8
+// ESP32-C5-WROOM-1 (NM-CYD-C5) — 16MB Flash / 8MB PSRAM
+// LIN bus UART on P5 (LP-UART): leaves CN1 I2C (IO8/IO9) free for expansion.
+#define TX_PIN 5
+#define RX_PIN 4
+// IO27 drives the onboard WS2812B RGB LED; LED must be removed/soldered off
+// to use this pin for the AM2301 (DHT) sensor.
 #define DHT_DATA_PIN 27
 #else
 // ESP32-2432S028R (Cheap Yellow Display)
@@ -292,12 +295,9 @@ void setup() {
   lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_270);
   // Load touch calibration from NVS.  If none is stored yet (first boot or
   // after clearing NVS), run the interactive 3-point calibration screen.
-  // Capacitive touch (CYD_C5) does not need calibration.
-  #ifndef CYD_C5
   if (!loadTouchCalibration(touch_calibration_data)) {
     runTouchCalibration();
   }
-  #endif
   #endif
 
   //frames to read — CP Plus D protocol uses 0x21 and 0x22

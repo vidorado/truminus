@@ -39,7 +39,7 @@ Board presets are defined in `platformio.ini`. Activate one by selecting the cor
 | Wroom32 | `-DWROOM32` | Single LED, TX=19, RX=18 |
 | C3 Supermini | `-DC3SUPERMINI` | Single LED (inverted) pin 8, TX=6, RX=7 |
 | **CYD** | **`-DCYD`** | ESP32-2432S028R, 320×240 TFT, resistive touch, solar/battery UI |
-| **CYD_C5** | **`-DCYD_C5`** | ESP32-C5-WROOM-1, 320×240 TFT, capacitive touch, LIN TX=9, RX=8, DHT=27. Uses upstream `arduino-esp32` (master) for C5 support. |
+| **CYD_C5** | **`-DCYD_C5`** | ESP32-C5-WROOM-1 (NM-CYD-C5), 320×240 ST7789 TFT, XPT2046 resistive touch, LIN TX=5/RX=4 (P5), DHT=27. Uses `pioarduino` platform (Arduino 3.3.6). |
 
 **Important for C3 Supermini**: requires `-DARDUINO_USB_CDC_ON_BOOT=1` in build flags.
 
@@ -118,13 +118,16 @@ Writable setpoints: `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off
 - Touch: **XPT2046** resistive
 - PlatformIO board id: `esp32-2432S028R`
 
-### CYD_C5 — ESP32-C5-WROOM-1 variant
+### CYD_C5 — NM-CYD-C5 (RockBase)
 
-- MCU: **ESP32-C5-WROOM-1**, RISC-V, 240 MHz, Wi-Fi 6 + BLE 5.4
-- Display: **ILI9341** 2.8" TFT, 320×240 landscape (same module as CYD)
-- Touch: **Capacitive** (GT911/CST816 — confirm controller in `boards/cyd_c5.json`)
+- MCU: **ESP32-C5-WROOM-1-N16R8**, RISC-V, 240 MHz, Wi-Fi 6 (2.4/5GHz) + BLE 5 + Zigbee/Thread
+- Display: **ST7789** 2.8" TFT, 320×240 landscape
+- Touch: **XPT2046** resistive (shares SPI bus with display and SD card)
+- Memory: **16MB Flash / 8MB PSRAM**
 - PlatformIO board id: `cyd_c5` (custom board JSON in `boards/`)
-- Requires recent `arduino-esp32` core with C5 support (≥3.1.x)
+- Uses `pioarduino` platform (Arduino 3.3.6) — see `[env:cyd_c5]` in `platformio.ini`
+- Onboard: RGB LED (WS2812B, IO27), SD card slot, speaker (IO26)
+- Connectors: USB-C UART (CH340C), USB-C native (IO13/IO14), P5 (LP-UART IO4/IO5), CN1 (I2C IO8/IO9), FPC2 (12-pin)
 
 ### LIN bus UART pins & external temperature sensor
 Pin assignments for display boards are defined conditionally in `src/main.cpp` (per board variant) and summarised in the `[env:cyd]` / `[env:cyd_c5]` sections of `platformio.ini`. Refer to those files for the definitive mapping instead of duplicating numbers here.
