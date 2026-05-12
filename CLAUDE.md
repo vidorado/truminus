@@ -115,19 +115,16 @@ Writable setpoints: `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off
 - Touch: **XPT2046** resistive
 - PlatformIO board id: `esp32-2432S028R`
 
-### LIN bus UART pins
-- **TX → GPIO 27** (CN2 connector, bottom-right)
-- **RX → GPIO 22** (P3 connector, bottom-right)
+### LIN bus UART pins & external temperature sensor
+Pin assignments for the CYD are defined conditionally in `src/main.cpp` (per board variant) and summarised in the `[env:cyd]` section of `platformio.ini`.  Refer to those files for the definitive mapping instead of duplicating numbers here.
 
-These are the only GPIOs available that aren't consumed by display, touch, SD, RGB LED, or USB serial.
-
-⚠️ P3 also exposes GPIO 21 (backlight PWM) — don't use it for sensor VCC.
+> ⚠️ P3 also exposes GPIO 21 (backlight PWM) — don't use it for sensor VCC.
 
 ### Display library
 Use **esp32-smartdisplay** (`rzeldent/esp32-smartdisplay`) — handles all SPI pin init, LVGL integration, touch, and backlight for this board automatically via `board = esp32-2432S028R`.
 
 ### External temperature sensor
-AM2301 (DHT22-compatible) on GPIO 17 (repurposed from RGB LED blue, LED removed). Read every 30 s, broadcast to WebSocket clients as `outdoor_temp`.
+AM2301 (DHT22-compatible). Read every 30 s, broadcast to WebSocket clients as `outdoor_temp`.
 
 ---
 

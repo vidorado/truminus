@@ -846,7 +846,7 @@ static void buildMainUI() {
     lv_label_set_text(s_ambLbl, MY_SYMBOL_THERMOMETER " -- \xc2\xb0""C");
     lv_obj_set_pos(s_ambLbl, 44, 7);
 
-    // Outdoor temperature (AM2301 on P3 IO22)
+    // Outdoor temperature (AM2301)
     s_extLbl = lv_label_create(topBar);
     lv_obj_set_style_text_font(s_extLbl, &symbols_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_extLbl, lv_color_hex(0xffcc88), LV_PART_MAIN);

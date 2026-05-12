@@ -75,11 +75,11 @@ void publishSolarBatt();
 #ifdef CYD
 // ESP32-2432S028R (Cheap Yellow Display)
 // Status shown on LVGL display — no LED used.
-// LIN bus UART: TX=27, RX=22 (available on CN2/P3 connectors, not used by display/touch/SD)
+// LIN bus UART pins — see platformio.ini for CYD mapping
 #define TX_PIN 27
 #define RX_PIN 22
 
-// ── Sensor exterior AM2301 (IO17 = LED1_BLUE, LED quitado) ───────────────────
+// ── Sensor exterior AM2301 (LED1_BLUE desoldado) ─────────────────────────────
 #define DHT_DATA_PIN   17
 static DHTesp   s_dht;
 static float    s_extTemp   = -273.0f;  // -273 = sin lectura válida
@@ -273,7 +273,7 @@ void setup() {
   #ifdef CYD
   smartdisplay_init();
   logMem("after smartdisplay_init");
-  // Sensor AM2301 en IO17 (LED azul desoldado).
+  // Sensor AM2301 (LED azul desoldado).
   s_dht.setup(DHT_DATA_PIN, DHTesp::AM2302);
   s_lvglMutex = xSemaphoreCreateMutex();
   auto disp = lv_display_get_default();
