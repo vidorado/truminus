@@ -31,14 +31,15 @@ Files in `data/` are compressed by `scripts/compress_fs.py` into `src/webfiles.h
 
 ### Board Selection
 
-Three board presets are defined in `platformio.ini`. Activate one by commenting/uncommenting the relevant `build_flags` block:
+Board presets are defined in `platformio.ini`. Activate one by selecting the corresponding `[env:…]` section:
 
 | Board | Flag | Notes |
 |-------|------|-------|
 | GOOUUU ESP32 C3 (default) | `-DGOOUUUC3` | RGB LED, TX=19, RX=18 |
 | Wroom32 | `-DWROOM32` | Single LED, TX=19, RX=18 |
 | C3 Supermini | `-DC3SUPERMINI` | Single LED (inverted) pin 8, TX=6, RX=7 |
-| **CYD** | **`-DCYD`** | ESP32-2432S028R, 320×240 TFT, touch, solar/battery UI |
+| **CYD** | **`-DCYD`** | ESP32-2432S028R, 320×240 TFT, resistive touch, solar/battery UI |
+| **CYD_C5** | **`-DCYD_C5`** | ESP32-C5-WROOM-1, 320×240 TFT, capacitive touch, LIN TX=9, RX=8, DHT=27. Uses upstream `arduino-esp32` (master) for C5 support. |
 
 **Important for C3 Supermini**: requires `-DARDUINO_USB_CDC_ON_BOOT=1` in build flags.
 
@@ -107,7 +108,9 @@ Writable setpoints: `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off
 
 ---
 
-## Target Hardware: ESP32-2432S028R ("Cheap Yellow Display" / CYD)
+## Target Hardware
+
+### CYD — ESP32-2432S028R ("Cheap Yellow Display")
 
 - Model: **ESP32-2432S028R** (R = resistive touch)
 - MCU: ESP32-WROOM-32, dual-core Xtensa LX6, 240 MHz
@@ -115,13 +118,21 @@ Writable setpoints: `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off
 - Touch: **XPT2046** resistive
 - PlatformIO board id: `esp32-2432S028R`
 
+### CYD_C5 — ESP32-C5-WROOM-1 variant
+
+- MCU: **ESP32-C5-WROOM-1**, RISC-V, 240 MHz, Wi-Fi 6 + BLE 5.4
+- Display: **ILI9341** 2.8" TFT, 320×240 landscape (same module as CYD)
+- Touch: **Capacitive** (GT911/CST816 — confirm controller in `boards/cyd_c5.json`)
+- PlatformIO board id: `cyd_c5` (custom board JSON in `boards/`)
+- Requires recent `arduino-esp32` core with C5 support (≥3.1.x)
+
 ### LIN bus UART pins & external temperature sensor
-Pin assignments for the CYD are defined conditionally in `src/main.cpp` (per board variant) and summarised in the `[env:cyd]` section of `platformio.ini`.  Refer to those files for the definitive mapping instead of duplicating numbers here.
+Pin assignments for display boards are defined conditionally in `src/main.cpp` (per board variant) and summarised in the `[env:cyd]` / `[env:cyd_c5]` sections of `platformio.ini`. Refer to those files for the definitive mapping instead of duplicating numbers here.
 
 > ⚠️ P3 also exposes GPIO 21 (backlight PWM) — don't use it for sensor VCC.
 
 ### Display library
-Use **esp32-smartdisplay** (`rzeldent/esp32-smartdisplay`) — handles all SPI pin init, LVGL integration, touch, and backlight for this board automatically via `board = esp32-2432S028R`.
+Use **esp32-smartdisplay** (`rzeldent/esp32-smartdisplay`) — handles all SPI pin init, LVGL integration, touch, and backlight automatically via the board definition.
 
 ### External temperature sensor
 AM2301 (DHT22-compatible). Read every 30 s, broadcast to WebSocket clients as `outdoor_temp`.

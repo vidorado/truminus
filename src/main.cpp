@@ -73,14 +73,22 @@ void publishSolarBatt();
 #define RX_PIN 7
 #endif
 #ifdef CYD
-// ESP32-2432S028R (Cheap Yellow Display)
+// Display boards (CYD / CYD_C5)
 // Status shown on LVGL display — no LED used.
+#ifdef CYD_C5
+// ESP32-C5-WROOM-1 variant
+#define TX_PIN 9
+#define RX_PIN 8
+#define DHT_DATA_PIN 27
+#else
+// ESP32-2432S028R (Cheap Yellow Display)
 // LIN bus UART pins — see platformio.ini for CYD mapping
 #define TX_PIN 27
 #define RX_PIN 22
+#define DHT_DATA_PIN 17
+#endif
 
-// ── Sensor exterior AM2301 (LED1_BLUE desoldado) ─────────────────────────────
-#define DHT_DATA_PIN   17
+// ── Sensor exterior AM2301 ───────────────────────────────────────────────────
 static DHTesp   s_dht;
 static float    s_extTemp   = -273.0f;  // -273 = sin lectura válida
 static uint32_t s_lastDhtMs = 0;
@@ -128,7 +136,7 @@ static inline void lvglUnlock() { xSemaphoreGive(s_lvglMutex); }
 
 #endif
 #ifndef TX_PIN
-#error Please define GOOUUUC3, C3SUPERMINI, WROOM32 or your custom LED/TX_PIN/RX_PIN
+#error Please define GOOUUUC3, C3SUPERMINI, WROOM32, CYD or CYD_C5
 //#include <stop>
 #endif
 
@@ -284,11 +292,12 @@ void setup() {
   lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_270);
   // Load touch calibration from NVS.  If none is stored yet (first boot or
   // after clearing NVS), run the interactive 3-point calibration screen.
-  // raw coordinates pass through when valid=false, which is what
-  // runTouchCalibration() needs to record them.
+  // Capacitive touch (CYD_C5) does not need calibration.
+  #ifndef CYD_C5
   if (!loadTouchCalibration(touch_calibration_data)) {
     runTouchCalibration();
   }
+  #endif
   #endif
 
   //frames to read — CP Plus D protocol uses 0x21 and 0x22
