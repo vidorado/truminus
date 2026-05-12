@@ -1,6 +1,7 @@
 #include "webserver.hpp"
 #ifdef WEBSERVER
 
+#ifndef CYD_C5
 // Static web files are embedded in flash as const uint8_t arrays generated
 // by scripts/compress_fs.py.  Each response uses ~100 B of heap (the
 // AsyncCallbackResponse object) instead of ~1500 B (AsyncFileResponse read
@@ -32,6 +33,7 @@ static void sendMemFile(AsyncWebServerRequest* req,
     r->addHeader("Connection", "close");
     req->send(r);
 }
+#endif
 
 // ═════════════════════════════════════════════════════════════════════════════
 // WebSocket
@@ -154,6 +156,13 @@ void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
 
   initWebSocket();
 
+#ifdef CYD_C5
+  // With 8 MB PSRAM we can serve files from LittleFS without the
+  // memory-squeeze tricks needed on the original CYD (4 MB flash, no PSRAM).
+  server.serveStatic("/", LittleFS, "/")
+        .setDefaultFile("index.html")
+        .setCacheControl("max-age=31536000, immutable");
+#else
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* r) {
     sendMemFile(r, wf_index_html, wf_index_html_size, "text/html", wf_index_html_gzipped);
   });
@@ -186,11 +195,19 @@ void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
   server.on("/truminus-logo.png", HTTP_GET, [](AsyncWebServerRequest* r) {
     sendMemFile(r, wf_truminus_logo_png, wf_truminus_logo_png_size, "image/png", wf_truminus_logo_png_gzipped);
   });
+#endif
 
   server.on("/fscheck", HTTP_GET, [](AsyncWebServerRequest* req) {
+#ifdef CYD_C5
+    req->send(200, "text/plain",
+              "Heap libre: " + String(ESP.getFreeHeap()) + " B\n"
+              "PSRAM libre: " + String(ESP.getFreePsram()) + " B\n"
+              "Web files served from LittleFS.\n");
+#else
     req->send(200, "text/plain",
               "Heap libre: " + String(ESP.getFreeHeap()) + " B\n"
               "Web files served from flash (no LittleFS needed for HTTP).\n");
+#endif
   });
 
   server.onNotFound([](AsyncWebServerRequest* req) {

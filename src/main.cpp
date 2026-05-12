@@ -287,6 +287,13 @@ void setup() {
   // Sensor AM2301 (LED azul desoldado).
   s_dht.setup(DHT_DATA_PIN, DHTesp::AM2302);
   s_lvglMutex = xSemaphoreCreateMutex();
+  #ifdef CYD_C5
+  if (!LittleFS.begin(true)) {
+    Serial.println("[LittleFS] mount failed");
+  } else {
+    Serial.println("[LittleFS] mounted OK");
+  }
+  #endif
   auto disp = lv_display_get_default();
   // LV_DISPLAY_ROTATION_270 gives MV=1,MX=0,MY=0 on the ILI9341 = correct
   // landscape for the ESP32-2432S028R.  (ROTATION_90 would give MV=1,MX=1,MY=1
