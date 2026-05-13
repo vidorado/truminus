@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TruMinus is an ESP32 firmware that emulates a CP-Plus control unit to manage a **Truma Combi D** heating/boiler unit via LIN bus. It exposes control through MQTT, a WebSocket-based web interface, a serial CLI, and (on CYD hardware) a physical touchscreen.
+TruMinus is firmware para **ESP32-C5** (board NM-CYD-C5) que emula una unidad de control CP-Plus para gestionar una **Truma Combi D** vía LIN bus. Expone control por MQTT, interfaz web WebSocket, CLI serie y pantalla táctil física.
 
-**New:** Solar charge (Victron BLE) and battery SOC (Ultimatron BLE) panels are now displayed on both the CYD physical screen and the web interface. BLE is disabled by default on CYD builds to prevent OOM crashes during concurrent HTTP requests.
+Los paneles de carga solar (Victron BLE) y SOC de batería (Ultimatron BLE) se muestran tanto en la pantalla física como en la interfaz web.
 
 ## Build System
 
@@ -33,29 +33,18 @@ Files in `data/` are compressed by `scripts/compress_fs.py` into `src/webfiles.h
 
 Board presets are defined in `platformio.ini`. Activate one by selecting the corresponding `[env:…]` section:
 
-| Board | Flag | Notes |
-|-------|------|-------|
-| GOOUUU ESP32 C3 (default) | `-DGOOUUUC3` | RGB LED, TX=19, RX=18 |
-| Wroom32 | `-DWROOM32` | Single LED, TX=19, RX=18 |
-| C3 Supermini | `-DC3SUPERMINI` | Single LED (inverted) pin 8, TX=6, RX=7 |
-| **CYD** | **`-DCYD`** | ESP32-2432S028R, 320×240 TFT, resistive touch, solar/battery UI |
-| **CYD_C5** | **`-DCYD_C5`** | ESP32-C5-WROOM-1 (NM-CYD-C5), 320×240 ST7789 TFT, XPT2046 resistive touch, LIN TX=5/RX=4 (P5), DHT=27. Uses `pioarduino` platform (Arduino 3.3.6). |
+El único board soportado actualmente es **CYD_C5** (NM-CYD-C5, ESP32-C5-WROOM-1). Activa `-DCYD` y `-DCYD_C5` desde el env correspondiente.
 
-**Important for C3 Supermini**: requires `-DARDUINO_USB_CDC_ON_BOOT=1` in build flags.
+| Env | Flags | Notas |
+|-----|-------|-------|
+| `cyd_c5` | `-DCYD`, `-DCYD_C5`, `-DBLE` | Upload por USB. 320×240 ST7789 TFT, XPT2046 táctil, LIN TX=5/RX=4 (P5), DHT=27. |
+| `cyd_c5_ota` | `-DCYD`, `-DCYD_C5`, `-DBLE` | Mismo board, upload por `espota` a `truminus.local`. |
 
-### Required User File
+Ambos usan la plataforma `pioarduino` (Arduino 3.3.6 sobre ESP-IDF 5.x).
 
-Before building, create `src/wifi_config.h` (not tracked in git):
+### Archivo de usuario requerido
 
-```cpp
-#define WLAN_SSID "your_ssid"
-#define WLAN_PASS "your_password"
-#define MQTT_URI "mqtt://x.x.x.x:1883"
-#define MQTT_USERNAME ""
-#define MQTT_PASSWORD ""
-```
-
-For CYD builds `wifi_config.h` can be empty — WiFi and MQTT are configured interactively on the display at first boot.
+`wifi_config.h` no se necesita en CYD_C5: WiFi y MQTT se configuran en la propia pantalla la primera vez que arranca.
 
 ## Architecture
 
@@ -64,7 +53,7 @@ For CYD builds `wifi_config.h` can be empty — WiFi and MQTT are configured int
 ```
 Truma Combi D ←→ LIN transceiver ←→ ESP32 UART
                                        ↕
-                              MQTT broker / Web clients / Serial / CYD touch
+                              MQTT broker / Web clients / Serial / pantalla táctil
                                        ↕
                               Victron BLE (solar) / Ultimatron BLE (battery)
 ```
@@ -79,10 +68,10 @@ Truma Combi D ←→ LIN transceiver ←→ ESP32 UART
 - **`webserver.hpp/.cpp`** — Initializes static file serving (from embedded flash) and handles incoming WebSocket JSON messages by routing them to `settings.cpp`.
 - **`waterboost.hpp/.cpp`** — Manages a 40-minute high-temperature water heating cycle triggered when boiler mode is "boost".
 - **`commandreader.hpp/.cpp`** — Buffers serial input and extracts complete command lines for the CLI in `main.cpp`.
-- **`cyddisplay.hpp/.cpp`** — CYD display and touch UI (only compiled with `-DCYD`). Full 4-panel layout with solar/battery.
-- **`wifisetup.hpp/.cpp`** — Blocking LVGL screens for WiFi/MQTT setup, touch calibration, **solar config** (Victron MAC + key), and **battery config** (Ultimatron MAC) (CYD only).
-- **`victronble.hpp/.cpp`** — Victron Solar Charger BLE listener (Instant Readout protocol). Disabled when `-DBLE` is not set; provides simulated data stubs instead.
-- **`ultimatronble.hpp/.cpp`** — Ultimatron LiFePO4 BMS BLE listener (GATT protocol). Disabled when `-DBLE` is not set; provides simulated data stubs instead.
+- **`cyddisplay.hpp/.cpp`** — Display and touch UI (compilado con `-DCYD`). Full 4-panel layout with solar/battery.
+- **`wifisetup.hpp/.cpp`** — Blocking LVGL screens for WiFi/MQTT setup, touch calibration, **solar config** (Victron MAC + key), and **battery config** (Ultimatron MAC).
+- **`victronble.hpp/.cpp`** — Victron Solar Charger BLE listener (Instant Readout protocol). Usa NimBLE-Arduino 2.x. Stubs simulados cuando `-DBLE` no está definido.
+- **`ultimatronble.hpp/.cpp`** — Ultimatron LiFePO4 BMS BLE listener (GATT protocol). Usa NimBLE-Arduino 2.x. Stubs simulados cuando `-DBLE` no está definido.
 - **`i18n.hpp/.cpp`** — Internationalization. `TK` enum with all UI strings in Spanish and English. `t(TK::KEY)` returns the current language string.
 
 ### Web Interface (`data/`)
@@ -95,8 +84,7 @@ Static files are compressed into `src/webfiles.h` and served from embedded flash
 - **Settings flow**: External input (MQTT/WS/serial/CYD touch) → `settings.cpp` validates → `main.cpp` loop reads value → writes to Truma frame → Truma responds → frame published back to MQTT/WS/CYD.
 - **LIN bus task**: Runs pinned to Core 0 so blocking serial reads don't interfere with WiFi/MQTT/LVGL on Core 1.
 - **MQTT publish optimization**: Values are only published on change or after a 10-second timeout to avoid flooding the broker.
-- **LED task**: Runs as a separate FreeRTOS task (non-CYD builds); blink count encodes connection state (1=no WiFi, 2=no MQTT, 3=LIN error, 4=reset in progress).
-- **BLE disabled on CYD**: The NimBLE stack consumes ~60 KB heap. Concurrent HTTP requests (e.g., web page reload) exhaust the remaining ~130 KB on ESP32-WROOM-32, causing `abort()` OOM crashes. CYD builds use simulated data stubs (oscillating `sinf()` values) so the solar/battery UI remains testable without real hardware.
+- **Estado en pantalla**: WiFi y LIN bus se muestran como puntos en la barra superior; no hay LED activo en CYD_C5 (el WS2812B onboard se desuelda para liberar IO27 para el DHT22).
 
 ## MQTT Topics
 
@@ -109,14 +97,6 @@ Writable setpoints: `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off
 ---
 
 ## Target Hardware
-
-### CYD — ESP32-2432S028R ("Cheap Yellow Display")
-
-- Model: **ESP32-2432S028R** (R = resistive touch)
-- MCU: ESP32-WROOM-32, dual-core Xtensa LX6, 240 MHz
-- Display: **ILI9341** 2.8" TFT, 320×240 landscape
-- Touch: **XPT2046** resistive
-- PlatformIO board id: `esp32-2432S028R`
 
 ### CYD_C5 — NM-CYD-C5 (RockBase)
 
@@ -132,7 +112,7 @@ Writable setpoints: `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off
 > **Antes de tocar firmware C5, leer `.claude/skills/nm-cyd-c5/SKILL.md` §6 (Quirks de firmware).** Resume las trampas confirmadas en debugging: secuencia WiFi sin `esp_wifi_stop/start`, PSRAM no-DMA (framebuffer y AsyncTCP van a SRAM interna), `LV_MEM_SIZE=48 KB`, web servida desde flash embebida (no LittleFS), LWIP exige `LOCK_TCPIP_CORE()` fuera del tcpip_thread, C5 es single-core (`xTaskCreatePinnedToCore(...,1)` falla), filtrar ADS `:Zone.Identifier` en `compress_fs.py`, CLI serie filtra a ASCII imprimible.
 
 ### LIN bus UART pins & external temperature sensor
-Pin assignments for display boards are defined conditionally in `src/main.cpp` (per board variant) and summarised in the `[env:cyd]` / `[env:cyd_c5]` sections of `platformio.ini`. Refer to those files for the definitive mapping instead of duplicating numbers here.
+Pin assignments live en `src/main.cpp` (sección `#ifdef CYD`) y se resumen en `[env:cyd_c5]` de `platformio.ini`. Consulta esos archivos para el mapeo definitivo.
 
 > ⚠️ P3 also exposes GPIO 21 (backlight PWM) — don't use it for sensor VCC.
 
@@ -144,7 +124,7 @@ AM2301 (DHT22-compatible). Read every 30 s, broadcast to WebSocket clients as `o
 
 ---
 
-## CYD Display Implementation (`src/cyddisplay.cpp/.hpp`)
+## Display Implementation (`src/cyddisplay.cpp/.hpp`)
 
 ### Layout (320×240 landscape)
 Four horizontal zones: top bar, content area with **4 panels**, status bar.
@@ -162,7 +142,7 @@ Four horizontal zones: top bar, content area with **4 panels**, status bar.
 
 **Status bar** (y=205..239): Logo left, `SSID  IP` (montserrat_12, long dot mode), status message right.
 
-### Fonts used on CYD
+### Fonts used on display
 | Font | Size | Usage |
 |------|------|-------|
 | `symbols_14` | 14 px | Icons (tint, fire, thermometer, chevron) |
@@ -240,4 +220,4 @@ All `run*` and `save*` functions save to NVS internally; credentials take effect
 ---
 
 ### TrumaDisplay project (https://github.com/olivluca/TrumaDisplay)
-An alternative MQTT client for the CYD that talks to TruMinus topics (same MQTT lib: `cyijun/ESP32MQTTClient`). UI built with Squareline Studio → LVGL. Uses a `std::queue<String>` + `std::mutex` to hand MQTT callbacks to the main thread safely. Has a heartbeat watchdog (15 s timeout on `truma/status/heartbeat`).
+An alternative MQTT client (originalmente para CYD Xtensa) que habla con TruMinus topics (same MQTT lib: `cyijun/ESP32MQTTClient`). UI built with Squareline Studio → LVGL. Uses a `std::queue<String>` + `std::mutex` to hand MQTT callbacks to the main thread safely. Has a heartbeat watchdog (15 s timeout on `truma/status/heartbeat`).

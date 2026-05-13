@@ -77,23 +77,14 @@ void publishSolarBatt();
 #define RX_PIN 7
 #endif
 #ifdef CYD
-// Display boards (CYD / CYD_C5)
-// Status shown on LVGL display — no LED used.
-#ifdef CYD_C5
-// ESP32-C5-WROOM-1 (NM-CYD-C5) — 16MB Flash / 8MB PSRAM
+// CYD_C5 (NM-CYD-C5, ESP32-C5-WROOM-1) — 16MB Flash / 8MB PSRAM
 // LIN bus UART on P5 (LP-UART): leaves CN1 I2C (IO8/IO9) free for expansion.
+// Status shown on LVGL display — no LED used.
 #define TX_PIN 5
 #define RX_PIN 4
 // IO27 drives the onboard WS2812B RGB LED; LED must be removed/soldered off
 // to use this pin for the AM2301 (DHT) sensor.
 #define DHT_DATA_PIN 27
-#else
-// ESP32-2432S028R (Cheap Yellow Display)
-// LIN bus UART pins — see platformio.ini for CYD mapping
-#define TX_PIN 27
-#define RX_PIN 22
-#define DHT_DATA_PIN 17
-#endif
 
 // ── Sensor exterior AM2301 ───────────────────────────────────────────────────
 static DHTesp   s_dht;
@@ -107,14 +98,14 @@ static void readExtSensor() {
         result.temperature > -40.0f && result.temperature < 80.0f) {
         s_extTemp = result.temperature;
         s_dhtErrCount = 0;
-        Serial.printf("[am2301] %.1f °C  %.0f %%RH\n",
+        LOG_AM2301_PF("[am2301] %.1f °C  %.0f %%RH\n",
                       result.temperature, result.humidity);
     } else {
         // Si no hay sensor conectado el error se repite cada 30 s indefinidamente.
         // Loguear las 3 primeras y luego una de cada 60 para no inundar la consola.
         s_dhtErrCount++;
         if (s_dhtErrCount <= 3 || (s_dhtErrCount % 60) == 0) {
-            Serial.printf("[am2301] error: %s (count=%u)\n",
+            LOG_AM2301_PF("[am2301] error: %s (count=%u)\n",
                           s_dht.getStatusString(), s_dhtErrCount);
         }
     }
