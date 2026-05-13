@@ -217,8 +217,7 @@ void TFrame21::publishFrameData()
     //   byte 1   = bits 3:0 → Kelvin×10 bits 11:8 (MSB nibble)
     //              bits 7:4 → 4-bit rolling message counter (0→F→0, ~8-9 s/step in normal op)
     //              NOT flags — the counter causes bit4 to alternate every ~9 s (false waterdemand noise)
-    //   byte 2 = unknown (constant 0xB8 in all captures)
-    //   byte 3 = water temperature (encoding TBD — byte/8 or direct °C)
+    //   byte 2 = water temperature (12-bit Kelvin×10, bits 11:4 of the 12-bit value)
     //   byte 7 = unknown
     uint8_t flags = fdata[1];
     fpublishers[0]->setValue((flags >> 0) & 1);
@@ -231,24 +230,25 @@ void TFrame21::publishFrameData()
 
     // 12-bit Kelvin×10: byte0 = bits 7:0 (LSB), byte1 bits 3:0 = bits 11:8 (MSB)
     uint16_t rawTemp = (uint16_t)fdata[0] | ((uint16_t)(fdata[1] & 0x0F) << 8);
-    FRoomTemp  = rawTemp / 10.0 - 273.0;
-    FWaterTemp = -273.0;  // water temp is in frame 0x22
+    FRoomTemp  = RawKelvinToTemp(rawTemp);
     if (FRoomTemp  < 0.0 || FRoomTemp  > 50.0) FRoomTemp  = -273.0;
 
-    // TPubTemperature expects Kelvin×10 raw encoding
+    // Water temperature: 12-bit Kelvin×10 at offset 12 bits
+    // nibble high of byte1 (bits 7:4) + byte2
+    uint16_t rawWater = (uint16_t)(fdata[1] >> 4) | ((uint16_t)fdata[2] << 4);
+    FWaterTemp = RawKelvinToTemp(rawWater);
+    if (FWaterTemp < 0.0 || FWaterTemp > 100.0) FWaterTemp = -273.0;
+
     fpublishers[6]->setValue((uint16_t)((FRoomTemp  + 273.0) * 10.0));
-    fpublishers[7]->setValue(0);  // water temp published by TFrame22
+    if (FWaterTemp > -273.0)
+        fpublishers[7]->setValue((uint16_t)((FWaterTemp + 273.0) * 10.0));
+    else
+        fpublishers[7]->setValue(0);
     fpublishers[8]->setValue(0);  // voltage not available in frame 0x21
 }
 
 TFrame22::TFrame22() : TFrameBase() {
     fframeid = 0x22;
-    fpublishers.push_back(new TPubTemperature("/water_temp"));
-    fpublishers.back()->setADComponent(CKSensor)
-      ->setADName("Water temperature")
-      ->setADIcon("mdi:water-thermometer")
-      ->setADDevice_class("temperature")
-      ->setADUnit("°C");
     fpublishers.push_back(new TPubBool("/water_heating"));
     fpublishers.back()->setADComponent(CKBinary_sensor)
       ->setADName("Water heating active")
@@ -257,12 +257,7 @@ TFrame22::TFrame22() : TFrameBase() {
 
 void TFrame22::publishFrameData() {
     FWaterHeating = (fdata[1] & 0xC0) == 0x40;  // bit6=1, bit7=0 → burner active (0x00=off, 0x40/0x50=heating, 0xD0=idle)
-    // 0x10 = sentinel "boiler off / not measuring" — snaps back immediately on shutdown regardless of water temp
-    FWaterTemp = (fdata[2] == 0x10) ? -273.0 : (double)fdata[2];
-    if (FWaterTemp < 0.0 || FWaterTemp > 100.0) FWaterTemp = -273.0;
-    if (FWaterTemp > 0.0)
-        fpublishers[0]->setValue((uint16_t)((FWaterTemp + 273.0) * 10.0));
-    fpublishers[1]->setValue(FWaterHeating ? 1u : 0u);
+    fpublishers[0]->setValue(FWaterHeating ? 1u : 0u);
 }
 
 TFrameSetTemp::TFrameSetTemp(uint8_t frameid)

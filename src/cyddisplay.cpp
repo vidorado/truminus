@@ -160,6 +160,12 @@ static int       s_battFillX  = 0;    // BB_X + 1, set in buildMainUI()
 static lv_obj_t* s_battNub    = nullptr;   // left terminal
 static lv_obj_t* s_battNub2   = nullptr;   // right terminal
 
+// Right panel — Water temperature bar widget (battery-style, no nubs)
+static lv_obj_t* s_waterTempLbl  = nullptr;
+static lv_obj_t* s_waterTempBody = nullptr;  // border rect
+static lv_obj_t* s_waterTempFill = nullptr;  // bottom-anchored fill
+static int       s_waterTempFillX = 0;       // cached x pos
+
 // Status bar
 static lv_obj_t* s_statusLbl    = nullptr;
 static lv_obj_t* s_ipLbl        = nullptr;
@@ -780,6 +786,8 @@ void cydReloadScreen() {
     if (s_navTransition) { lv_obj_delete(s_navTransition); s_navTransition = nullptr; }
 }
 
+bool cydIsScreenOff() { return s_screenOff; }
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Error modal
 // ═══════════════════════════════════════════════════════════════════════════
@@ -974,33 +982,75 @@ static void buildMainUI() {
 
     // ════════════════════════════════════════════════════════════════════
     // RIGHT PANEL — HOT WATER
-    // Content width: W_R - 4 = 161 px  (2 px margin)
     // ════════════════════════════════════════════════════════════════════
-    const int rx = X_R + 2;    // x=156
-    const int rw = W_R - 4;    // 162 px
+    const int rx = X_R + 2;    // x=144
+    const int rw = W_R - 4;    // 174 px
 
     makeSecLabel(s_scr, rx, Y_CONT + 2, t(TK::HOT_WATER));
 
-    // 4 boiler buttons in a 2×2 grid (height reduced from 38 to 30 to make room for 4 solar lines)
-    // button width: (162 - 9) / 2 = 76 px,  gap = 9 px, row gap = 6 px
-    const int bw = (rw - 9) / 2;
-    int bx[4] = {rx,      rx + bw + 9, rx,      rx + bw + 9};
+    // 4 boiler buttons in a 2×2 grid (left side)
+    const int WTC_W  = 46;               // water temp column width
+    const int boiler_rw = rw - WTC_W - 5; // remaining width for buttons
+    const int bw = (boiler_rw - 9) / 2;
+    int bx[4] = {rx, rx + bw + 9, rx, rx + bw + 9};
     int by[4] = {Y_CONT + 20, Y_CONT + 20, Y_CONT + 54, Y_CONT + 54};
     for (int i = 0; i < BOILER_N; i++) {
         s_boilerBtn[i] = makeBtn(s_scr, bx[i], by[i], bw, 30,
                                   boilerLabel(i), boilerCb, (void*)(intptr_t)i);
     }
 
+    const int WTC_X = rx + boiler_rw + 3;
+
+    // ── Water temperature bar (right side, battery-style, no nubs) ───────
+    const int WB_W  = 30;                // body width
+    const int WB_H  = 54;                // body height (was 40, uses 10px freed above)
+    const int WB_X  = WTC_X + (WTC_W - WB_W) / 2;  // centered in column
+    const int WB_Y  = Y_CONT + 26;       // body top
+    const int WF_IH = WB_H - 2;          // fill inner height (52 px)
+
+    // Temperature value label (above bar, moved up into 10px freed space)
+    s_waterTempLbl = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_waterTempLbl, &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_waterTempLbl, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_waterTempLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_size(s_waterTempLbl, WTC_W, 14);
+    lv_obj_set_pos(s_waterTempLbl, WTC_X, Y_CONT + 8);
+    lv_label_set_text(s_waterTempLbl, "--");
+
+    // Bar body: border-only vertical rect
+    s_waterTempBody = lv_obj_create(s_scr);
+    lv_obj_remove_style_all(s_waterTempBody);
+    lv_obj_set_size(s_waterTempBody, WB_W, WB_H);
+    lv_obj_set_pos(s_waterTempBody, WB_X, WB_Y);
+    lv_obj_set_style_bg_opa(s_waterTempBody, LV_OPA_0, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_waterTempBody, lv_color_hex(0x888888), LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_waterTempBody, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_waterTempBody, 2, LV_PART_MAIN);
+    lv_obj_clear_flag(s_waterTempBody, (lv_obj_flag_t)LV_OBJ_FLAG_SCROLLABLE);
+
+    s_waterTempFillX = WB_X + 1;
+
+    // Bar fill: bottom-anchored, height updated by updateWaterTempWidget()
+    s_waterTempFill = lv_obj_create(s_scr);
+    lv_obj_remove_style_all(s_waterTempFill);
+    lv_obj_set_size(s_waterTempFill, WB_W - 2, 0);
+    lv_obj_set_pos(s_waterTempFill, s_waterTempFillX, WB_Y + 1 + WF_IH);
+    lv_obj_set_style_bg_opa(s_waterTempFill, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_waterTempFill, lv_color_hex(0x4488ff), LV_PART_MAIN);
+    lv_obj_set_style_radius(s_waterTempFill, 1, LV_PART_MAIN);
+    lv_obj_clear_flag(s_waterTempFill, (lv_obj_flag_t)LV_OBJ_FLAG_SCROLLABLE);
+
+    // Horizontal separator between HOT WATER and SOLAR sections
+    makeSep(s_scr, rx, Y_CONT + 86, rw, 1);
+
     // ── Solar data (left column) + Battery SOC (right column) ────────────
-    // Layout: solar 126 px | 1 px sep | battery 46 px  (total = rw = 174 px + 1)
-    // Solar column: y=88..165, battery column: y=88..165
-    const int SC_W  = 126;               // solar column width (was 106, +20)
-    const int BC_X  = rx + SC_W + 2;    // battery column x (~264)
+    const int SC_W  = 126;               // solar column width
+    const int BC_X  = rx + SC_W + 2;    // battery column x (~272)
     const int BC_W  = rw - SC_W - 2;    // battery column width (~46 px)
     // Battery pill icon (vertical): body 34×39, two nubs 6×6 above body
     const int BB_W  = 34;                        // body width
     const int BB_X  = BC_X + (BC_W - BB_W) / 2; // body left edge (centered)
-    const int BB_H  = 47;                        // body height (+8 px, top fixed)
+    const int BB_H  = 47;                        // body height
     const int BF_IH = BB_H - 2;                 // fill inner height (45 px)
     const int BB_Y  = Y_CONT + 118;             // body top (unchanged)
 
@@ -1042,17 +1092,14 @@ static void buildMainUI() {
     lv_obj_set_pos(s_solarProdLbl, rx, Y_CONT + 159);
     lv_label_set_text(s_solarProdLbl, "--");
 
-    // Vertical separator between solar and battery columns (covers full height)
-    makeSep(s_scr, rx + SC_W + 1, Y_CONT + 88, 1, 85);
-
     // ── Battery column ────────────────────────────────────────────────────
-    // SOC % label — centered in battery column
+    // SOC % label — centered in battery column (moved 3px down)
     s_battSocLbl = lv_label_create(s_scr);
     lv_obj_set_style_text_font(s_battSocLbl, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_battSocLbl, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_align(s_battSocLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_size(s_battSocLbl, BC_W, 14);
-    lv_obj_set_pos(s_battSocLbl, BC_X, Y_CONT + 90);
+    lv_obj_set_pos(s_battSocLbl, BC_X, Y_CONT + 93);
     lv_label_set_text(s_battSocLbl, "--");
 
     // Battery terminals (two nubs above body, left and right)
@@ -1243,6 +1290,59 @@ void cydUpdateBatt(const CydBattData& d) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// updateWaterTempWidget — refresh water temperature bar (call under LVGL mutex)
+// ═══════════════════════════════════════════════════════════════════════════
+static void updateWaterTempWidget(float temp, bool heating) {
+    if (!s_waterTempLbl) return;
+    static const int WB_Y  = Y_CONT + 26;
+    static const int WF_IH = 52;   // 54 - 2
+
+    // Scale by the active setpoint (40°C eco / 60°C high+boost).
+    // When boiler is off we still show temp scaled to the last setpoint,
+    // or 60°C as fallback so the bar does not jump wildly.
+    double sp = (s_waterSp && s_waterSp->getFloatValue() > 1.0)
+                ? s_waterSp->getFloatValue() : 60.0;
+
+    bool boilerOn = s_waterSp && (s_waterSp->getStringValue() != "off");
+    bool atTemp   = boilerOn && (temp > 0.0f) && ((double)temp >= sp - 1.0);
+    bool blinkOff = heating && !atTemp && ((millis() % 1000) < 500);
+
+    if (temp < 0.0f || temp > 100.0f) {
+        lv_label_set_text(s_waterTempLbl, "--");
+        lv_obj_set_height(s_waterTempFill, 0);
+        lv_obj_set_style_border_color(s_waterTempBody, lv_color_hex(0x888888), LV_PART_MAIN);
+        return;
+    }
+
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%.0f°", temp);
+    lv_label_set_text(s_waterTempLbl, buf);
+
+    // Bar fill — proportional to 0..setpoint, bottom-anchored
+    int fillH = (int)(temp * WF_IH / sp);
+    if (fillH < 0) fillH = 0;
+    if (fillH > WF_IH) fillH = WF_IH;
+    lv_obj_set_size(s_waterTempFill, 28, fillH);  // 28 = 30 - 2
+    lv_obj_set_pos(s_waterTempFill, s_waterTempFillX,
+                   WB_Y + 1 + (WF_IH - fillH));
+
+    uint32_t color = (temp < 20) ? 0x4488ffu
+                   : (temp < 40) ? 0x44bb44u
+                   : (temp < 55) ? 0xffbb00u
+                                 : 0xff3333u;
+
+    if (blinkOff) {
+        // Off phase: border blends into background, fill disappears
+        lv_obj_set_style_border_color(s_waterTempBody, lv_color_hex(C_TOPBAR), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(s_waterTempFill, LV_OPA_0, LV_PART_MAIN);
+    } else {
+        lv_obj_set_style_border_color(s_waterTempBody, lv_color_hex(0x888888), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(s_waterTempFill, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(s_waterTempFill, lv_color_hex(color), LV_PART_MAIN);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // cydRebuildUI — tear down and recreate all main-screen widgets
 // ═══════════════════════════════════════════════════════════════════════════
 void cydRebuildUI() {
@@ -1264,7 +1364,7 @@ void cydRebuildUI() {
     s_energyDd = s_statusLbl = s_ipLbl = nullptr;
     s_solarStateLbl = s_solarVoltLbl = s_solarLoadLbl = s_solarProdLbl = nullptr;
     s_battSocLbl = s_battBody = s_battFill = s_battNub = s_battNub2 = nullptr;
-
+    s_waterTempLbl = s_waterTempBody = s_waterTempFill = nullptr;
     lv_obj_clean(s_scr);   // delete all children
     buildMainUI();
 }
@@ -1292,6 +1392,7 @@ void cydFreeMainUI() {
     s_energyDd = s_statusLbl = s_ipLbl = nullptr;
     s_solarStateLbl = s_solarVoltLbl = s_solarLoadLbl = s_solarProdLbl = nullptr;
     s_battSocLbl = s_battBody = s_battFill = s_battNub = s_battNub2 = nullptr;
+    s_waterTempLbl = s_waterTempBody = s_waterTempFill = nullptr;
     lv_obj_clean(s_scr);
 }
 
@@ -1440,6 +1541,9 @@ void cydDisplayUpdate(bool wifiok, bool trumaok,
             strcpy(buf, MY_SYMBOL_THERM_EXT " " MY_SYMBOL_CHEVRON_R " --\xc2\xb0""C");
         lv_label_set_text(s_extLbl, buf);
     }
+
+    // ── Water temperature widget ─────────────────────────────────────────
+    updateWaterTempWidget(waterTemp, waterHeating);
 
     // ── WiFi icon ────────────────────────────────────────────────────────
     static bool s_everConnected = false;

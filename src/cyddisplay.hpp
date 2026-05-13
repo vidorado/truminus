@@ -56,6 +56,11 @@ void          cydReloadScreen();
 // Must be called under the LVGL mutex.
 void          cydOpenSettingsMenu();
 
+// ── Power-save query ────────────────────────────────────────────────────────
+// Returns true when the screen is fully off (backlight at 0 % and wake overlay
+// is active).  Used by main.cpp to throttle background tasks.
+bool          cydIsScreenOff();
+
 // ── Solar data display (call under LVGL mutex from loop()) ─────────────────
 struct CydSolarData {
     bool     configured;

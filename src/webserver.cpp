@@ -89,10 +89,12 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
              AwsEventType type, void *arg, uint8_t *data, size_t len) {
   switch (type) {
     case WS_EVT_CONNECT:
-      if (server->count() > WS_MAX_CLIENTS) {
+      wsClientCount.fetch_add(1);
+      if (wsClientCount.load() > WS_MAX_CLIENTS) {
         LOG_WEB_PF("WebSocket client #%u rejected (max %u)\n",
                       client->id(), WS_MAX_CLIENTS);
         client->close(1013, "busy");
+        wsClientCount.fetch_sub(1);
         break;
       }
       LOG_WEB_PF("WebSocket client #%u connected from %s  heap=%u\n",
@@ -101,6 +103,7 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
       if (wsCb!=NULL) { wsCb("/ping","1"); }
       break;
     case WS_EVT_DISCONNECT:
+      if (wsClientCount.load() > 0) wsClientCount.fetch_sub(1);
       LOG_WEB_PF("WebSocket client #%u disconnected  heap=%u\n",
                     client->id(), ESP.getFreeHeap());
       break;
@@ -150,18 +153,18 @@ void wsQueueDrain()
 // StartServer
 // ═════════════════════════════════════════════════════════════════════════════
 void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
-  LOG_WEB_PL("[web] StartServer: entering");
+  Serial.println("[web] StartServer: entering");
   wsCb   = cb;
   wsConn = conn;
 
   // Create the cross-core WS message queue once.
   if (!wsQueue) {
     wsQueue = xQueueCreate(WS_QUEUE_LEN, WS_QUEUE_SIZE);
-    LOG_WEB_PF("[web] wsQueue created (%d slots x %d bytes)\n", WS_QUEUE_LEN, WS_QUEUE_SIZE);
+    Serial.printf("[web] wsQueue created (%d slots x %d bytes)\n", WS_QUEUE_LEN, WS_QUEUE_SIZE);
   }
 
   initWebSocket();
-  LOG_WEB_PL("[web] initWebSocket done");
+  Serial.println("[web] initWebSocket done");
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* r) {
     sendMemFile(r, wf_index_html, wf_index_html_size, "text/html", wf_index_html_gzipped);
@@ -218,8 +221,9 @@ void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
   });
 
   server.begin();
-  LOG_WEB_PF("[web] server.begin() done — listening on http://%s/\n",
-                WiFi.localIP().toString().c_str());
+  Serial.print("[web] server.begin() done — listening on http://");
+  Serial.print(WiFi.localIP().toString().c_str());
+  Serial.println("/");
 }
 
 #endif

@@ -116,6 +116,7 @@ static void readExtSensor() {
 // lv_timer_handler() must be called every few ms for smooth touch response.
 // The LIN bus loop takes ~150 ms per iteration so we run LVGL on its own task.
 static SemaphoreHandle_t s_lvglMutex = nullptr;
+static volatile uint32_t s_lvglDelayMs = 5;   // 5 ms normal, 50 ms when screen off
 
 static void lvglTask(void*) {
     static uint32_t last = millis();
@@ -133,7 +134,7 @@ static void lvglTask(void*) {
             LOG_MEM_PF("[wm] lvglTask=%u\n",
                 (unsigned)uxTaskGetStackHighWaterMark(NULL));
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(s_lvglDelayMs));
     }
 }
 
@@ -311,11 +312,11 @@ void setup() {
   }
   #endif
   auto disp = lv_display_get_default();
-  // LV_DISPLAY_ROTATION_270 gives MV=1,MX=0,MY=0 on the ILI9341 = correct
-  // landscape for the ESP32-2432S028R.  (ROTATION_90 would give MV=1,MX=1,MY=1
-  // which rotates the image 270° instead of 90°, producing the "vertical line"
-  // artifact when our horizontal separator is rendered in portrait coordinates.)
-  lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_270);
+  // LV_DISPLAY_ROTATION_270 = landscape normal (connector a la derecha).
+  // LV_DISPLAY_ROTATION_90  = landscape girado 180° (connector a la izquierda).
+  // La librería esp32-smartdisplay ajusta internamente swap_xy + mirror_x/y
+  // del ST7789 según la rotación elegida; no hace falta tocar flags hardware.
+  lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
   // Load touch calibration from NVS.  If none is stored yet (first boot or
   // after clearing NVS), run the interactive 3-point calibration screen.
   #ifdef FORCE_TOUCH_RECAL
@@ -417,11 +418,10 @@ void setup() {
   PublishReset.setADComponent(CKBinary_sensor)->setADName("Resetting")->setADIcon("mdi:sync")->setADDevice_class("connectivity");
   PublishLinOk.setADComponent(CKBinary_sensor)->setADName("LIN bus status")->setADIcon("mdi:serial-port")->setADDevice_class("connectivity");
 
-  // BLE init (or simulated stubs when BLE is disabled)
-  logMem("before BLE init");
-  victronBleInit();
-  ultimatronBleInit();
-  logMem("after BLE init");
+  // BLE se inicializa de forma lazy DESPUÉS de que WiFi esté estable.
+  // En el ESP32-C5, inicializar NimBLE antes de WiFi corrompe el controller
+  // compartido y el AP deja de ver la STA aunque obtenga IP.
+  logMem("before BLE init (deferred)");
 
   //starts the wifi (loop will check if it's connected)
   #ifdef CYD_C5
@@ -485,8 +485,8 @@ void setup() {
   #else
   WiFi.mode(WIFI_STA);
   #endif
-  LOG_WIFI_P("WiFi MAC: ");
-  LOG_WIFI_PL(WiFi.macAddress());
+  Serial.print("WiFi MAC: ");
+  Serial.println(WiFi.macAddress());
   #ifdef CYD
   {
     String wifiSSID, wifiPass;
@@ -499,6 +499,16 @@ void setup() {
   WiFi.begin(WLAN_SSID, WLAN_PASS);
   #endif
   lastwifi=millis();
+
+  // ── BLE init (after WiFi, before heavy tasks) ────────────────────────────
+  // On ESP32-C5, NimBLE must be initialized after WiFi is configured but
+  // BEFORE linBusTask/LVGL tasks start, otherwise the RF scheduler enters
+  // an inconsistent state.  Do NOT call esp_coex_preference_set() — it is
+  // not supported on the C5 SDK and triggers IllegalInstruction panic.
+  logMem("before BLE init");
+  victronBleInit();
+  ultimatronBleInit();
+  logMem("after BLE init");
 
   //starts the mqtt connection to the broker
   #ifdef CYD
@@ -693,7 +703,7 @@ void CheckWifi() {
     static uint32_t lastDbg = 0;
     if (!wifistarted && millis() - lastDbg > 2000) {
       lastDbg = millis();
-      LOG_WIFI_PF("[wifi-dbg] status=%d ip=%s rssi=%d\n",
+      Serial.printf("[wifi-dbg] status=%d ip=%s rssi=%d\n",
                     WiFi.status(),
                     WiFi.localIP().toString().c_str(),
                     WiFi.RSSI());
@@ -701,29 +711,42 @@ void CheckWifi() {
   }
   if (WiFi.status()==WL_CONNECTED) {
     if (!wifiok) {
+      Serial.println("[wifi] WiFi.status() became CONNECTED");
       ArduinoOTA.setHostname("truminus");
       ArduinoOTA.begin();
     }
     wifiok=true;
     lastwifi=millis();
     if (!wifistarted) {
-      LOG_WIFI_P("IP address ");
-      LOG_WIFI_PL(WiFi.localIP());
+      Serial.print("IP address ");
+      Serial.println(WiFi.localIP());
       wifistarted=true;
       #ifdef WEBSERVER
+      Serial.println("[wifi] calling StartServer...");
       StartServer(wsCallback, wsConnected);
+      Serial.println("[wifi] StartServer returned");
       #endif
     }
+    // Keep power-save OFF — the C5 driver tends to re-enable it silently
+    #ifdef CYD_C5
+    static uint32_t s_lastPsForce = 0;
+    if (millis() - s_lastPsForce > 30000) {
+      s_lastPsForce = millis();
+      esp_wifi_set_ps(WIFI_PS_NONE);
+    }
+    #endif
   } else {
     if (wifiok) {
+      Serial.println("[wifi] WiFi.status() became DISCONNECTED");
       ArduinoOTA.end();
       inota=false;
     }
     wifiok=false;
     unsigned long elapsed=millis()-lastwifi;
     if (elapsed>10000) {
-    WiFi.reconnect();
-    lastwifi=millis();
+      Serial.println("[wifi] reconnecting...");
+      WiFi.reconnect();
+      lastwifi=millis();
     }
   }
 }
@@ -1140,7 +1163,7 @@ void loop() {
   // lv_timer_handler() runs in lvglTask (Core 1) every 5 ms.
   // We only need to update display state; grab the mutex briefly.
   if (xSemaphoreTake(s_lvglMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-    double wTempDisp = Frame22 ? Frame22->getWaterTemp()    : Frame21->getWaterTemp();
+    double wTempDisp = Frame21->getWaterTemp();
     bool   wHeating  = (Frame22 ? Frame22->getWaterHeating(): Frame21->getWaterDemand())
                        && (WaterSetpoint->getFloatValue() > 0.0);
     cydDisplayUpdate(wifiok, trumaok, truma_reset, inota,
@@ -1186,6 +1209,24 @@ void loop() {
     }
   }
   #endif
+
+  // ── Adaptive power-save: throttle LVGL tick rate when screen is off ──────
+  {
+    static bool     s_wasActive   = true;
+    static uint32_t s_psChangeMs  = 0;
+    bool active = !cydIsScreenOff();
+    #ifdef WEBSERVER
+    if (!active) active = (wsClientCount.load() > 0);
+    #endif
+    if (active != s_wasActive) {
+      s_wasActive  = active;
+      s_psChangeMs = millis();
+    }
+    // Debounce: wait 3 s in the new state before applying
+    if (millis() - s_psChangeMs >= 3000) {
+      s_lvglDelayMs = active ? 5 : 50;          // 5 ms normal / 50 ms idle
+    }
+  }
   #endif
   CheckWifi();
   if (wifiok) {
@@ -1249,9 +1290,9 @@ void loop() {
           frames_to_read[i]->getData(buf);
           for (int j = 0; j < 8; j++) Serial.printf(" %02X", buf[j]);
           if (fid == 0x21)
-            Serial.printf("  room:%.1f°", Frame21->getRoomTemp());
+            Serial.printf("  room:%.1f° water:%.1f°", Frame21->getRoomTemp(), Frame21->getWaterTemp());
         else if (fid == 0x22 && Frame22)
-            Serial.printf("  agua:%.1f° heat:%d", Frame22->getWaterTemp(), Frame22->getWaterHeating());
+            Serial.printf("  heat:%d", Frame22->getWaterHeating());
         }
         Serial.println();
       }

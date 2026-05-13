@@ -2,6 +2,7 @@
 #ifdef WEBSERVER
 #include "LittleFS.h"
 #include <ArduinoJson.h>
+#include <atomic>
 #include "globals.hpp"
 
 typedef std::function<void(const String &topicStr, const String &message)> WebsocketCallback;
@@ -14,6 +15,10 @@ inline WebsocketConnected wsConn=NULL;
 // Thread-safe queue for WS messages sent from Core 0 (linBusTask)
 // Core 1 loop() drains it and calls ws.textAll().
 inline QueueHandle_t wsQueue = nullptr;
+
+// Thread-safe WebSocket client counter (avoids calling ws.count() from loop,
+// which races with the tcpip_thread that modifies the internal client list).
+inline std::atomic<uint8_t> wsClientCount{0};
 
 void StartServer(WebsocketCallback cb, WebsocketConnected conn);
 
