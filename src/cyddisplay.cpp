@@ -642,7 +642,15 @@ static void showLangSelectBlocking() {
     }
 
     setLanguage((Language)s_langSelected);
-    lv_obj_delete(scr);
+
+    // Switch away from `scr` BEFORE deleting it. Deleting the active screen
+    // leaves LVGL with a dangling act_scr pointer and the next lv_screen_load()
+    // call from the caller silently fails — the UI then appears frozen.
+    // Same pattern as showSplash() above.
+    lv_obj_t* blank = lv_obj_create(NULL);
+    lv_screen_load_anim(blank, LV_SCR_LOAD_ANIM_NONE, 0, 0, /*auto_del=*/true);
+    lv_tick_inc(5);
+    lv_task_handler();   // commit the switch; old scr is deleted here
 }
 
 void cydShowLangSelect() { showLangSelectBlocking(); }
@@ -1285,6 +1293,14 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
     loadTimeoutIdx();
     loadLanguage();
 
+    // Force full backlight from the very start. smartdisplay_init() leaves
+    // the LEDC channel at its default duty (~50%), and our fade task only
+    // calls set_backlight() when s_blCurrent != s_blTarget — both are 1.0f
+    // by initialisation, so without this explicit call the splash, language
+    // selector and main UI all render at half brightness until the first
+    // screen-timeout wake cycle re-syncs them.
+    smartdisplay_lcd_set_backlight(1.0f);
+
     showSplash(2000);
 
     // Language selection on first boot (no language stored in NVS yet)
@@ -1309,7 +1325,12 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
         (unsigned)mon.frag_pct);
 
     // Backlight fade task (Core 1, low priority)
+    // ESP32-C5 is single-core: pinning to core 1 trips an assert in FreeRTOS.
+    #ifdef CYD_C5
+    xTaskCreate(backlightTask, "bckl", 1536, nullptr, 1, nullptr);
+    #else
     xTaskCreatePinnedToCore(backlightTask, "bckl", 1536, nullptr, 1, nullptr, 1);
+    #endif
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

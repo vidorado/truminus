@@ -129,6 +129,8 @@ Writable setpoints: `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off
 - Onboard: RGB LED (WS2812B, IO27), SD card slot, speaker (IO26)
 - Connectors: USB-C UART (CH340C), USB-C native (IO13/IO14), P5 (LP-UART IO4/IO5), CN1 (I2C IO8/IO9), FPC2 (12-pin)
 
+> **Antes de tocar firmware C5, leer `.claude/skills/nm-cyd-c5/SKILL.md` §6 (Quirks de firmware).** Resume las trampas confirmadas en debugging: secuencia WiFi sin `esp_wifi_stop/start`, PSRAM no-DMA (framebuffer y AsyncTCP van a SRAM interna), `LV_MEM_SIZE=48 KB`, web servida desde flash embebida (no LittleFS), LWIP exige `LOCK_TCPIP_CORE()` fuera del tcpip_thread, C5 es single-core (`xTaskCreatePinnedToCore(...,1)` falla), filtrar ADS `:Zone.Identifier` en `compress_fs.py`, CLI serie filtra a ASCII imprimible.
+
 ### LIN bus UART pins & external temperature sensor
 Pin assignments for display boards are defined conditionally in `src/main.cpp` (per board variant) and summarised in the `[env:cyd]` / `[env:cyd_c5]` sections of `platformio.ini`. Refer to those files for the definitive mapping instead of duplicating numbers here.
 

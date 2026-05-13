@@ -30,7 +30,17 @@
 #define LV_USE_STDLIB_SPRINTF   LV_STDLIB_BUILTIN
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
-    #define LV_MEM_SIZE (40 * 1024U)    /* 40 KB: reducido de 48 KB para liberar BSS con BLE activo */
+    #ifdef CYD_C5
+        /* 48 KB. Bajado de 96 KB tras detectar OOM en AsyncTCP/AsyncWeb: solo
+         * quedaban ~21 KB de SRAM interna libre tras arrancar el servidor.
+         * AsyncTCP no puede usar PSRAM (sus buffers viven en heap interno por
+         * la ISR WiFi), asi que cada KB de LV_MEM_SIZE compite directamente
+         * con los buffers TCP. 48 KB siguen sobrando para la UI actual
+         * (10 paneles, 5 fuentes, sin imagenes grandes). */
+        #define LV_MEM_SIZE (48 * 1024U)
+    #else
+        #define LV_MEM_SIZE (40 * 1024U)    /* 40 KB: reducido de 48 KB para liberar BSS con BLE activo */
+    #endif
     #define LV_MEM_POOL_EXPAND_SIZE 0
     #define LV_MEM_ADR 0
     #if LV_MEM_ADR == 0

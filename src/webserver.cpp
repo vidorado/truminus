@@ -1,13 +1,17 @@
 #include "webserver.hpp"
 #ifdef WEBSERVER
+#include <WiFi.h>
 
-#ifndef CYD_C5
 // Static web files are embedded in flash as const uint8_t arrays generated
 // by scripts/compress_fs.py.  Each response uses ~100 B of heap (the
 // AsyncCallbackResponse object) instead of ~1500 B (AsyncFileResponse read
 // buffer) or the full file size (old malloc approach).  This eliminates the
 // OOM crashes that occurred when 6 concurrent HTTP requests exhausted the
-// ESP32 heap shared with LVGL, WiFi, MQTT and WebSocket.
+// ESP32 heap shared with LVGL, WiFi, MQTT y WebSocket.
+//
+// En C5 (8 MB PSRAM) tampoco usamos LittleFS para la web: AsyncTCP / AsyncWeb
+// reservan sus buffers en heap interno (DMA + mutex constraints), así que
+// servir desde LittleFS dispara igualmente OOM con 6+ requests paralelos.
 #include "webfiles.h"
 
 static void sendMemFile(AsyncWebServerRequest* req,
@@ -33,7 +37,6 @@ static void sendMemFile(AsyncWebServerRequest* req,
     r->addHeader("Connection", "close");
     req->send(r);
 }
-#endif
 
 // ═════════════════════════════════════════════════════════════════════════════
 // WebSocket
@@ -146,23 +149,19 @@ void wsQueueDrain()
 // StartServer
 // ═════════════════════════════════════════════════════════════════════════════
 void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
+  Serial.println("[web] StartServer: entering");
   wsCb   = cb;
   wsConn = conn;
 
   // Create the cross-core WS message queue once.
   if (!wsQueue) {
     wsQueue = xQueueCreate(WS_QUEUE_LEN, WS_QUEUE_SIZE);
+    Serial.printf("[web] wsQueue created (%d slots x %d bytes)\n", WS_QUEUE_LEN, WS_QUEUE_SIZE);
   }
 
   initWebSocket();
+  Serial.println("[web] initWebSocket done");
 
-#ifdef CYD_C5
-  // With 8 MB PSRAM we can serve files from LittleFS without the
-  // memory-squeeze tricks needed on the original CYD (4 MB flash, no PSRAM).
-  server.serveStatic("/", LittleFS, "/")
-        .setDefaultFile("index.html")
-        .setCacheControl("max-age=31536000, immutable");
-#else
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* r) {
     sendMemFile(r, wf_index_html, wf_index_html_size, "text/html", wf_index_html_gzipped);
   });
@@ -195,19 +194,14 @@ void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
   server.on("/truminus-logo.png", HTTP_GET, [](AsyncWebServerRequest* r) {
     sendMemFile(r, wf_truminus_logo_png, wf_truminus_logo_png_size, "image/png", wf_truminus_logo_png_gzipped);
   });
-#endif
 
   server.on("/fscheck", HTTP_GET, [](AsyncWebServerRequest* req) {
-#ifdef CYD_C5
-    req->send(200, "text/plain",
-              "Heap libre: " + String(ESP.getFreeHeap()) + " B\n"
-              "PSRAM libre: " + String(ESP.getFreePsram()) + " B\n"
-              "Web files served from LittleFS.\n");
-#else
-    req->send(200, "text/plain",
-              "Heap libre: " + String(ESP.getFreeHeap()) + " B\n"
-              "Web files served from flash (no LittleFS needed for HTTP).\n");
-#endif
+    String body = "Heap libre: " + String(ESP.getFreeHeap()) + " B\n";
+    #ifdef CYD_C5
+    body += "PSRAM libre: " + String(ESP.getFreePsram()) + " B\n";
+    #endif
+    body += "Web files served from flash (embedded).\n";
+    req->send(200, "text/plain", body);
   });
 
   server.onNotFound([](AsyncWebServerRequest* req) {
@@ -215,7 +209,16 @@ void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
     req->send(404, "text/plain", "Not found");
   });
 
+  // DEBUG: log every incoming request before routing (helps diagnose
+  // "no response at all" situations).
+  server.on("/_alive", HTTP_GET, [](AsyncWebServerRequest* req) {
+    Serial.println("[web] /_alive hit");
+    req->send(200, "text/plain", "alive");
+  });
+
   server.begin();
+  Serial.printf("[web] server.begin() done — listening on http://%s/\n",
+                WiFi.localIP().toString().c_str());
 }
 
 #endif

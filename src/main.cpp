@@ -35,6 +35,10 @@
 #include "webserver.hpp"
 #endif
 #include <ArduinoOTA.h>
+#include <Preferences.h>
+#ifdef CYD_C5
+#include <esp_wifi.h>     // esp_wifi_set_band_mode / set_protocol / get_ps
+#endif
 #ifdef WEBSERVER
 void publishSolarBatt();
 #endif
@@ -98,13 +102,21 @@ static uint32_t s_lastDhtMs = 0;
 
 static void readExtSensor() {
     TempAndHumidity result = s_dht.getTempAndHumidity();
+    static uint16_t s_dhtErrCount = 0;
     if (s_dht.getStatus() == DHTesp::ERROR_NONE &&
         result.temperature > -40.0f && result.temperature < 80.0f) {
         s_extTemp = result.temperature;
+        s_dhtErrCount = 0;
         Serial.printf("[am2301] %.1f °C  %.0f %%RH\n",
                       result.temperature, result.humidity);
     } else {
-        Serial.printf("[am2301] error: %s\n", s_dht.getStatusString());
+        // Si no hay sensor conectado el error se repite cada 30 s indefinidamente.
+        // Loguear las 3 primeras y luego una de cada 60 para no inundar la consola.
+        s_dhtErrCount++;
+        if (s_dhtErrCount <= 3 || (s_dhtErrCount % 60) == 0) {
+            Serial.printf("[am2301] error: %s (count=%u)\n",
+                          s_dht.getStatusString(), s_dhtErrCount);
+        }
     }
 }
 
@@ -268,6 +280,12 @@ static void logMem(const char* tag) {
 void setup() {
   Serial.begin(115200);
   logMem("boot");
+  #ifdef BOARD_HAS_PSRAM
+  Serial.printf("[psram] size=%u free=%u largest=%u\n",
+      (unsigned)ESP.getPsramSize(),
+      (unsigned)ESP.getFreePsram(),
+      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+  #endif
 
   LinBus.baud=9600;
   LinBus.txPin=TX_PIN;
@@ -285,10 +303,16 @@ void setup() {
   smartdisplay_init();
   logMem("after smartdisplay_init");
   // Sensor AM2301 (LED azul desoldado).
+  // Arduino-ESP32 3.x es estricto: digitalWrite() sobre un pin no configurado
+  // emite warning "IO N is not set as GPIO". DHTesp no llama pinMode antes
+  // del primer digitalWrite, asi que lo hacemos aqui.
+  pinMode(DHT_DATA_PIN, INPUT_PULLUP);
   s_dht.setup(DHT_DATA_PIN, DHTesp::AM2302);
   s_lvglMutex = xSemaphoreCreateMutex();
   #ifdef CYD_C5
-  if (!LittleFS.begin(true)) {
+  // Partition label is "littlefs" (renamed from legacy "spiffs" to match its
+  // subtype and silence the partition-table warning).
+  if (!LittleFS.begin(true, "/littlefs", 10, "littlefs")) {
     Serial.println("[LittleFS] mount failed");
   } else {
     Serial.println("[LittleFS] mounted OK");
@@ -302,8 +326,17 @@ void setup() {
   lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_270);
   // Load touch calibration from NVS.  If none is stored yet (first boot or
   // after clearing NVS), run the interactive 3-point calibration screen.
+  #ifdef FORCE_TOUCH_RECAL
+  { Preferences p; p.begin("touchcal", false); p.clear(); p.end(); Serial.println("[touchcal] cleared"); }
+  #endif
   if (!loadTouchCalibration(touch_calibration_data)) {
+    Serial.println("[touchcal] no NVS data, running calibration");
     runTouchCalibration();
+  } else {
+    Serial.printf("[touchcal] loaded: valid=%d aX=%.4f bX=%.4f dX=%d aY=%.4f bY=%.4f dY=%d\n",
+        (int)touch_calibration_data.valid,
+        touch_calibration_data.alphaX, touch_calibration_data.betaX, (int)touch_calibration_data.deltaX,
+        touch_calibration_data.alphaY, touch_calibration_data.betaY, (int)touch_calibration_data.deltaY);
   }
   #endif
 
@@ -399,7 +432,67 @@ void setup() {
   logMem("after BLE init");
 
   //starts the wifi (loop will check if it's connected)
+  #ifdef CYD_C5
+  // ESP32-C5 con WiFi 6 / dual-band tiende a no asociarse con routers que solo
+  // anuncian 802.11n en 2.4 GHz. Forzamos "cliente WiFi 4 normal":
+  //   - solo banda 2.4 GHz
+  //   - solo protocolos b/g/n (sin 802.11ax)
+  //   - sin power save (la C5 con sleep tiende a perder asociacion)
+  //
+  // NO usar esp_wifi_stop()/start() aquí: Arduino-ESP32 engancha el netif LWIP
+  // dentro de WiFi.mode(). Un stop manual lo desengancha; el start posterior
+  // asocia 802.11 pero NO arranca DHCP -> el router ve la MAC pero el cliente
+  // no obtiene IP ni responde a ping. Estas funciones se pueden llamar con el
+  // driver corriendo; el cambio se aplica en el siguiente connect (WiFi.begin).
   WiFi.mode(WIFI_STA);
+  esp_err_t e_band = esp_wifi_set_band_mode(WIFI_BAND_MODE_2G_ONLY);
+  esp_err_t e_prot = esp_wifi_set_protocol(WIFI_IF_STA,
+                        WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+  WiFi.setSleep(false);
+  esp_err_t e_ps = esp_wifi_set_ps(WIFI_PS_NONE);   // belt-and-braces: ARP responsivo
+  Serial.printf("[wifi] C5 cfg: band=%d proto=%d ps=%d (0=OK)\n",
+                e_band, e_prot, e_ps);
+
+  // Event handler para diagnosticar por qué no asocia / no obtiene IP.
+  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+      switch (event) {
+        case ARDUINO_EVENT_WIFI_STA_START:
+          Serial.println("[wifi-evt] STA_START");
+          break;
+        case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+          Serial.printf("[wifi-evt] CONNECTED ssid='%.*s' ch=%u auth=%u\n",
+                        info.wifi_sta_connected.ssid_len,
+                        (const char*)info.wifi_sta_connected.ssid,
+                        info.wifi_sta_connected.channel,
+                        info.wifi_sta_connected.authmode);
+          break;
+        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+          // reason codes: 2=AUTH_EXPIRE 15=4WAY_HANDSHAKE_TIMEOUT
+          // 201=NO_AP_FOUND 202=AUTH_FAIL 203=ASSOC_FAIL 204=HANDSHAKE_TIMEOUT
+          Serial.printf("[wifi-evt] DISCONNECTED reason=%u\n",
+                        info.wifi_sta_disconnected.reason);
+          break;
+        case ARDUINO_EVENT_WIFI_STA_GOT_IP: {
+          Serial.printf("[wifi-evt] GOT_IP %s\n",
+                        IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
+          // El driver re-aplica power save al asociar. Forzamos OFF otra vez
+          // y verificamos por lectura.
+          esp_wifi_set_ps(WIFI_PS_NONE);
+          wifi_ps_type_t ps;
+          if (esp_wifi_get_ps(&ps) == ESP_OK) {
+            Serial.printf("[wifi-evt] ps after GOT_IP = %d (0=NONE)\n", (int)ps);
+          }
+          break;
+        }
+        case ARDUINO_EVENT_WIFI_STA_LOST_IP:
+          Serial.println("[wifi-evt] LOST_IP");
+          break;
+        default: break;
+      }
+  });
+  #else
+  WiFi.mode(WIFI_STA);
+  #endif
   Serial.print("WiFi MAC: ");
   Serial.println(WiFi.macAddress());
   #ifdef CYD
@@ -491,14 +584,44 @@ void setup() {
         else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
         else if (error == OTA_END_ERROR) Serial.println("End Failed");
       });
-  esp_task_wdt_init(10,true);
+#if ESP_IDF_VERSION_MAJOR >= 5
+  // Arduino-ESP32 3.x already initialises the TWDT and registers loopTask
+  // before setup() runs. Calling esp_task_wdt_init() again returns
+  // ESP_ERR_INVALID_STATE (logged as "TWDT already initialized") and can
+  // leave loopTask deregistered, producing endless
+  // "esp_task_wdt_reset: task not found" spam every loop iteration.
+  // Use esp_task_wdt_reconfigure() to change the timeout without disturbing
+  // the existing task registrations.
+  esp_task_wdt_config_t twdt_config = {
+    .timeout_ms = 10000,
+    .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
+    .trigger_panic = true,
+  };
+  if (esp_task_wdt_reconfigure(&twdt_config) != ESP_OK) {
+    // Not initialised yet -> safe to init from scratch.
+    esp_task_wdt_init(&twdt_config);
+  }
+  // Make sure the current task (loopTask) is subscribed so its periodic
+  // esp_task_wdt_reset() inside Arduino's main loop doesn't error.
+  if (esp_task_wdt_status(NULL) == ESP_ERR_NOT_FOUND) {
+    esp_task_wdt_add(NULL);
+  }
+#else
+  esp_task_wdt_init(10, true);
+#endif
 
   // Pre-create the async_tcp task before LinBus/LVGL tasks fragment the heap.
   // AsyncTCP uses a singleton task handle: if the task already exists when
   // server.begin() is called in loop(), it skips xTaskCreate entirely.
   // We use a throw-away AsyncServer on port 9999 and immediately call end()
   // to release the PCB; the task itself keeps running.
-  #ifdef WEBSERVER
+  //
+  // Skipped on CYD_C5: ESP-IDF 5.x requires the TCPIP core lock around lwIP
+  // calls; calling tcp_alloc() from arbitrary context aborts (Required to
+  // lock TCPIP core functionality!). With 8 MB PSRAM heap fragmentation
+  // isn't a concern anyway — async_tcp's task is created later in loop()
+  // by the real webserver init, which runs from a proper context.
+  #if defined(WEBSERVER) && !defined(CYD_C5)
   {
     logMem("before async_tcp pre-create");
     AsyncServer _pre(9999);
@@ -516,7 +639,12 @@ void setup() {
   #ifdef CYD
   // Start LVGL task only now — all LVGL init (calibration, wifi/mqtt setup
   // screens, cydDisplayInit) is complete, so no race condition.
+  // ESP32-C5 is single-core: pinning to core 1 trips an assert in FreeRTOS.
+  #ifdef CYD_C5
+  xTaskCreate(lvglTask, "LVGL", 10240, nullptr, 2, nullptr);
+  #else
   xTaskCreatePinnedToCore(lvglTask, "LVGL", 10240, nullptr, 2, nullptr, 1);
+  #endif
   logMem("after LVGL task");
   #endif
 }
@@ -566,7 +694,19 @@ void NextMasterFrame() {
 
 //checks and restart the wifi connection
 void CheckWifi() {
-  // check wifi connectivity
+  // Log periódico del estado mientras no haya IP, para diagnosticar
+  // asociación-sin-IP en C5. WiFi.status() valores: 0=IDLE 1=NO_SSID 3=CONNECTED
+  // 4=CONNECT_FAILED 6=DISCONNECTED 7=NO_SHIELD
+  {
+    static uint32_t lastDbg = 0;
+    if (!wifistarted && millis() - lastDbg > 2000) {
+      lastDbg = millis();
+      Serial.printf("[wifi-dbg] status=%d ip=%s rssi=%d\n",
+                    WiFi.status(),
+                    WiFi.localIP().toString().c_str(),
+                    WiFi.RSSI());
+    }
+  }
   if (WiFi.status()==WL_CONNECTED) {
     if (!wifiok) {
       ArduinoOTA.setHostname("truminus");
@@ -600,6 +740,12 @@ void CheckWifi() {
 // All blocking serial I/O runs here so the main loop (Core 1) stays free
 // to service WiFi, MQTT, OTA, WebSocket and the LVGL display.
 static void linBusTask(void*) {
+  // Subscribe this task to the TWDT so its periodic esp_task_wdt_reset()
+  // calls below don't fail with "task not found". setup() only subscribed
+  // loopTask; tasks created from setup() (here, the LVGL task, etc.) must
+  // subscribe themselves once they start.
+  esp_task_wdt_add(NULL);
+
   // ── Sniffer state ───────────────────────────────────────────────────────
   enum SniffSt { S_IDLE, S_GOT_BREAK, S_GOT_SYNC, S_IN_FRAME } sniffSt = S_IDLE;
   uint8_t sniffPid = 0, sniffBuf[12]; int sniffN = 0;

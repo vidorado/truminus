@@ -30,7 +30,12 @@ boolean TCommandReader::Available(String *command, String *param)
                 return result;
             }
         } else {
-            if (b<' ') {
+            // Solo aceptar ASCII imprimible. Bytes >=0x80 aparecen como ruido
+            // en la UART (especialmente en arranque o si la línea TX flota) y
+            // antes pasaban porque `char` es signed: 0xC3 -> -61 < ' '. Con un
+            // cast explícito a unsigned filtramos todo el rango no imprimible.
+            unsigned char ub = (unsigned char)b;
+            if (ub < 0x20 || ub > 0x7e) {
                 continue;
             }
             if (fcount<MAX_COMMAND_LEN) {

@@ -122,17 +122,54 @@ static void lvRun(uint32_t ms = 10) {
 // -----------------------------------------------------------------------
 
 static const int     CAL_N   = 3;
-static const int32_t CAL_SX[CAL_N] = { 40, 280, 160 };  // screen X targets
-static const int32_t CAL_SY[CAL_N] = { 40,  40, 200 };  // screen Y targets
+// Place crosses near the actual screen corners so the linear 3-point fit
+// covers the full touch range. Earlier values (40,280 / 40,200) were too
+// far from the edges and produced compressed X readings (taps at the right
+// edge landed at LVGL x≈225 instead of 320).
+static const int32_t CAL_SX[CAL_N] = { 15, 305, 160 };  // screen X targets
+static const int32_t CAL_SY[CAL_N] = { 15,  15, 225 };  // screen Y targets
 
 static lv_point_t s_calTouchPts[CAL_N];
 static bool       s_calTapped;
 static lv_point_t s_calLastPt;
 
+// Un-rotate a point that has been through `lv_display_rotate_point()` so we
+// recover the raw panel coordinates as seen by the touch driver BEFORE LVGL's
+// indev-pointer-processor applied the display rotation.
+//
+// Background: in LVGL 9, `indev_pointer_proc()` rotates the touch point AFTER
+// `read_cb` returns. That means `lvgl_touch_calibration_transform()` sees the
+// RAW pre-rotation point at runtime, but `lv_indev_get_point()` (which we use
+// to capture calibration samples from a click event) returns the POST-rotation
+// point. Computing the calibration with post-rotation inputs but applying it
+// to pre-rotation inputs at runtime is the root cause of the "axis inverted"
+// symptom we hit on the CYD_C5.
+static lv_point_t unrotateToPanel(lv_point_t pt) {
+    lv_display_t* disp = lv_display_get_default();
+    if (!disp) return pt;
+    // disp->hor_res / ver_res are stored PRE-rotation (panel-native).
+    const int32_t orig_hor = lv_display_get_original_horizontal_resolution(disp);
+    const int32_t orig_ver = lv_display_get_original_vertical_resolution(disp);
+    switch (lv_display_get_rotation(disp)) {
+        case LV_DISPLAY_ROTATION_90:  // forward: x'=ver-y-1, y'=x
+            return { pt.y, orig_ver - 1 - pt.x };
+        case LV_DISPLAY_ROTATION_180: // self-inverse
+            return { orig_hor - 1 - pt.x, orig_ver - 1 - pt.y };
+        case LV_DISPLAY_ROTATION_270: // forward: x'=y, y'=hor-x-1
+            return { orig_hor - 1 - pt.y, pt.x };
+        case LV_DISPLAY_ROTATION_0:
+        default:
+            return pt;
+    }
+}
+
 static void calTapCb(lv_event_t* e) {
     lv_indev_t* indev = lv_indev_get_act();
     s_calLastPt = {0, 0};
     if (indev) lv_indev_get_point(indev, &s_calLastPt);
+    // Reverse LVGL's post-read rotation so the captured point matches what
+    // the calibration transform will be fed at runtime (pre-rotation raw).
+    s_calLastPt = unrotateToPanel(s_calLastPt);
     s_calTapped = true;
 }
 
@@ -230,11 +267,25 @@ void runTouchCalibration() {
     }
 
     // Compute affine calibration from the 3-point correspondence.
+    //
+    // The cross at landscape (CAL_SX, CAL_SY) is actually rendered onto the
+    // physical panel at the PRE-ROTATION pixel — `unrotateToPanel()` gives us
+    // that portrait-orientation coordinate. We must map raw_panel touch →
+    // portrait_screen, because at runtime LVGL will then rotate the cal output
+    // into landscape coords (see indev_pointer_proc).
     lv_point_t sp[3] = {
-        {CAL_SX[0], CAL_SY[0]},
-        {CAL_SX[1], CAL_SY[1]},
-        {CAL_SX[2], CAL_SY[2]}
+        unrotateToPanel({CAL_SX[0], CAL_SY[0]}),
+        unrotateToPanel({CAL_SX[1], CAL_SY[1]}),
+        unrotateToPanel({CAL_SX[2], CAL_SY[2]})
     };
+    Serial.printf("[CAL] Landscape targets: (%d,%d) (%d,%d) (%d,%d)\n",
+        CAL_SX[0], CAL_SY[0], CAL_SX[1], CAL_SY[1], CAL_SX[2], CAL_SY[2]);
+    Serial.printf("[CAL] Portrait targets:  (%d,%d) (%d,%d) (%d,%d)\n",
+        sp[0].x, sp[0].y, sp[1].x, sp[1].y, sp[2].x, sp[2].y);
+    Serial.printf("[CAL] Panel raw touches: (%d,%d) (%d,%d) (%d,%d)\n",
+        s_calTouchPts[0].x, s_calTouchPts[0].y,
+        s_calTouchPts[1].x, s_calTouchPts[1].y,
+        s_calTouchPts[2].x, s_calTouchPts[2].y);
     touch_calibration_data = smartdisplay_compute_touch_calibration(sp, s_calTouchPts);
     saveTouchCalibration(touch_calibration_data);
 
@@ -316,8 +367,19 @@ static void doScan() {
         // Scan finished immediately (cached results?)
     } else {
         // Poll until scan completes, feeding LVGL so the spinner keeps spinning.
+        // Wi-Fi scan can take ~5-8 s; without periodic WDT resets the 10 s
+        // task watchdog fires and aborts (we're still inside setup(), so
+        // Arduino's automatic reset in loopTask hasn't started yet).
+        // Also honour the Cancel/Skip button if the user taps it while
+        // scanning — `s_cancelled` is set by wifiCancelCb in the LVGL event.
         while ((n = WiFi.scanComplete()) == -1) {
             lvRun(100);
+            esp_task_wdt_reset();
+            if (s_cancelled) {
+                WiFi.scanDelete();   // abort pending scan
+                n = 0;
+                break;
+            }
         }
     }
     Serial.printf("[wifisetup] scanNetworks(async done)=%d\n", n);
