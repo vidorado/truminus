@@ -50,7 +50,8 @@ bool runSolarSetup(String& addr, String& key);
 // Battery (Ultimatron BLE) config screen
 // -----------------------------------------------------------------------
 // addr: 12 uppercase hex chars (no separators), e.g. "AABBCCDDEEFF"
-bool loadBattConfig(String& addr);
-void saveBattConfig(const String& addr);
+// pass: 6 ASCII digits (e.g. "999000"), or empty if BMS has no auth set.
+bool loadBattConfig(String& addr, String& pass);
+void saveBattConfig(const String& addr, const String& pass);
 
 #endif // CYD

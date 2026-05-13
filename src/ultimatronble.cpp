@@ -8,26 +8,30 @@
 // ── NVS ───────────────────────────────────────────────────────────────────
 static const char* NVS_NS   = "batt";
 static const char* NVS_ADDR = "addr";   // 12 uppercase hex chars, no separators
+static const char* NVS_PASS = "pass";   // 6 ASCII digits, or "" if no auth required
 
-bool ultimatronLoadConfig(String& addr) {
+bool ultimatronLoadConfig(String& addr, String& pass) {
     Preferences p;
     p.begin(NVS_NS, true);
     if (!p.isKey(NVS_ADDR)) { p.end(); return false; }
     addr = p.getString(NVS_ADDR, "");
+    pass = p.getString(NVS_PASS, "");
     p.end();
     return addr.length() == 12;
 }
 
-void ultimatronSaveConfig(const String& addr) {
+void ultimatronSaveConfig(const String& addr, const String& pass) {
     Preferences p;
     p.begin(NVS_NS, false);
     p.putString(NVS_ADDR, addr);
+    p.putString(NVS_PASS, pass);
     p.end();
 }
 
 // ── Module state ──────────────────────────────────────────────────────────
 static bool          s_configured     = false;
 static String        s_targetAddr;        // 12 uppercase hex (no colons)
+static String        s_password;          // 6 ASCII digits, or "" if no auth
 
 static SemaphoreHandle_t s_dataMux    = nullptr;
 static SemaphoreHandle_t s_rxSem      = nullptr;
@@ -120,10 +124,12 @@ static bool pollUltratron() {
     vTaskDelay(pdMS_TO_TICKS(400));
 
     std::string macStr = formatMac(s_targetAddr);
-    NimBLEAddress addr(macStr);
+    // NimBLE 2.x: address type must be explicit (0 = BLE_ADDR_PUBLIC).
+    NimBLEAddress addr(macStr, 0);
 
     NimBLEClient* client = NimBLEDevice::createClient();
-    client->setConnectTimeout(5);
+    // NimBLE 2.x: setConnectTimeout now takes milliseconds (was seconds in 1.x).
+    client->setConnectTimeout(5000);
 
     uint32_t tConn = millis();
     if (!client->connect(addr)) {
@@ -167,6 +173,37 @@ static bool pollUltratron() {
     }
     Serial.printf("[ult] subscribed (+%lums, sub took %lums)\n",
                   millis() - t0, millis() - tSub);
+
+    // ── Optional password authentication ──────────────────────────────────
+    // Newer Ultimatron firmwares lock all reads behind a 6-digit password.
+    // Factory default is "999000". JBD-style frame:
+    //   DD 5A 60 06 <6 ASCII digits> <chk_hi> <chk_lo> 77
+    // Checksum = 0x10000 - sum(bytes 2..3+payload), low 16 bits.
+    if (s_password.length() == 6) {
+        uint8_t auth[13];
+        auth[0]  = 0xDD;
+        auth[1]  = 0x5A;
+        auth[2]  = 0x60;
+        auth[3]  = 0x06;
+        for (int i = 0; i < 6; i++) auth[4 + i] = (uint8_t)s_password[i];
+        uint16_t sum = 0;
+        for (int i = 2; i < 10; i++) sum += auth[i];
+        uint16_t chk = (uint16_t)(0x10000u - sum);
+        auth[10] = (uint8_t)(chk >> 8);
+        auth[11] = (uint8_t)(chk & 0xFF);
+        auth[12] = 0x77;
+
+        // Reset rx state, the BMS may ACK with a short notify on success.
+        s_rxLen = 0;
+        memset(s_rxBuf, 0, sizeof(s_rxBuf));
+        while (xSemaphoreTake(s_rxSem, 0) == pdTRUE) {}
+
+        writeChar->writeValue(auth, sizeof(auth), false);
+        Serial.printf("[ult] auth sent (pass='%s')\n", s_password.c_str());
+
+        // Best-effort wait for an auth ACK — BMS is usually ready within ~300 ms.
+        xSemaphoreTake(s_rxSem, pdMS_TO_TICKS(500));
+    }
 
     // BMS often ignores the first command — retry up to 5 times (same as reference impl)
     const uint8_t cmd[] = {0xDD, 0xA5, 0x03, 0x00, 0xFF, 0xFD, 0x77};
@@ -234,17 +271,19 @@ void ultimatronBleResume() {
 }
 
 void ultimatronBleInit() {
-    String addr;
-    if (!ultimatronLoadConfig(addr)) return;
+    String addr, pass;
+    if (!ultimatronLoadConfig(addr, pass)) return;
 
     s_targetAddr  = addr;
+    s_password    = pass;
     s_configured  = true;
     s_dataMux     = xSemaphoreCreateMutex();
     s_rxSem       = xSemaphoreCreateBinary();
 
     // NimBLE already initialised by victronBleInit(); calling init("") is idempotent.
     xTaskCreate(ultimatronTask, "ult_batt", 3072, nullptr, 1, &s_taskHandle);
-    Serial.printf("[ult] Ultimatron init ok, target=%s\n", s_targetAddr.c_str());
+    Serial.printf("[ult] Ultimatron init ok, target=%s pass=%s\n",
+                  s_targetAddr.c_str(), s_password.length() ? "yes" : "no");
 }
 
 #else // !BLE — simulated data for web UI development
@@ -268,7 +307,7 @@ UltimatronData ultimatronGetData() {
 bool ultimatronIsConfigured() { return true; }
 void ultimatronBleSuspend() {}
 void ultimatronBleResume() {}
-bool ultimatronLoadConfig(String& addr) { (void)addr; return false; }
-void ultimatronSaveConfig(const String& addr) { (void)addr; }
+bool ultimatronLoadConfig(String& addr, String& pass) { (void)addr; (void)pass; return false; }
+void ultimatronSaveConfig(const String& addr, const String& pass) { (void)addr; (void)pass; }
 
 #endif // BLE

@@ -20,5 +20,6 @@ void ultimatronBleSuspend();
 void ultimatronBleResume();
 
 // NVS helpers used by wifisetup.
-bool ultimatronLoadConfig(String& addr);
-void ultimatronSaveConfig(const String& addr);
+// `pass`: 6 ASCII digits (e.g. "999000"). Empty string = no authentication step.
+bool ultimatronLoadConfig(String& addr, String& pass);
+void ultimatronSaveConfig(const String& addr, const String& pass);

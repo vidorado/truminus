@@ -139,8 +139,8 @@ static void parseMfrData(const uint8_t* mfr, int len) {
 }
 
 // ── BLE callback ──────────────────────────────────────────────────────────
-class VictronScanCb : public NimBLEAdvertisedDeviceCallbacks {
-    void onResult(NimBLEAdvertisedDevice* dev) override {
+class VictronScanCb : public NimBLEScanCallbacks {
+    void onResult(const NimBLEAdvertisedDevice* dev) override {
         if (!dev->haveManufacturerData()) return;
 
         std::string raw = dev->getManufacturerData();
@@ -201,7 +201,7 @@ void victronBleInit() {
     NimBLEDevice::init("");
     Serial.printf("[ble] heap after init:  free=%u\n", ESP.getFreeHeap());
     s_bleScan = NimBLEDevice::getScan();
-    s_bleScan->setAdvertisedDeviceCallbacks(new VictronScanCb(), /*wantDuplicates=*/true);
+    s_bleScan->setScanCallbacks(new VictronScanCb(), /*wantDuplicates=*/true);
     s_bleScan->setActiveScan(true);    // active scan needed to receive SCAN_RSP (Instant Readout)
     s_bleScan->setInterval(100);
     s_bleScan->setWindow(99);

@@ -24,7 +24,7 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Idioma",                   // LANGUAGE
     "Conf.",                    // CONF
     "Volver",                   // BACK
-    "PANTALLA",                 // DISPLAY_TITLE
+    "Pantalla",                 // DISPLAY_TITLE
     "Apagado de pantalla",      // TIMEOUT_LABEL
     "30 segundos",              // TIMEOUT_30S
     "1 minuto",                 // TIMEOUT_1M
@@ -112,7 +112,7 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Language",                 // LANGUAGE
     "Conf.",                    // CONF
     "Back",                     // BACK
-    "DISPLAY",                  // DISPLAY_TITLE
+    "Display",                  // DISPLAY_TITLE
     "Auto screen-off",          // TIMEOUT_LABEL
     "30 seconds",               // TIMEOUT_30S
     "1 minute",                 // TIMEOUT_1M

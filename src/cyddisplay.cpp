@@ -658,6 +658,20 @@ void cydShowLangSelect() { showLangSelectBlocking(); }
 // ═══════════════════════════════════════════════════════════════════════════
 // Main settings menu
 // ═══════════════════════════════════════════════════════════════════════════
+// Plain dark placeholder shown while the main loop dispatches a nav request
+// and rebuilds the heavy setup screen. Without it the user saw a flash of the
+// main UI between closing the settings menu and the setup screen loading.
+static lv_obj_t* s_navTransition = nullptr;
+static void loadNavTransition() {
+    lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_remove_style_all(scr);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa  (scr, LV_OPA_COVER,        LV_PART_MAIN);
+    lv_obj_clear_flag(scr, (lv_obj_flag_t)LV_OBJ_FLAG_SCROLLABLE);
+    lv_screen_load(scr);
+    s_navTransition = scr;
+}
+
 static void settingsBackCb(lv_event_t*) {
     lv_obj_t* old = s_settingsScr;
     s_settingsScr = nullptr;
@@ -669,16 +683,16 @@ static void wifiConfigCb(lv_event_t*) {
     lv_obj_t* old = s_settingsScr;
     s_settingsScr = nullptr;
     s_navRequest  = CydNavRequest::WifiSetup;
-    lv_screen_load(s_scr);
+    loadNavTransition();
     if (old) lv_obj_delete(old);
 }
 
 static void displayConfigCb(lv_event_t*) {
     lv_obj_t* old = s_settingsScr;
     s_settingsScr = nullptr;
-    // Free settings-screen pool memory before allocating the display-settings screen.
-    // Both screens coexisting briefly can exhaust the LVGL pool and silently break
-    // touch callbacks on the new screen.
+    // Display-settings screen is built right here (no main-loop round-trip), so
+    // we don't need the dark placeholder — showDisplaySettings() loads its own
+    // screen synchronously. We just need a valid active screen during delete.
     lv_screen_load(s_scr);
     if (old) lv_obj_delete(old);
     showDisplaySettings();
@@ -688,7 +702,7 @@ static void langConfigCb(lv_event_t*) {
     lv_obj_t* old = s_settingsScr;
     s_settingsScr = nullptr;
     s_navRequest  = CydNavRequest::LangChange;
-    lv_screen_load(s_scr);
+    loadNavTransition();
     if (old) lv_obj_delete(old);
 }
 
@@ -696,7 +710,7 @@ static void solarConfigCb(lv_event_t*) {
     lv_obj_t* old = s_settingsScr;
     s_settingsScr = nullptr;
     s_navRequest  = CydNavRequest::SolarSetup;
-    lv_screen_load(s_scr);
+    loadNavTransition();
     if (old) lv_obj_delete(old);
 }
 
@@ -761,6 +775,8 @@ void cydReloadScreen() {
     s_screenOff = false;
     blFadeTo(1.0f);
     if (s_scr) lv_screen_load(s_scr);
+    // The nav-transition placeholder, if any, is now orphan — free it.
+    if (s_navTransition) { lv_obj_delete(s_navTransition); s_navTransition = nullptr; }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
