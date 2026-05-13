@@ -9,7 +9,7 @@
 #include <esp32_smartdisplay.h>
 #include <vector>
 #include <esp_task_wdt.h>
-#if defined(BLE)
+#if defined(ENABLE_BLE)
 #include <NimBLEDevice.h>
 #endif
 
@@ -1014,7 +1014,7 @@ bool runMqttSetup(String& uri, String& user, String& pass) {
 // =======================================================================
 // BLE Victron + Ultimatron setup screens — only compiled when BLE enabled
 // =======================================================================
-#if defined(BLE)
+#if defined(ENABLE_BLE)
 
 // =======================================================================
 // Victron BLE device scan (called from the Solar config screen)
@@ -1244,7 +1244,7 @@ void saveSolarConfig(const String& addr, const String& key) {
 // Forward declarations (defined after runSolarSetup)
 bool loadBattConfig(String& addr, String& pass);
 void saveBattConfig(const String& addr, const String& pass);
-#if defined(BLE)
+#if defined(ENABLE_BLE)
 static String runBattScan();
 #endif
 
@@ -1389,7 +1389,7 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_set_pos(ss_addrTA, 0, 46);
     if (hasConfig) lv_textarea_set_text(ss_addrTA, existAddr.c_str());
 
-#if defined(BLE)
+#if defined(ENABLE_BLE)
     lv_obj_t* scanBtn = lv_btn_create(ss_contentPanel);
     themePrimaryBtn(scanBtn);
     lv_obj_set_size(scanBtn, 107, 36);
@@ -1436,7 +1436,7 @@ bool runSolarSetup(String& addr, String& key) {
     lv_obj_set_pos(ss_battAddrTA, 0, 194);
     if (hasBattConfig) lv_textarea_set_text(ss_battAddrTA, existBattAddr.c_str());
 
-#if defined(BLE)
+#if defined(ENABLE_BLE)
     lv_obj_t* battScanBtn = lv_btn_create(ss_contentPanel);
     themePrimaryBtn(battScanBtn);
     lv_obj_set_size(battScanBtn, 107, 36);
@@ -1523,7 +1523,7 @@ bool runSolarSetup(String& addr, String& key) {
             if (ss_contentPanel) lv_obj_set_height(ss_contentPanel, 240 - TH_CONTENT_Y);
 
             String picked;
-#if defined(BLE)
+#if defined(ENABLE_BLE)
             picked = forBatt ? runBattScan() : runSolarScan();
 #endif
 
@@ -1561,7 +1561,7 @@ bool runSolarSetup(String& addr, String& key) {
     return saved;
 }
 
-#if defined(BLE)
+#if defined(ENABLE_BLE)
 // =======================================================================
 // Battery (Ultimatron BLE) device scan
 // Scans 8 s for all BLE devices so the user can find their battery by name/MAC.

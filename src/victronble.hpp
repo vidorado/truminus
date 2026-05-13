@@ -19,6 +19,13 @@ VictronData        victronGetData();   // returns a mutex-protected copy
 bool               victronIsConfigured();
 void               victronBleSuspend(); // pause scan task (e.g. before GATT connection)
 void               victronBleResume();  // resume scan task after suspension
+// true  = scan every 3 s  (normal, default)
+// false = scan every 20 s (power-save when screen is off and no web clients)
+void               victronBleSetAggressive(bool aggressive);
+// Stop scan completely (release RF for WiFi).  Safe to call multiple times.
+void               victronBleStop();
+// Resume after victronBleStop().  Safe to call multiple times.
+void               victronBleStart();
 
 // NVS helpers (used by wifisetup / solar config screen).
 bool victronLoadConfig(String& addr, String& key);

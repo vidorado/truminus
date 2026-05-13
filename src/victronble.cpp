@@ -1,7 +1,7 @@
 #include "victronble.hpp"
 #include "logs.hpp"
 #include <math.h>
-#if defined(BLE)
+#if defined(ENABLE_BLE)
 #include <Preferences.h>
 #include <NimBLEDevice.h>
 #include <mbedtls/aes.h>
@@ -39,6 +39,9 @@ static VictronData       s_data    = {};
 
 static NimBLEScan*   s_bleScan      = nullptr;
 static TaskHandle_t  s_bleTaskHandle = nullptr;
+static volatile bool s_aggressive   = true;   // default: fast scan
+static volatile bool s_bleStopped   = false;  // true when stop() called
+static volatile bool s_bleSuspended = false;  // true when another task needs RF
 
 // ── Hex helpers ───────────────────────────────────────────────────────────
 static bool hexToBytes(const String& hex, uint8_t* out, int len) {
@@ -161,15 +164,62 @@ class VictronScanCb : public NimBLEScanCallbacks {
 
 // ── Periodic scan task (Core 1) ───────────────────────────────────────────
 static void bleTask(void* /*arg*/) {
-    vTaskDelay(pdMS_TO_TICKS(8000));   // wait for WiFi/MQTT to finish init
+    vTaskDelay(pdMS_TO_TICKS(15000));   // wait for WiFi/MQTT to finish init
     LOG_BLE_PL("[ble] scan task started");
+    int failCount = 0;
     for (;;) {
+        if (s_bleStopped || s_bleSuspended) {
+            // Yield CPU and RF to WiFi / Ultimatron connection
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
         if (s_bleScan) {
             s_bleScan->clearResults();
-            s_bleScan->start(3, false);   // 3-second blocking scan
-            vTaskDelay(pdMS_TO_TICKS(2000));   // 3+2 = 5 s total period
+            // Reduced from 3 s to 1 s to free RF for WiFi coexistence on C5
+            int rc = s_bleScan->start(1, false);
+            if (rc != 0) {
+                // rc=519 (BLE_HS_ENOTCONN) usually means the controller is busy
+                // with WiFi RF.  Exponential-ish backoff to avoid flooding serial.
+                failCount++;
+                unsigned long backoffMs;
+                if (failCount <= 3)      backoffMs = 5000;     // 5 s
+                else if (failCount <= 6) backoffMs = 30000;    // 30 s
+                else                     backoffMs = 300000;   // 5 min
+                LOG_BLE_PF("[ble] scan start failed %d times (last rc=%d), backoff %lus\n",
+                           failCount, rc, backoffMs / 1000);
+                vTaskDelay(pdMS_TO_TICKS(backoffMs));
+                continue;
+            }
+            failCount = 0;
+            // 2 s idle = 3 s period (aggressive)  or  17 s idle = 18 s period (save)
+            vTaskDelay(pdMS_TO_TICKS(s_aggressive ? 2000 : 17000));
         }
     }
+}
+
+void victronBleSetAggressive(bool aggressive) {
+    s_aggressive = aggressive;
+}
+
+void victronBleStop() {
+    s_bleStopped = true;
+    // Do NOT call s_bleScan->stop() here — bleTask may be inside start()
+    // and calling stop() from another task corrupts the NimBLE controller.
+    // The bleTask checks s_bleStopped and exits its loop gracefully.
+}
+
+void victronBleStart() {
+    s_bleStopped = false;
+}
+
+void victronBleSuspend() {
+    s_bleSuspended = true;
+    // Do NOT use vTaskSuspend() on bleTask — if it is inside NimBLE APIs
+    // the controller ends up in a corrupted state (rc=519 forever).
+}
+
+void victronBleResume() {
+    s_bleSuspended = false;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────
@@ -204,23 +254,14 @@ void victronBleInit() {
     s_bleScan = NimBLEDevice::getScan();
     s_bleScan->setScanCallbacks(new VictronScanCb(), /*wantDuplicates=*/true);
     s_bleScan->setActiveScan(true);    // active scan needed to receive SCAN_RSP (Instant Readout)
-    s_bleScan->setInterval(100);
-    s_bleScan->setWindow(99);
+    // Reduce duty cycle to leave RF time for WiFi on ESP32-C5.
+    // Interval=160 (100 ms), Window=30 (~19 ms) → ~19% duty cycle.
+    s_bleScan->setInterval(160);
+    s_bleScan->setWindow(30);
     s_bleScan->setMaxResults(0);       // no caching — fire onResult for every adv
 
     xTaskCreate(bleTask, "ble_vic", 3072, nullptr, 1, &s_bleTaskHandle);
     LOG_BLE_PF("[ble] Victron BLE init ok, target=%s\n", s_targetAddr.c_str());
-}
-
-void victronBleSuspend() {
-    if (s_bleTaskHandle) {
-        vTaskSuspend(s_bleTaskHandle);
-        if (s_bleScan) s_bleScan->stop();
-    }
-}
-
-void victronBleResume() {
-    if (s_bleTaskHandle) vTaskResume(s_bleTaskHandle);
 }
 
 #else // !BLE — simulated data for web UI development
@@ -245,6 +286,9 @@ VictronData victronGetData() {
 bool victronIsConfigured() { return true; }
 void victronBleSuspend() {}
 void victronBleResume() {}
+void victronBleSetAggressive(bool) {}
+void victronBleStop() {}
+void victronBleStart() {}
 bool victronLoadConfig(String& addr, String& key) { (void)addr; (void)key; return false; }
 void victronSaveConfig(const String& addr, const String& key) { (void)addr; (void)key; }
 
