@@ -15,14 +15,24 @@ def patch_pioarduino_framework():
     if not framework_dir.exists():
         return
 
-    # Patch package.json version
+    # Patch package.json version to match the actual installed framework.
+    # The pioarduino platform downloads the correct version; we just ensure
+    # package.json reflects the real version to avoid LDF/library resolution bugs.
     package_json = framework_dir / "package.json"
-    if package_json.exists():
-        content = package_json.read_text()
-        new_content = re.sub(r'"version":\s*"[^"]*"', '"version": "3.3.6"', content)
-        if new_content != content:
-            package_json.write_text(new_content)
-            print("Patched framework-arduinoespressif32/package.json version to 3.3.6")
+    version_h = framework_dir / "cores/esp32/esp_arduino_version.h"
+    if package_json.exists() and version_h.exists():
+        # Extract real version from header
+        h_content = version_h.read_text()
+        major = re.search(r'VERSION_MAJOR\s+(\d+)', h_content)
+        minor = re.search(r'VERSION_MINOR\s+(\d+)', h_content)
+        patch = re.search(r'VERSION_PATCH\s+(\d+)', h_content)
+        if major and minor and patch:
+            real_ver = f"{major.group(1)}.{minor.group(1)}.{patch.group(1)}"
+            content = package_json.read_text()
+            new_content = re.sub(r'"version":\s*"[^"]*"', f'"version": "{real_ver}"', content)
+            if new_content != content:
+                package_json.write_text(new_content)
+                print(f"Patched framework-arduinoespressif32/package.json version to {real_ver}")
 
     # Ensure pioarduino-build.py exists (copy, not symlink, for portability)
     tools_dir = framework_dir / "tools"
