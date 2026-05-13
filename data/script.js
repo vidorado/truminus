@@ -202,6 +202,46 @@ function refreshIndicators() {
     var heatDemand = s_heat && s_roomTemp !== null && (s_roomTemp < s_temp - 0.3);
     cls('ind-fire', 'ind-on',     s_heat && !heatDemand);
     cls('ind-fire', 'ind-active', heatDemand);
+
+    // Water temperature bar (matches CYD display)
+    var wTempVal = document.getElementById('water_temp_val');
+    var wTempFill = document.getElementById('water_temp_fill');
+    if (wTempVal) {
+        if (s_waterTemp !== null && s_waterTemp > -200) {
+            wTempVal.textContent = s_waterTemp.toFixed(0);
+        } else {
+            wTempVal.textContent = '--';
+        }
+    }
+    if (wTempFill) {
+        var sp = wSet > 0 ? wSet : 60;
+        var pct = 0;
+        if (s_waterTemp !== null && s_waterTemp > 0) {
+            pct = Math.min(100, Math.max(0, (s_waterTemp / sp) * 100));
+        }
+        wTempFill.style.height = pct + '%';
+
+        // Fill colour based on % of setpoint: blue <50%, amber 50-85%, red ≥85%
+        var wPct = (wSet > 0) ? (s_waterTemp / wSet) : 0;
+        var wCol = (wPct < 0.50) ? '#4488ff'
+                 : (wPct < 0.85) ? '#ffbb00'
+                                 : '#ff3333';
+        wTempFill.style.background = wCol;
+
+        // Blink border when heating and not at temp (fill disappears during off-phase)
+        var body = document.querySelector('.water-temp-body');
+        if (body) {
+            if (wDemand) {
+                body.style.borderColor = '#55aaff';
+                body.style.animation = 'ind-blink 1s step-start infinite';
+                wTempFill.style.opacity = '0';
+            } else {
+                body.style.borderColor = '#888888';
+                body.style.animation = '';
+                wTempFill.style.opacity = '1';
+            }
+        }
+    }
 }
 
 // ── Debounced send (300 ms per topic) ─────────────────────────────────────
@@ -320,15 +360,11 @@ var SOLAR_STATES = {
 };
 
 function applySolar(d) {
-    var panel = document.getElementById('solar-panel');
-    if (!panel) return;
-
-    if (!d.configured) { panel.classList.add('vis-hidden'); return; }
-    panel.classList.remove('vis-hidden');
-
     var stateLbl = document.getElementById('solar_state');
+    if (!stateLbl) return;
+
     if (!d.valid) {
-        stateLbl.textContent = t('sol_nodata');
+        stateLbl.textContent = '--';
         document.getElementById('solar_pvW').textContent  = '--';
         document.getElementById('solar_kWh').textContent  = '--';
         document.getElementById('solar_battV').textContent = '--';
@@ -343,14 +379,10 @@ function applySolar(d) {
 }
 
 function applyBatt(d) {
-    var panel = document.getElementById('batt-panel');
-    if (!panel) return;
-
-    if (!d.configured) { panel.classList.add('vis-hidden'); return; }
-    panel.classList.remove('vis-hidden');
-
     var socLbl = document.getElementById('batt_soc');
     var fill   = document.getElementById('batt_fill');
+    if (!socLbl) return;
+
     if (!d.valid) {
         socLbl.textContent = '--%';
         if (fill) fill.style.height = '0%';
@@ -359,11 +391,9 @@ function applyBatt(d) {
     var soc = parseInt(d.soc) || 0;
     socLbl.textContent = soc + '%';
 
-    // Battery fill height (0–100% of 42px inner height)
     if (fill) {
         fill.style.height = Math.min(100, Math.max(0, soc)) + '%';
-        // Colour matches CYD: green ≥50, amber ≥20, red <20
-        var col = soc >= 50 ? '#44bb44' : soc >= 20 ? '#ffaa00' : '#ff4444';
+        var col = soc >= 50 ? '#44bb44' : soc >= 20 ? '#ffbb00' : '#ff3333';
         fill.style.background = col;
     }
 }

@@ -60,56 +60,68 @@
     </div>
   </section>
 
-  <!-- Right panel — HOT WATER -->
-  <section class="panel">
+  <!-- Right panel — HOT WATER + SOLAR/BATTERY (matches CYD physical layout) -->
+  <section class="panel panel-right">
+    <!-- HOT WATER section (top half) -->
     <div class="p-title" data-i18n="hot_water">AGUA CALIENTE</div>
 
-    <!-- 4 boiler buttons in a 2×2 grid -->
-    <div class="boiler-grid">
-      <button id="bOff"   class="btn-boiler" onclick="setBoiler('off')"   data-i18n="boiler_off">Apag.</button>
-      <button id="bEco"   class="btn-boiler" onclick="setBoiler('eco')">40&nbsp;°C</button>
-      <button id="bHigh"  class="btn-boiler" onclick="setBoiler('high')">60&nbsp;°C</button>
-      <button id="bBoost" class="btn-boiler" onclick="setBoiler('boost')">60&nbsp;°C&nbsp;<i class="fi">&#xF0E7;</i></button>
+    <div class="water-row">
+      <!-- 4 boiler buttons in a 2×2 grid (left) -->
+      <div class="boiler-grid">
+        <button id="bOff"   class="btn-boiler" onclick="setBoiler('off')"   data-i18n="boiler_off">Apag.</button>
+        <button id="bEco"   class="btn-boiler" onclick="setBoiler('eco')">40&nbsp;°C</button>
+        <button id="bHigh"  class="btn-boiler" onclick="setBoiler('high')">60&nbsp;°C</button>
+        <button id="bBoost" class="btn-boiler" onclick="setBoiler('boost')">60&nbsp;°C&nbsp;<i class="fi">&#xF0E7;</i></button>
+      </div>
+
+      <!-- Water temperature bar (right, battery-style) -->
+      <div class="water-temp-bar-wrap">
+        <div class="water-temp-lbl"><span id="water_temp_val">--</span>&thinsp;°C</div>
+        <div class="water-temp-body">
+          <div id="water_temp_fill" class="water-temp-fill"></div>
+        </div>
+      </div>
     </div>
 
-  </section>
+    <!-- Horizontal separator -->
+    <div class="p-sep"></div>
 
-  <!-- Solar panel -->
-  <section id="solar-panel" class="panel">
     <div class="p-title" data-i18n="solar_charge">CARGA SOLAR</div>
-    <div class="solar-lines">
-      <div class="solar-line solar-st">
-        <span class="solar-lbl" data-i18n="solar_state_lbl">Estado</span>
-        <span id="solar_state" class="solar-val">--</span>
-      </div>
-      <div class="solar-line solar-v">
-        <span class="solar-lbl" data-i18n="solar_voltage">Voltaje</span>
-        <span class="solar-val">
-          <span id="solar_battV">--</span>&thinsp;V
-        </span>
-      </div>
-      <div class="solar-line solar-a">
-        <span class="solar-lbl" data-i18n="solar_load">Carga</span>
-        <span class="solar-val">
-          <span id="solar_battA">--</span>&thinsp;A&ensp;/&ensp;<span id="solar_pvW">--</span>&thinsp;W
-        </span>
-      </div>
-      <div class="solar-line solar-kwh">
-        <span class="solar-lbl" data-i18n="solar_yield">Producc. hoy</span>
-        <span class="solar-val">
-          <span id="solar_kWh">--</span>&thinsp;kWh
-        </span>
-      </div>
-    </div>
-  </section>
 
-  <!-- Battery panel -->
-  <section id="batt-panel" class="panel">
-    <div class="p-title" data-i18n="battery">BATERÍA</div>
-    <div class="batt-wrap">
-      <div id="batt_soc" class="batt-soc-lbl">--%</div>
-      <div class="batt-body">
-        <div id="batt_fill" class="batt-fill"></div>
+    <!-- SOLAR / BATTERY section (bottom half) -->
+    <div class="solar-batt-row">
+      <!-- Solar data (left column) -->
+      <div class="solar-col">
+        <div class="solar-line solar-st">
+          <span class="solar-lbl" data-i18n="solar_state_lbl">Estado</span>
+          <span id="solar_state" class="solar-val">--</span>
+        </div>
+        <div class="solar-line solar-v">
+          <span class="solar-lbl" data-i18n="solar_voltage">Voltaje</span>
+          <span class="solar-val">
+            <span id="solar_battV">--</span>&thinsp;V
+          </span>
+        </div>
+        <div class="solar-line solar-a">
+          <span class="solar-lbl" data-i18n="solar_load">Carga</span>
+          <span class="solar-val">
+            <span id="solar_battA">--</span>&thinsp;A&ensp;/&ensp;<span id="solar_pvW">--</span>&thinsp;W
+          </span>
+        </div>
+        <div class="solar-line solar-kwh">
+          <span class="solar-lbl" data-i18n="solar_yield">Producc. hoy</span>
+          <span class="solar-val">
+            <span id="solar_kWh">--</span>&thinsp;kWh
+          </span>
+        </div>
+      </div>
+
+      <!-- Battery SOC (right column) -->
+      <div id="batt-col" class="batt-col">
+        <div id="batt_soc" class="batt-soc-lbl">--%</div>
+        <div class="batt-body">
+          <div id="batt_fill" class="batt-fill"></div>
+        </div>
       </div>
     </div>
   </section>

@@ -1314,8 +1314,8 @@ static void updateWaterTempWidget(float temp, bool heating) {
         return;
     }
 
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%.0f°", temp);
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%.0f°C", temp);
     lv_label_set_text(s_waterTempLbl, buf);
 
     // Bar fill — proportional to 0..setpoint, bottom-anchored
@@ -1326,10 +1326,11 @@ static void updateWaterTempWidget(float temp, bool heating) {
     lv_obj_set_pos(s_waterTempFill, s_waterTempFillX,
                    WB_Y + 1 + (WF_IH - fillH));
 
-    uint32_t color = (temp < 20) ? 0x4488ffu
-                   : (temp < 40) ? 0x44bb44u
-                   : (temp < 55) ? 0xffbb00u
-                                 : 0xff3333u;
+    // Fill colour based on % of setpoint: blue <50%, amber 50-85%, red ≥85%
+    float pct = (sp > 0) ? (temp / sp) : 0;
+    uint32_t color = (pct < 0.50f) ? 0x4488ffu
+                   : (pct < 0.85f) ? 0xffbb00u
+                                   : 0xff3333u;
 
     if (blinkOff) {
         // Off phase: border blends into background, fill disappears
