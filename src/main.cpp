@@ -1042,6 +1042,22 @@ static void linBusTask(void*) {
   }
 }
 
+// ── Boiler temperature for display (real or dummy) ────────────────────────
+static float getWaterTempForDisplay() {
+#ifdef ENABLE_BOILER_DUMMY
+    // Oscillating simulated temperature (like battery SOC) so the bar
+    // visibly moves and colour changes can be tested.
+    float sp = (WaterSetpoint && WaterSetpoint->getFloatValue() > 1.0f)
+               ? WaterSetpoint->getFloatValue() : 60.0f;
+    if (WaterSetpoint && WaterSetpoint->getStringValue() == "off")
+        sp = 20.0f;   // cold when boiler is off
+    float t = millis() / 1000.0f;
+    return 20.0f + (sp - 20.0f) * (0.5f + 0.5f * sinf(t * 0.15f));
+#else
+    return Frame21 ? Frame21->getWaterTemp() : -273.0f;
+#endif
+}
+
 //-------------------------------------------------------------------------
 void loop() {
   esp_task_wdt_reset();
@@ -1163,7 +1179,7 @@ void loop() {
   // lv_timer_handler() runs in lvglTask (Core 1) every 5 ms.
   // We only need to update display state; grab the mutex briefly.
   if (xSemaphoreTake(s_lvglMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-    double wTempDisp = Frame21->getWaterTemp();
+    double wTempDisp = getWaterTempForDisplay();
     bool   wHeating  = (Frame22 ? Frame22->getWaterHeating(): Frame21->getWaterDemand())
                        && (WaterSetpoint->getFloatValue() > 0.0);
     cydDisplayUpdate(wifiok, trumaok, truma_reset, inota,
@@ -1206,6 +1222,23 @@ void loop() {
     if (wifistarted && millis() - lastSolarWs > 10000) {
       lastSolarWs = millis();
       publishSolarBatt();
+    }
+  }
+  // Publish water temperature to WebSocket every 2 s (so web bar animates)
+  {
+    static uint32_t lastWaterWs = 0;
+    if (wifistarted && millis() - lastWaterWs > 2000) {
+      lastWaterWs = millis();
+      float wt = getWaterTempForDisplay();
+      char buf[64];
+      if (wt > -200.0f) {
+        snprintf(buf, sizeof(buf),
+                 "{\"command\":\"status\",\"id\":\"water_temp\",\"value\":\"%.1f\"}",
+                 wt);
+      } else {
+        strcpy(buf, "{\"command\":\"status\",\"id\":\"water_temp\",\"value\":\"--\"}");
+      }
+      wsQueueSend(buf);
     }
   }
   #endif
@@ -1290,7 +1323,7 @@ void loop() {
           frames_to_read[i]->getData(buf);
           for (int j = 0; j < 8; j++) Serial.printf(" %02X", buf[j]);
           if (fid == 0x21)
-            Serial.printf("  room:%.1f° water:%.1f°", Frame21->getRoomTemp(), Frame21->getWaterTemp());
+            Serial.printf("  room:%.1f° water:%.1f°", Frame21->getRoomTemp(), getWaterTempForDisplay());
         else if (fid == 0x22 && Frame22)
             Serial.printf("  heat:%d", Frame22->getWaterHeating());
         }

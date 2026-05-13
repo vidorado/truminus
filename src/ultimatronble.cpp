@@ -306,15 +306,18 @@ void ultimatronBleInit() {
                   s_targetAddr.c_str(), s_password.length() ? "yes" : "no");
 }
 
-#else // !BLE — simulated data for web UI development
+#else // !ENABLE_BLE — stubs (dummy data only when ENABLE_SOLAR_DUMMY is set)
 
+#ifdef ENABLE_SOLAR_DUMMY
 static UltimatronData s_fakeUltimatron = {
     78, 13.1f, -2.3f, 18.5f, true, 0
 };
+#endif
 
 void ultimatronBleInit() {}
 
 UltimatronData ultimatronGetData() {
+#ifdef ENABLE_SOLAR_DUMMY
     float t = millis() / 1000.0f;
     s_fakeUltimatron.soc     = (uint8_t)(60 + (int)(20.0f * sinf(t * 0.6f)));
     s_fakeUltimatron.battA   = -1.5f + 1.0f * sinf(t * 0.9f);
@@ -322,6 +325,9 @@ UltimatronData ultimatronGetData() {
     s_fakeUltimatron.tempC   = 18.0f + 3.0f * sinf(t * 0.4f);
     s_fakeUltimatron.lastMs  = millis();
     return s_fakeUltimatron;
+#else
+    return UltimatronData{};   // valid=false → shows "--"
+#endif
 }
 
 bool ultimatronIsConfigured() { return true; }
@@ -330,4 +336,4 @@ void ultimatronBleResume() {}
 bool ultimatronLoadConfig(String& addr, String& pass) { (void)addr; (void)pass; return false; }
 void ultimatronSaveConfig(const String& addr, const String& pass) { (void)addr; (void)pass; }
 
-#endif // BLE
+#endif // ENABLE_BLE

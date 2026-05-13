@@ -264,16 +264,19 @@ void victronBleInit() {
     LOG_BLE_PF("[ble] Victron BLE init ok, target=%s\n", s_targetAddr.c_str());
 }
 
-#else // !BLE — simulated data for web UI development
+#else // !ENABLE_BLE — stubs (dummy data only when ENABLE_SOLAR_DUMMY is set)
 
+#ifdef ENABLE_SOLAR_DUMMY
 static VictronData s_fakeVictron = {
     13.2f,  5.5f, 120.0f, 1.25f,
     3, 0, true, 0
 };
+#endif
 
 void victronBleInit() {}
 
 VictronData victronGetData() {
+#ifdef ENABLE_SOLAR_DUMMY
     float t = millis() / 1000.0f;
     s_fakeVictron.pvW      = 80.0f + 40.0f * sinf(t * 0.8f);
     s_fakeVictron.battA    = 3.0f + 2.5f * sinf(t * 0.5f);
@@ -281,9 +284,12 @@ VictronData victronGetData() {
     s_fakeVictron.kWhToday = 1.25f + 0.01f * t;
     s_fakeVictron.lastMs   = millis();
     return s_fakeVictron;
+#else
+    return VictronData{};   // valid=false → shows "--"
+#endif
 }
 
-bool victronIsConfigured() { return true; }
+bool victronIsConfigured() { return true; }   // true so UI shows "--" instead of "not configured"
 void victronBleSuspend() {}
 void victronBleResume() {}
 void victronBleSetAggressive(bool) {}
@@ -292,4 +298,4 @@ void victronBleStart() {}
 bool victronLoadConfig(String& addr, String& key) { (void)addr; (void)key; return false; }
 void victronSaveConfig(const String& addr, const String& key) { (void)addr; (void)key; }
 
-#endif // BLE
+#endif // ENABLE_BLE
