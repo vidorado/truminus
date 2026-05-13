@@ -1,4 +1,5 @@
 #include "settings.hpp"
+#include "logs.hpp"
 #include <type_traits>
 #ifdef WEBSERVER
 #include <ArduinoJson.h>
@@ -60,28 +61,28 @@ void TMqttSetting::sendToWebsocket(const String &value)
 
 bool TMqttSetting::Validate(int newvalue)
 {
-    Serial.print("Accepted new int value ");
-    Serial.print(newvalue);
-    Serial.print(" for ");
-    Serial.println(ftopic);
+    LOG_SETTINGS_P("Accepted new int value ");
+    LOG_SETTINGS_P(newvalue);
+    LOG_SETTINGS_P(" for ");
+    LOG_SETTINGS_PL(ftopic);
     return true;
 }
 
 bool TMqttSetting::Validate(double newvalue)
 {
-    Serial.print("Accepted new float value ");
-    Serial.print(newvalue);
-    Serial.print(" for ");
-    Serial.println(ftopic);
+    LOG_SETTINGS_P("Accepted new float value ");
+    LOG_SETTINGS_P(newvalue);
+    LOG_SETTINGS_P(" for ");
+    LOG_SETTINGS_PL(ftopic);
     return true;
 }
 
 bool TMqttSetting::Validate(String newvalue)
 {
-    Serial.print("Accepted new string value ");
-    Serial.print(newvalue);
-    Serial.print(" for ");
-    Serial.println(ftopic);
+    LOG_SETTINGS_P("Accepted new string value ");
+    LOG_SETTINGS_P(newvalue);
+    LOG_SETTINGS_P(" for ");
+    LOG_SETTINGS_PL(ftopic);
     return true;
 }
 
@@ -151,14 +152,14 @@ void TMqttSetting::loadPersistedValue() {
         if (v > -9000.0) {
             ffloatvalue = v;  // bypass setValue — MQTT/WS not ready at setup
         }
-        Serial.printf("NVS load %s = %.1f\n", ftopic.c_str(), ffloatvalue);
+        LOG_SETTINGS_PF("NVS load %s = %.1f\n", ftopic.c_str(), ffloatvalue);
     } else if (fkind == SKString) {
         String v = prefs.getString(key.c_str(), "");
         prefs.end();
         if (v.length() > 0) {
             setValue(v, false);  // local=false: no MQTT echo; WS not open yet
         }
-        Serial.printf("NVS load %s = %s\n", ftopic.c_str(), fstringvalue.c_str());
+        LOG_SETTINGS_PF("NVS load %s = %s\n", ftopic.c_str(), fstringvalue.c_str());
     } else {
         prefs.end();
     }
@@ -199,9 +200,9 @@ bool TBoilerSetting::Validate(String newvalue)
             return TMqttSetting::Validate(newvalue);
         }
     }
-    Serial.print(newvalue);
-    Serial.print(" is not a valid value for ");
-    Serial.println(ftopic);
+    LOG_SETTINGS_P(newvalue);
+    LOG_SETTINGS_P(" is not a valid value for ");
+    LOG_SETTINGS_PL(ftopic);
     return false;
 }
 
@@ -232,9 +233,9 @@ bool TFanSetting::Validate(String newvalue)
         setValue(-2,false);
         return TMqttSetting::Validate(newvalue);
     }
-    Serial.print(newvalue);
-    Serial.print(" is not a valid value for ");
-    Serial.println(ftopic);
+    LOG_SETTINGS_P(newvalue);
+    LOG_SETTINGS_P(" is not a valid value for ");
+    LOG_SETTINGS_PL(ftopic);
     return false;
 }
 
@@ -250,9 +251,9 @@ bool TOnOffSetting::Validate(String newvalue)
         setValue(num,false);
         return TMqttSetting::Validate(num);
     }
-    Serial.print(newvalue);
-    Serial.print(" is not a valid value for ");
-    Serial.println(ftopic);
+    LOG_SETTINGS_P(newvalue);
+    LOG_SETTINGS_P(" is not a valid value for ");
+    LOG_SETTINGS_PL(ftopic);
     return false;
 }
 
@@ -274,13 +275,13 @@ bool TTempSetting::Validate(double newvalue)
     if (newvalue>=fminvalue && newvalue<=fmaxvalue) {
         return TMqttSetting::Validate(newvalue);
     }
-    Serial.print("temperature ");
-    Serial.print(newvalue);
-    Serial.print(" out of range ");
-    Serial.print(fminvalue);
-    Serial.print(" - ");
-    Serial.print(fmaxvalue);
-    Serial.print(" for ");
-    Serial.print(ftopic);
+    LOG_SETTINGS_P("temperature ");
+    LOG_SETTINGS_P(newvalue);
+    LOG_SETTINGS_P(" out of range ");
+    LOG_SETTINGS_P(fminvalue);
+    LOG_SETTINGS_P(" - ");
+    LOG_SETTINGS_P(fmaxvalue);
+    LOG_SETTINGS_P(" for ");
+    LOG_SETTINGS_P(ftopic);
     return false;
 }

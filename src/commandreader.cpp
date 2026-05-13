@@ -1,4 +1,5 @@
 #include "commandreader.hpp"
+#include "logs.hpp"
 
 TCommandReader::TCommandReader()
 {
@@ -25,7 +26,7 @@ boolean TCommandReader::Available(String *command, String *param)
             }
             fcount=-1;
             fparam=0;
-            Serial.println();
+            LOG_CLI_PL();
             if (result) {
                 return result;
             }
@@ -42,10 +43,10 @@ boolean TCommandReader::Available(String *command, String *param)
                 if (b==' ') {
                     if (fparam==0 && fcount>0) {
                         fparam=fcount+1;
-                        Serial.print(b);
+                        LOG_CLI_P(b);
                     }
                 } else  {
-                  Serial.print(b);
+                  LOG_CLI_P(b);
                   fcount++;
                   fbuffer[fcount]=b;
                 }

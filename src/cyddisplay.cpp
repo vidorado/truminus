@@ -1,5 +1,6 @@
 #ifdef CYD
 #include "cyddisplay.hpp"
+#include "logs.hpp"
 #include "i18n.hpp"
 #include <esp32_smartdisplay.h>
 #include <WiFi.h>
@@ -223,7 +224,7 @@ static void placeLogoInStatusBar(lv_obj_t* scr) {
 
 static void showSplash(uint32_t ms) {
     s_logoBuf = (uint16_t*)malloc(LOGO_W * LOGO_H * 2);
-    if (!s_logoBuf) { Serial.println("[logo] OOM"); return; }
+    if (!s_logoBuf) { LOG_LVGL_PL("[logo] OOM"); return; }
     memcpy(s_logoBuf, LOGO_RGB565, LOGO_W * LOGO_H * 2);
 
     lv_obj_t* splash = lv_obj_create(NULL);
@@ -258,7 +259,7 @@ static void showSplash(uint32_t ms) {
     lv_tick_inc(5);
     lv_task_handler();   // commit the switch; splash is deleted here
 
-    Serial.printf("[logo] splash %dx%d px (%d bytes)\n", LOGO_W, LOGO_H, LOGO_W * LOGO_H * 2);
+    LOG_LVGL_PF("[logo] splash %dx%d px (%d bytes)\n", LOGO_W, LOGO_H, LOGO_W * LOGO_H * 2);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1334,7 +1335,7 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
 
     lv_mem_monitor_t mon;
     lv_mem_monitor(&mon);
-    Serial.printf("[lvgl] pool used=%u/%u free=%u frag=%u%%\n",
+    LOG_MEM_PF("[lvgl] pool used=%u/%u free=%u frag=%u%%\n",
         (unsigned)mon.total_size - mon.free_size,
         (unsigned)mon.total_size,
         (unsigned)mon.free_size,
@@ -1445,7 +1446,7 @@ void cydDisplayUpdate(bool wifiok, bool trumaok,
     static bool s_lastWifiOk = false;
     if (wifiok != s_lastWifiOk) {
         s_lastWifiOk = wifiok;
-        Serial.printf("[wifi] wifiok changed: %s  heap=%u\n",
+        LOG_WIFI_PF("[wifi] wifiok changed: %s  heap=%u\n",
                       wifiok ? "true" : "false", ESP.getFreeHeap());
     }
     if (wifiok) s_everConnected = true;

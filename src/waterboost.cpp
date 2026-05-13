@@ -1,4 +1,5 @@
 #include "waterboost.hpp"
+#include "logs.hpp"
 
 void TWaterBoost::ShowRemaining()
 {
@@ -7,7 +8,7 @@ void TWaterBoost::ShowRemaining()
 
 void TWaterBoost::ShowState(String state)
 {
-    Serial.println(state);
+    LOG_LIN_PL(state);
 }
 
 void TWaterBoost::Start(bool CurrentWaterRequest)

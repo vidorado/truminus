@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "logs.hpp"
 #ifndef NO_MQTT
 #include <ESP32MQTTClient.h>
 #endif
@@ -129,7 +130,7 @@ static void lvglTask(void*) {
         }
         if (!s_wmLogged && millis() > 12000) {
             s_wmLogged = true;
-            Serial.printf("[wm] lvglTask=%u\n",
+            LOG_MEM_PF("[wm] lvglTask=%u\n",
                 (unsigned)uxTaskGetStackHighWaterMark(NULL));
         }
         vTaskDelay(pdMS_TO_TICKS(5));
@@ -262,7 +263,7 @@ bool mqttEnabled=false;  // false si el usuario omitió la config MQTT
 
 //---------------------------------------------------------------------
 static void logMem(const char* tag) {
-  Serial.printf("[mem] %s free=%u largest=%u\n",
+  LOG_MEM_PF("[mem] %s free=%u largest=%u\n",
     tag,
     (unsigned)ESP.getFreeHeap(),
     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
@@ -272,7 +273,7 @@ void setup() {
   Serial.begin(115200);
   logMem("boot");
   #ifdef BOARD_HAS_PSRAM
-  Serial.printf("[psram] size=%u free=%u largest=%u\n",
+  LOG_MEM_PF("[psram] size=%u free=%u largest=%u\n",
       (unsigned)ESP.getPsramSize(),
       (unsigned)ESP.getFreePsram(),
       (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
@@ -304,9 +305,9 @@ void setup() {
   // Partition label is "littlefs" (renamed from legacy "spiffs" to match its
   // subtype and silence the partition-table warning).
   if (!LittleFS.begin(true, "/littlefs", 10, "littlefs")) {
-    Serial.println("[LittleFS] mount failed");
+    LOG_FS_PL("[LittleFS] mount failed");
   } else {
-    Serial.println("[LittleFS] mounted OK");
+    LOG_FS_PL("[LittleFS] mounted OK");
   }
   #endif
   auto disp = lv_display_get_default();
@@ -318,13 +319,13 @@ void setup() {
   // Load touch calibration from NVS.  If none is stored yet (first boot or
   // after clearing NVS), run the interactive 3-point calibration screen.
   #ifdef FORCE_TOUCH_RECAL
-  { Preferences p; p.begin("touchcal", false); p.clear(); p.end(); Serial.println("[touchcal] cleared"); }
+  { Preferences p; p.begin("touchcal", false); p.clear(); p.end(); LOG_TOUCH_PL("[touchcal] cleared"); }
   #endif
   if (!loadTouchCalibration(touch_calibration_data)) {
-    Serial.println("[touchcal] no NVS data, running calibration");
+    LOG_TOUCH_PL("[touchcal] no NVS data, running calibration");
     runTouchCalibration();
   } else {
-    Serial.printf("[touchcal] loaded: valid=%d aX=%.4f bX=%.4f dX=%d aY=%.4f bY=%.4f dY=%d\n",
+    LOG_TOUCH_PF("[touchcal] loaded: valid=%d aX=%.4f bX=%.4f dX=%d aY=%.4f bY=%.4f dY=%d\n",
         (int)touch_calibration_data.valid,
         touch_calibration_data.alphaX, touch_calibration_data.betaX, (int)touch_calibration_data.deltaX,
         touch_calibration_data.alphaY, touch_calibration_data.betaY, (int)touch_calibration_data.deltaY);
@@ -441,17 +442,17 @@ void setup() {
                         WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
   WiFi.setSleep(false);
   esp_err_t e_ps = esp_wifi_set_ps(WIFI_PS_NONE);   // belt-and-braces: ARP responsivo
-  Serial.printf("[wifi] C5 cfg: band=%d proto=%d ps=%d (0=OK)\n",
+  LOG_WIFI_PF("[wifi] C5 cfg: band=%d proto=%d ps=%d (0=OK)\n",
                 e_band, e_prot, e_ps);
 
   // Event handler para diagnosticar por qué no asocia / no obtiene IP.
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
       switch (event) {
         case ARDUINO_EVENT_WIFI_STA_START:
-          Serial.println("[wifi-evt] STA_START");
+          LOG_WIFI_PL("[wifi-evt] STA_START");
           break;
         case ARDUINO_EVENT_WIFI_STA_CONNECTED:
-          Serial.printf("[wifi-evt] CONNECTED ssid='%.*s' ch=%u auth=%u\n",
+          LOG_WIFI_PF("[wifi-evt] CONNECTED ssid='%.*s' ch=%u auth=%u\n",
                         info.wifi_sta_connected.ssid_len,
                         (const char*)info.wifi_sta_connected.ssid,
                         info.wifi_sta_connected.channel,
@@ -460,23 +461,23 @@ void setup() {
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
           // reason codes: 2=AUTH_EXPIRE 15=4WAY_HANDSHAKE_TIMEOUT
           // 201=NO_AP_FOUND 202=AUTH_FAIL 203=ASSOC_FAIL 204=HANDSHAKE_TIMEOUT
-          Serial.printf("[wifi-evt] DISCONNECTED reason=%u\n",
+          LOG_WIFI_PF("[wifi-evt] DISCONNECTED reason=%u\n",
                         info.wifi_sta_disconnected.reason);
           break;
         case ARDUINO_EVENT_WIFI_STA_GOT_IP: {
-          Serial.printf("[wifi-evt] GOT_IP %s\n",
+          LOG_WIFI_PF("[wifi-evt] GOT_IP %s\n",
                         IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
           // El driver re-aplica power save al asociar. Forzamos OFF otra vez
           // y verificamos por lectura.
           esp_wifi_set_ps(WIFI_PS_NONE);
           wifi_ps_type_t ps;
           if (esp_wifi_get_ps(&ps) == ESP_OK) {
-            Serial.printf("[wifi-evt] ps after GOT_IP = %d (0=NONE)\n", (int)ps);
+            LOG_WIFI_PF("[wifi-evt] ps after GOT_IP = %d (0=NONE)\n", (int)ps);
           }
           break;
         }
         case ARDUINO_EVENT_WIFI_STA_LOST_IP:
-          Serial.println("[wifi-evt] LOST_IP");
+          LOG_WIFI_PL("[wifi-evt] LOST_IP");
           break;
         default: break;
       }
@@ -484,8 +485,8 @@ void setup() {
   #else
   WiFi.mode(WIFI_STA);
   #endif
-  Serial.print("WiFi MAC: ");
-  Serial.println(WiFi.macAddress());
+  LOG_WIFI_P("WiFi MAC: ");
+  LOG_WIFI_PL(WiFi.macAddress());
   #ifdef CYD
   {
     String wifiSSID, wifiPass;
@@ -555,25 +556,25 @@ void setup() {
         }
         // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
         inota=true;
-        Serial.println("Start updating " + type);
+        LOG_OTA_PL("Start updating " + type);
       })
       .onEnd([]() {
         inota=false;
-        Serial.println("\nEnd");
+        LOG_OTA_PL("\nEnd");
       })
       .onProgress([](unsigned int progress, unsigned int total) {
-        Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+        LOG_OTA_PF("Progress: %u%%\r", (progress / (total / 100)));
         esp_task_wdt_reset();
         delay(1);
       })
       .onError([](ota_error_t error) {
         inota=false;
-        Serial.printf("Error[%u]: ", error);
-        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+        LOG_OTA_PF("Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR) LOG_OTA_PL("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) LOG_OTA_PL("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) LOG_OTA_PL("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) LOG_OTA_PL("Receive Failed");
+        else if (error == OTA_END_ERROR) LOG_OTA_PL("End Failed");
       });
 #if ESP_IDF_VERSION_MAJOR >= 5
   // Arduino-ESP32 3.x already initialises the TWDT and registers loopTask
@@ -692,7 +693,7 @@ void CheckWifi() {
     static uint32_t lastDbg = 0;
     if (!wifistarted && millis() - lastDbg > 2000) {
       lastDbg = millis();
-      Serial.printf("[wifi-dbg] status=%d ip=%s rssi=%d\n",
+      LOG_WIFI_PF("[wifi-dbg] status=%d ip=%s rssi=%d\n",
                     WiFi.status(),
                     WiFi.localIP().toString().c_str(),
                     WiFi.RSSI());
@@ -706,8 +707,8 @@ void CheckWifi() {
     wifiok=true;
     lastwifi=millis();
     if (!wifistarted) {
-      Serial.print("IP address ");
-      Serial.println(WiFi.localIP());
+      LOG_WIFI_P("IP address ");
+      LOG_WIFI_PL(WiFi.localIP());
       wifistarted=true;
       #ifdef WEBSERVER
       StartServer(wsCallback, wsConnected);
@@ -757,16 +758,16 @@ static void linBusTask(void*) {
         sniffSt = S_IDLE; sniffN = 0;
         sniffHistoryN = 0;
         memset(sniffHistory, 0, sizeof(sniffHistory));
-        Serial.println("[sniff] escuchando LIN bus — 'sniff off' para parar");
+        LOG_SNIFF_PL("[sniff] escuchando LIN bus — 'sniff off' para parar");
       }
       while (Serial1.available()) {
         uint8_t b = Serial1.read();
         unsigned long now = millis();
         // frame timeout: print partial frame and reset
         if (sniffSt == S_IN_FRAME && sniffN > 0 && now - sniffLastMs > 8) {
-          Serial.printf("%7lu [%02X]", sniffLastMs, sniffPid);
-          for (int i = 0; i < sniffN; i++) Serial.printf(" %02X", sniffBuf[i]);
-          Serial.println(" TIMEOUT");
+          LOG_SNIFF_PF("%7lu [%02X]", sniffLastMs, sniffPid);
+          for (int i = 0; i < sniffN; i++) LOG_SNIFF_PF(" %02X", sniffBuf[i]);
+          LOG_SNIFF_PL(" TIMEOUT");
           sniffSt = S_IDLE; sniffN = 0;
         }
         sniffLastMs = now;
@@ -795,18 +796,18 @@ static void linBusTask(void*) {
                 bool changed = isNew || !sniffHistory[slot].seen ||
                                memcmp(sniffHistory[slot].data, sniffBuf, 9) != 0;
                 if (changed) {
-                  Serial.printf("%7lu [%02X]", now, sniffPid);
+                  LOG_SNIFF_PF("%7lu [%02X]", now, sniffPid);
                   if (!sniffHistory[slot].seen) {
                     // Primera vez: frame completo
-                    for (int i = 0; i < 8; i++) Serial.printf(" %02X", sniffBuf[i]);
-                    Serial.printf(" cs=%02X\n", sniffBuf[8]);
+                    for (int i = 0; i < 8; i++) LOG_SNIFF_PF(" %02X", sniffBuf[i]);
+                    LOG_SNIFF_PF(" cs=%02X\n", sniffBuf[8]);
                   } else {
                     // Sólo bytes que cambiaron: bN:viejo→nuevo
                     for (int i = 0; i < 9; i++) {
                       if (sniffHistory[slot].data[i] != sniffBuf[i])
-                        Serial.printf(" b%d:%02X→%02X", i, sniffHistory[slot].data[i], sniffBuf[i]);
+                        LOG_SNIFF_PF(" b%d:%02X→%02X", i, sniffHistory[slot].data[i], sniffBuf[i]);
                     }
-                    Serial.println();
+                    LOG_SNIFF_PL();
                   }
                   sniffHistory[slot].pid  = sniffPid;
                   sniffHistory[slot].seen = true;
@@ -820,9 +821,9 @@ static void linBusTask(void*) {
       }
       // frame timeout when no bytes available
       if (sniffSt == S_IN_FRAME && sniffN > 0 && millis() - sniffLastMs > 8) {
-        Serial.printf("%7lu [%02X]", sniffLastMs, sniffPid);
-        for (int i = 0; i < sniffN; i++) Serial.printf(" %02X", sniffBuf[i]);
-        Serial.println(" TIMEOUT");
+        LOG_SNIFF_PF("%7lu [%02X]", sniffLastMs, sniffPid);
+        for (int i = 0; i < sniffN; i++) LOG_SNIFF_PF(" %02X", sniffBuf[i]);
+        LOG_SNIFF_PL(" TIMEOUT");
         sniffSt = S_IDLE; sniffN = 0;
       }
       vTaskDelay(pdMS_TO_TICKS(1));
@@ -905,7 +906,7 @@ static void linBusTask(void*) {
         unsigned long elapsed=millis()-truma_reset_max_time;
         if (elapsed>120000) {
           truma_reset=false;
-          Serial.println("Reset time exceeded");
+          LOG_LIN_PL("Reset time exceeded");
           EnableOnlyOnOff(false);
         }
       }
@@ -929,7 +930,7 @@ static void linBusTask(void*) {
         truma_reset=false;
         truma_reset_stop_comm=false;
         EnableOnlyOnOff(false);
-        Serial.println("Reset done, restarting communication");
+        LOG_LIN_PL("Reset done, restarting communication");
       }
     } else {
       if (doforcesend) {
@@ -1001,7 +1002,7 @@ static void linBusTask(void*) {
           if (truma_reset && master_frames[current_master_frame]==onOff && onOff->getCurrentState()==1) {
             truma_reset_delay=millis();
             truma_reset_stop_comm=true;
-            Serial.println("truma reset: truma off, stopping communication for 10 seconds");
+            LOG_LIN_PL("truma reset: truma off, stopping communication for 10 seconds");
           }
         } else {
           master_frames[current_master_frame]->setReadResult(false);
@@ -1031,12 +1032,12 @@ void loop() {
       logMem("loop@10s");
       lv_mem_monitor_t mon;
       lv_mem_monitor(&mon);
-      Serial.printf("[lvgl] pool used=%u/%u free=%u frag=%u%%\n",
+      LOG_MEM_PF("[lvgl] pool used=%u/%u free=%u frag=%u%%\n",
           (unsigned)(mon.total_size - mon.free_size),
           (unsigned)mon.total_size,
           (unsigned)mon.free_size,
           (unsigned)mon.frag_pct);
-      Serial.printf("[wm] loopTask=%u\n",
+      LOG_MEM_PF("[wm] loopTask=%u\n",
           (unsigned)uxTaskGetStackHighWaterMark(NULL));
     }
   }
@@ -1393,11 +1394,11 @@ void handleSetting(const String& topic, const String& payload, boolean local)  {
 #ifndef NO_MQTT
 void callback(const String& topic, const String& payload) {
   mqttok=true;
-  Serial.print("Received mqtt message [");
-  Serial.print(topic);
-  Serial.print("] payload \"");
-  Serial.print(payload);
-  Serial.println("\"");
+  LOG_WEB_P("Received mqtt message [");
+  LOG_WEB_P(topic);
+  LOG_WEB_P("] payload \"");
+  LOG_WEB_P(payload);
+  LOG_WEB_PL("\"");
   Serial.flush();
   handleSetting(topic,payload,false);
 }
@@ -1413,7 +1414,7 @@ void wsCallback(const String& topic, const String& payload)  {
 //(actually called with a special initialization message from the client,
 //right after the connection the client isn't yet ready to receive)
 void wsConnected() {
-  Serial.println("wsConnected callback");
+  LOG_WEB_PL("wsConnected callback");
   //sends the current settings
   for (int i=0; i<SETPOINTS ;i++) {
     MqttSetpoint[i]->PublishValue(false);

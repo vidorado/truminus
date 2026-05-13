@@ -1,4 +1,5 @@
 #include "ultimatronble.hpp"
+#include "logs.hpp"
 #include "victronble.hpp"
 #include <math.h>
 #if defined(BLE)
@@ -47,10 +48,10 @@ static int      s_rxLen     = 0;
 static void notifyCb(NimBLERemoteCharacteristic* /*ch*/,
                      uint8_t* data, size_t len, bool /*isNotify*/) {
     // Log raw bytes so we can verify the response format
-    Serial.printf("[ult] notify %d bytes:", (int)len);
-    for (size_t i = 0; i < len && i < 8; i++) Serial.printf(" %02X", data[i]);
-    if (len > 8) Serial.print(" ...");
-    Serial.println();
+    LOG_ULT_PF("[ult] notify %d bytes:", (int)len);
+    for (size_t i = 0; i < len && i < 8; i++) LOG_ULT_PF(" %02X", data[i]);
+    if (len > 8) LOG_ULT_P(" ...");
+    LOG_ULT_PL();
 
     int space = (int)sizeof(s_rxBuf) - s_rxLen;
     int copy  = min((int)len, space);
@@ -61,11 +62,11 @@ static void notifyCb(NimBLERemoteCharacteristic* /*ch*/,
     // Complete response: dd 03 00 <data_len> [data] chkH chkL 77
     if (s_rxLen >= 4 && s_rxBuf[0] == 0xdd && s_rxBuf[1] == 0x03 && s_rxBuf[2] == 0x00) {
         int expected = 4 + (int)s_rxBuf[3] + 3;
-        Serial.printf("[ult] notify: rxLen=%d expected=%d\n", s_rxLen, expected);
+        LOG_ULT_PF("[ult] notify: rxLen=%d expected=%d\n", s_rxLen, expected);
         if (s_rxLen >= expected && s_rxSem)
             xSemaphoreGive(s_rxSem);
     } else if (s_rxLen >= 4) {
-        Serial.printf("[ult] notify: header mismatch %02X %02X %02X\n",
+        LOG_ULT_PF("[ult] notify: header mismatch %02X %02X %02X\n",
                       s_rxBuf[0], s_rxBuf[1], s_rxBuf[2]);
     }
 }
@@ -107,7 +108,7 @@ static void parseResponse(const uint8_t* d, int len) {
         ud.tempC = (rawT - 2731) / 10.0f;
     }
 
-    Serial.printf("[ult] SOC=%u%% V=%.1fV A=%.2fA T=%.1f°C\n",
+    LOG_ULT_PF("[ult] SOC=%u%% V=%.1fV A=%.2fA T=%.1f°C\n",
                   ud.soc, ud.battV, ud.battA, ud.tempC);
 
     xSemaphoreTake(s_dataMux, portMAX_DELAY);
@@ -118,7 +119,7 @@ static void parseResponse(const uint8_t* d, int len) {
 // ── Single poll: connect → subscribe → query → parse → disconnect ─────────
 static bool pollUltratron() {
     uint32_t t0 = millis();
-    Serial.printf("[ult] poll start → %s\n", s_targetAddr.c_str());
+    LOG_ULT_PF("[ult] poll start → %s\n", s_targetAddr.c_str());
 
     victronBleSuspend();
     vTaskDelay(pdMS_TO_TICKS(400));
@@ -133,18 +134,18 @@ static bool pollUltratron() {
 
     uint32_t tConn = millis();
     if (!client->connect(addr)) {
-        Serial.printf("[ult] connect failed (+%lums)\n", millis() - t0);
+        LOG_ULT_PF("[ult] connect failed (+%lums)\n", millis() - t0);
         NimBLEDevice::deleteClient(client);
         victronBleResume();
         return false;
     }
-    Serial.printf("[ult] connected (+%lums, conn took %lums)\n",
+    LOG_ULT_PF("[ult] connected (+%lums, conn took %lums)\n",
                   millis() - t0, millis() - tConn);
 
     uint32_t tSvc = millis();
     NimBLERemoteService* svc = client->getService("ff00");
     if (!svc) {
-        Serial.printf("[ult] service ff00 not found (+%lums)\n", millis() - t0);
+        LOG_ULT_PF("[ult] service ff00 not found (+%lums)\n", millis() - t0);
         client->disconnect();
         NimBLEDevice::deleteClient(client);
         victronBleResume();
@@ -154,24 +155,24 @@ static bool pollUltratron() {
     NimBLERemoteCharacteristic* notifChar = svc->getCharacteristic("ff01");
     NimBLERemoteCharacteristic* writeChar = svc->getCharacteristic("ff02");
     if (!notifChar || !writeChar) {
-        Serial.printf("[ult] ff01/ff02 chars not found (+%lums)\n", millis() - t0);
+        LOG_ULT_PF("[ult] ff01/ff02 chars not found (+%lums)\n", millis() - t0);
         client->disconnect();
         NimBLEDevice::deleteClient(client);
         victronBleResume();
         return false;
     }
-    Serial.printf("[ult] service+chars discovered (+%lums, disc took %lums)\n",
+    LOG_ULT_PF("[ult] service+chars discovered (+%lums, disc took %lums)\n",
                   millis() - t0, millis() - tSvc);
 
     uint32_t tSub = millis();
     if (!notifChar->subscribe(true, notifyCb)) {
-        Serial.printf("[ult] subscribe failed (+%lums)\n", millis() - t0);
+        LOG_ULT_PF("[ult] subscribe failed (+%lums)\n", millis() - t0);
         client->disconnect();
         NimBLEDevice::deleteClient(client);
         victronBleResume();
         return false;
     }
-    Serial.printf("[ult] subscribed (+%lums, sub took %lums)\n",
+    LOG_ULT_PF("[ult] subscribed (+%lums, sub took %lums)\n",
                   millis() - t0, millis() - tSub);
 
     // ── Optional password authentication ──────────────────────────────────
@@ -199,7 +200,7 @@ static bool pollUltratron() {
         while (xSemaphoreTake(s_rxSem, 0) == pdTRUE) {}
 
         writeChar->writeValue(auth, sizeof(auth), false);
-        Serial.printf("[ult] auth sent (pass='%s')\n", s_password.c_str());
+        LOG_ULT_PF("[ult] auth sent (pass='%s')\n", s_password.c_str());
 
         // Best-effort wait for an auth ACK — BMS is usually ready within ~300 ms.
         xSemaphoreTake(s_rxSem, pdMS_TO_TICKS(500));
@@ -217,10 +218,10 @@ static bool pollUltratron() {
         // false = Write Without Response — JBD BMS doesn't ack writes
         writeChar->writeValue(cmd, sizeof(cmd), false);
         uint32_t tWait = millis();
-        Serial.printf("[ult] command sent (attempt %d), waiting...\n", attempt);
+        LOG_ULT_PF("[ult] command sent (attempt %d), waiting...\n", attempt);
 
         got = (xSemaphoreTake(s_rxSem, pdMS_TO_TICKS(2000)) == pdTRUE);
-        Serial.printf("[ult] attempt %d: %s (%lums)\n",
+        LOG_ULT_PF("[ult] attempt %d: %s (%lums)\n",
                       attempt, got ? "OK" : "timeout", millis() - tWait);
     }
 
@@ -229,19 +230,19 @@ static bool pollUltratron() {
     victronBleResume();
 
     if (!got) {
-        Serial.printf("[ult] poll failed (total %lums)\n", millis() - t0);
+        LOG_ULT_PF("[ult] poll failed (total %lums)\n", millis() - t0);
         return false;
     }
 
     parseResponse(s_rxBuf, s_rxLen);
-    Serial.printf("[ult] poll done (total %lums)\n", millis() - t0);
+    LOG_ULT_PF("[ult] poll done (total %lums)\n", millis() - t0);
     return true;
 }
 
 // ── Periodic poll task ────────────────────────────────────────────────────
 static void ultimatronTask(void* /*arg*/) {
     vTaskDelay(pdMS_TO_TICKS(22000));   // let Victron and WiFi/MQTT settle first
-    Serial.println("[ult] poll task started");
+    LOG_ULT_PL("[ult] poll task started");
 
     for (;;) {
         pollUltratron();
@@ -282,7 +283,7 @@ void ultimatronBleInit() {
 
     // NimBLE already initialised by victronBleInit(); calling init("") is idempotent.
     xTaskCreate(ultimatronTask, "ult_batt", 3072, nullptr, 1, &s_taskHandle);
-    Serial.printf("[ult] Ultimatron init ok, target=%s pass=%s\n",
+    LOG_ULT_PF("[ult] Ultimatron init ok, target=%s pass=%s\n",
                   s_targetAddr.c_str(), s_password.length() ? "yes" : "no");
 }
 

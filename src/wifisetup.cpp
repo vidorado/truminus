@@ -1,5 +1,6 @@
 #ifdef CYD
 #include "wifisetup.hpp"
+#include "logs.hpp"
 #include "i18n.hpp"
 #include "victronble.hpp"
 #include "ultimatronble.hpp"
@@ -370,7 +371,7 @@ void runTouchCalibration() {
 
     calBuildStep(scr, 0);
 
-    Serial.println("[CAL] Iniciando calibracion de pantalla. Toca los 3 puntos.");
+    LOG_TOUCH_PL("[CAL] Iniciando calibracion de pantalla. Toca los 3 puntos.");
 
     for (int step = 0; step < CAL_N; ) {
         uint32_t now = millis();
@@ -382,7 +383,7 @@ void runTouchCalibration() {
         if (s_calTapped) {
             s_calTapped = false;
             s_calTouchPts[step] = s_calLastPt;
-            Serial.printf("[CAL] Punto %d: pantalla=(%d,%d)  raw_touch=(%d,%d)\n",
+            LOG_TOUCH_PF("[CAL] Punto %d: pantalla=(%d,%d)  raw_touch=(%d,%d)\n",
                 step,
                 (int)CAL_SX[step], (int)CAL_SY[step],
                 (int)s_calLastPt.x, (int)s_calLastPt.y);
@@ -405,24 +406,24 @@ void runTouchCalibration() {
         unrotateToPanel({CAL_SX[1], CAL_SY[1]}),
         unrotateToPanel({CAL_SX[2], CAL_SY[2]})
     };
-    Serial.printf("[CAL] Landscape targets: (%d,%d) (%d,%d) (%d,%d)\n",
+    LOG_TOUCH_PF("[CAL] Landscape targets: (%d,%d) (%d,%d) (%d,%d)\n",
         CAL_SX[0], CAL_SY[0], CAL_SX[1], CAL_SY[1], CAL_SX[2], CAL_SY[2]);
-    Serial.printf("[CAL] Portrait targets:  (%d,%d) (%d,%d) (%d,%d)\n",
+    LOG_TOUCH_PF("[CAL] Portrait targets:  (%d,%d) (%d,%d) (%d,%d)\n",
         sp[0].x, sp[0].y, sp[1].x, sp[1].y, sp[2].x, sp[2].y);
-    Serial.printf("[CAL] Panel raw touches: (%d,%d) (%d,%d) (%d,%d)\n",
+    LOG_TOUCH_PF("[CAL] Panel raw touches: (%d,%d) (%d,%d) (%d,%d)\n",
         s_calTouchPts[0].x, s_calTouchPts[0].y,
         s_calTouchPts[1].x, s_calTouchPts[1].y,
         s_calTouchPts[2].x, s_calTouchPts[2].y);
     touch_calibration_data = smartdisplay_compute_touch_calibration(sp, s_calTouchPts);
     saveTouchCalibration(touch_calibration_data);
 
-    Serial.printf("[CAL] Calibracion guardada. valid=%d\n",
+    LOG_TOUCH_PF("[CAL] Calibracion guardada. valid=%d\n",
         (int)touch_calibration_data.valid);
-    Serial.printf("[CAL]   alphaX=%.5f  betaX=%.5f  deltaX=%d\n",
+    LOG_TOUCH_PF("[CAL]   alphaX=%.5f  betaX=%.5f  deltaX=%d\n",
         touch_calibration_data.alphaX,
         touch_calibration_data.betaX,
         (int)touch_calibration_data.deltaX);
-    Serial.printf("[CAL]   alphaY=%.5f  betaY=%.5f  deltaY=%d\n",
+    LOG_TOUCH_PF("[CAL]   alphaY=%.5f  betaY=%.5f  deltaY=%d\n",
         touch_calibration_data.alphaY,
         touch_calibration_data.betaY,
         (int)touch_calibration_data.deltaY);
@@ -492,7 +493,7 @@ static void doScan() {
 
     WiFi.scanDelete();
     int n = WiFi.scanNetworks(/*async=*/true);
-    Serial.printf("[wifisetup] scanNetworks(async start)=%d\n", n);
+    LOG_WIFI_SETUP_PF("[wifisetup] scanNetworks(async start)=%d\n", n);
 
     if (n >= 0) {
         // Scan finished immediately (cached results?)
@@ -513,7 +514,7 @@ static void doScan() {
             }
         }
     }
-    Serial.printf("[wifisetup] scanNetworks(async done)=%d\n", n);
+    LOG_WIFI_SETUP_PF("[wifisetup] scanNetworks(async done)=%d\n", n);
 
     lv_obj_add_flag(s_spinner, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_dropdown, LV_OBJ_FLAG_HIDDEN);
@@ -1084,10 +1085,10 @@ static String runSolarScan() {
 
     victronBleSuspend();                  // stop monitoring task if running
 
-    Serial.printf("[scan] heap before BLE init: free=%u largest=%u\n",
+    LOG_BLE_SCAN_PF("[scan] heap before BLE init: free=%u largest=%u\n",
                   ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     NimBLEDevice::init("");               // idempotent
-    Serial.printf("[scan] heap after BLE init:  free=%u\n", ESP.getFreeHeap());
+    LOG_BLE_SCAN_PF("[scan] heap after BLE init:  free=%u\n", ESP.getFreeHeap());
     NimBLEScan* scan = NimBLEDevice::getScan();
     scan->stop();
     scan->setScanCallbacks(new VictronSetupScanCb(), /*wantDuplicates=*/true);

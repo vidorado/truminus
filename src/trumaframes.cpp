@@ -1,4 +1,5 @@
 #include "trumaframes.hpp"
+#include "logs.hpp"
 #include "globals.hpp"
 #include <string.h>
 #ifdef WEBSERVER
@@ -51,9 +52,9 @@ void TMqttPublisherBase::setValue(uint32_t newvalue)
     #endif
     if (valuechanged || fforcesend || elapsed>10000) {
         flastsent=now;
-        //Serial.print(ftopic);
-        //Serial.print(" ");
-        //Serial.println(fvalue);
+        //LOG_LIN_P(ftopic);
+        //LOG_LIN_P(" ");
+        //LOG_LIN_PL(fvalue);
         #ifndef NO_MQTT
         mqttClient.publish(BaseTopicStatus+ftopic,payload);
         #endif
@@ -90,12 +91,12 @@ void TFrameBase::setReadResult(boolean ok)
 {
     if (fdataok!=ok) {
         fdataok=ok;
-        Serial.print("read frame ");
-        Serial.print(fframeid,16);
+        LOG_LIN_P("read frame ");
+        LOG_LIN_P(fframeid,16);
         if (ok) {
-            Serial.println(" ok");
+            LOG_LIN_PL(" ok");
         } else {
-            Serial.println(" error");
+            LOG_LIN_PL(" error");
         }
     }
 }
@@ -273,8 +274,8 @@ TFrameSetTemp::TFrameSetTemp(uint8_t frameid)
 void TFrameSetTemp::setTemperature(double temp)
 {
     ftemp = temp;
-    //Serial.print("Setting temperature to ");
-    //Serial.println(ftemp);
+    //LOG_LIN_P("Setting temperature to ");
+    //LOG_LIN_PL(ftemp);
     TempToRawKelvin(ftemp,&fdata[0]);
 }
 
@@ -576,12 +577,12 @@ void TMasterFrame::setReadResult(boolean ok)
 {
     if (fdataok!=ok) {
         fdataok=ok;
-        Serial.print("read master frame ");
-        Serial.print(fsid,16);
+        LOG_LIN_P("read master frame ");
+        LOG_LIN_P(fsid,16);
         if (ok) {
-            Serial.println(" ok");
+            LOG_LIN_PL(" ok");
         } else {
-            Serial.println(" error");
+            LOG_LIN_PL(" error");
         }
     }
 }
@@ -621,10 +622,10 @@ bool TOnOff::CheckReply()
     frequestedstate = freply[3];
     fcurrentstate = freply[4];
     /*
-    Serial.print("req.state ");
-    Serial.print(frequestedstate,16);
-    Serial.print(" current ");
-    Serial.println(fcurrentstate, 16);
+    LOG_LIN_P("req.state ");
+    LOG_LIN_P(frequestedstate,16);
+    LOG_LIN_P(" current ");
+    LOG_LIN_PL(fcurrentstate, 16);
     */
     fpublishers[0]->setValue(frequestedstate);
     fpublishers[1]->setValue(fcurrentstate);
@@ -692,12 +693,12 @@ bool TGetErrorInfo::CheckReply()
     ferrorCode=freply[5];
     ferrorShort=freply[6];
     /*
-    Serial.print("err.type ");
-    Serial.print(ferrorClass,16);
-    Serial.print(" code ");
-    Serial.print(ferrorCode,16);
-    Serial.print(" short ");
-    Serial.println(ferrorShort,16);
+    LOG_LIN_P("err.type ");
+    LOG_LIN_P(ferrorClass,16);
+    LOG_LIN_P(" code ");
+    LOG_LIN_P(ferrorCode,16);
+    LOG_LIN_P(" short ");
+    LOG_LIN_PL(ferrorShort,16);
     */
     fpublishers[0]->setValue(ferrorClass);
     fpublishers[1]->setValue(ferrorCode);

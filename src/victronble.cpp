@@ -1,4 +1,5 @@
 #include "victronble.hpp"
+#include "logs.hpp"
 #include <math.h>
 #if defined(BLE)
 #include <Preferences.h>
@@ -161,7 +162,7 @@ class VictronScanCb : public NimBLEScanCallbacks {
 // ── Periodic scan task (Core 1) ───────────────────────────────────────────
 static void bleTask(void* /*arg*/) {
     vTaskDelay(pdMS_TO_TICKS(8000));   // wait for WiFi/MQTT to finish init
-    Serial.println("[ble] scan task started");
+    LOG_BLE_PL("[ble] scan task started");
     for (;;) {
         if (s_bleScan) {
             s_bleScan->clearResults();
@@ -188,7 +189,7 @@ void victronBleInit() {
     String addr, keyHex;
     if (!victronLoadConfig(addr, keyHex)) return;
     if (!hexToBytes(keyHex, s_aesKey, 16)) {
-        Serial.println("[ble] bad encryption key — not 32 valid hex chars");
+        LOG_BLE_PL("[ble] bad encryption key — not 32 valid hex chars");
         return;
     }
 
@@ -196,10 +197,10 @@ void victronBleInit() {
     s_configured  = true;
     s_dataMux     = xSemaphoreCreateMutex();
 
-    Serial.printf("[ble] heap before init: free=%u largest=%u\n",
+    LOG_BLE_PF("[ble] heap before init: free=%u largest=%u\n",
                   ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     NimBLEDevice::init("");
-    Serial.printf("[ble] heap after init:  free=%u\n", ESP.getFreeHeap());
+    LOG_BLE_PF("[ble] heap after init:  free=%u\n", ESP.getFreeHeap());
     s_bleScan = NimBLEDevice::getScan();
     s_bleScan->setScanCallbacks(new VictronScanCb(), /*wantDuplicates=*/true);
     s_bleScan->setActiveScan(true);    // active scan needed to receive SCAN_RSP (Instant Readout)
@@ -208,7 +209,7 @@ void victronBleInit() {
     s_bleScan->setMaxResults(0);       // no caching — fire onResult for every adv
 
     xTaskCreate(bleTask, "ble_vic", 3072, nullptr, 1, &s_bleTaskHandle);
-    Serial.printf("[ble] Victron BLE init ok, target=%s\n", s_targetAddr.c_str());
+    LOG_BLE_PF("[ble] Victron BLE init ok, target=%s\n", s_targetAddr.c_str());
 }
 
 void victronBleSuspend() {

@@ -1,4 +1,5 @@
 #include "webserver.hpp"
+#include "logs.hpp"
 #ifdef WEBSERVER
 #include <WiFi.h>
 
@@ -46,8 +47,8 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
     data[len] = 0;
     String message = (char*)data;
-    Serial.print("Received websocket message ");
-    Serial.println(message);
+    LOG_WEB_P("Received websocket message ");
+    LOG_WEB_PL(message);
     if (message=="settings") {
       // Drain any pending bus messages before sending the init burst,
       // so we don't compete with queued traffic for the per-client queue.
@@ -67,11 +68,11 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
       if (id && value) {
         if (wsCb!=NULL) { wsCb(id,value); }
       } else {
-        Serial.println("missing id or value");
+        LOG_WEB_PL("missing id or value");
       }
     } else {
-      Serial.print("Error decoding json: ");
-      Serial.println(error.c_str());
+      LOG_WEB_P("Error decoding json: ");
+      LOG_WEB_PL(error.c_str());
     }
   }
 }
@@ -89,18 +90,18 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
   switch (type) {
     case WS_EVT_CONNECT:
       if (server->count() > WS_MAX_CLIENTS) {
-        Serial.printf("WebSocket client #%u rejected (max %u)\n",
+        LOG_WEB_PF("WebSocket client #%u rejected (max %u)\n",
                       client->id(), WS_MAX_CLIENTS);
         client->close(1013, "busy");
         break;
       }
-      Serial.printf("WebSocket client #%u connected from %s  heap=%u\n",
+      LOG_WEB_PF("WebSocket client #%u connected from %s  heap=%u\n",
                     client->id(), client->remoteIP().toString().c_str(),
                     ESP.getFreeHeap());
       if (wsCb!=NULL) { wsCb("/ping","1"); }
       break;
     case WS_EVT_DISCONNECT:
-      Serial.printf("WebSocket client #%u disconnected  heap=%u\n",
+      LOG_WEB_PF("WebSocket client #%u disconnected  heap=%u\n",
                     client->id(), ESP.getFreeHeap());
       break;
     case WS_EVT_DATA:
@@ -149,18 +150,18 @@ void wsQueueDrain()
 // StartServer
 // ═════════════════════════════════════════════════════════════════════════════
 void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
-  Serial.println("[web] StartServer: entering");
+  LOG_WEB_PL("[web] StartServer: entering");
   wsCb   = cb;
   wsConn = conn;
 
   // Create the cross-core WS message queue once.
   if (!wsQueue) {
     wsQueue = xQueueCreate(WS_QUEUE_LEN, WS_QUEUE_SIZE);
-    Serial.printf("[web] wsQueue created (%d slots x %d bytes)\n", WS_QUEUE_LEN, WS_QUEUE_SIZE);
+    LOG_WEB_PF("[web] wsQueue created (%d slots x %d bytes)\n", WS_QUEUE_LEN, WS_QUEUE_SIZE);
   }
 
   initWebSocket();
-  Serial.println("[web] initWebSocket done");
+  LOG_WEB_PL("[web] initWebSocket done");
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* r) {
     sendMemFile(r, wf_index_html, wf_index_html_size, "text/html", wf_index_html_gzipped);
@@ -205,19 +206,19 @@ void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
   });
 
   server.onNotFound([](AsyncWebServerRequest* req) {
-    Serial.printf("[404] %s\n", req->url().c_str());
+    LOG_WEB_PF("[404] %s\n", req->url().c_str());
     req->send(404, "text/plain", "Not found");
   });
 
   // DEBUG: log every incoming request before routing (helps diagnose
   // "no response at all" situations).
   server.on("/_alive", HTTP_GET, [](AsyncWebServerRequest* req) {
-    Serial.println("[web] /_alive hit");
+    LOG_WEB_PL("[web] /_alive hit");
     req->send(200, "text/plain", "alive");
   });
 
   server.begin();
-  Serial.printf("[web] server.begin() done — listening on http://%s/\n",
+  LOG_WEB_PF("[web] server.begin() done — listening on http://%s/\n",
                 WiFi.localIP().toString().c_str());
 }
 
