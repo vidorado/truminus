@@ -19,21 +19,25 @@
 
 // Soft cap on concurrent emitting responses. Browsers open up to 6 parallel
 // TCP connections to the same host; after a cache-bust all referenced
-// assets invalidate at once and the burst can pressure internal SRAM (each
-// AsyncCallbackResponse copies its chunk into AsyncTCP's send buffer,
-// which lives in DMA-capable heap).
+// assets invalidate at once and the burst can pressure internal SRAM.
 //
 // We accept every request — rejecting with 503 is useless because browsers
 // do not retry sub-resources — and call send() immediately so the
 // framework does not 501 the handler. Backpressure happens inside the
 // chunk-fill callback: while too many responses are already emitting data,
-// the callback returns RESPONSE_TRY_AGAIN. AsyncTCP keeps the connection
-// idle and re-invokes the callback later, so the response object exists
-// but its TCP send buffer stays empty until a slot frees.
+// the callback returns RESPONSE_TRY_AGAIN.
+//
+// Cap=4 (was 2): with LVGL pool moved to PSRAM the internal SRAM headroom
+// is comfortable (~60 KB at runtime), so two extra parallel responses
+// fit. Cap=2 was too tight under cache-bust reloads — 4 connections sat
+// in TRY_AGAIN long enough to interleave with the WebSocket handshake,
+// AsyncTCP's queue (CONFIG_ASYNC_TCP_QUEUE_SIZE=8) saturated, and the
+// largest response (the PNG, ~7 KB ungzipped) ended up truncated mid-
+// stream producing ERR_CONTENT_LENGTH_MISMATCH.
 //
 // The counter is only mutated from the async_tcp task (fill callback +
 // onDisconnect), so no mutex is needed beyond std::atomic for ordering.
-static constexpr int MAX_EMITTING_HTTP = 2;
+static constexpr int MAX_EMITTING_HTTP = 4;
 static std::atomic<int> s_emittingHttp{0};
 
 struct ChunkState {

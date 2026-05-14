@@ -1393,13 +1393,17 @@ void loop() {
     }
   }
   #ifdef WEBSERVER
-  // Drain any messages queued from Core 0 (linBusTask) before servicing clients.
-  wsQueueDrain();
-  // Limit concurrent WS clients to keep heap usage bounded; matches WS_MAX_CLIENTS
-  // in webserver.cpp. Inactive/stale clients past the limit are evicted here.
+  // Order matters: prune stale WS clients BEFORE draining the queue. When a
+  // browser disconnects, async_tcp frees the underlying AsyncClient but the
+  // AsyncWebSocketClient entry survives until cleanupClients() runs — and
+  // ws.textAll() from wsQueueDrain() would dereference the dangling pointer
+  // (crash at AsyncWebSocket.h:189 _client return).
+  //
   // Cap 4 (was 2 on CYD) so that a page reload — where the browser briefly
   // holds the old WS open while opening a new one — does not evict either.
   ws.cleanupClients(4);
+  // Drain any messages queued from Core 0 (linBusTask) before servicing clients.
+  wsQueueDrain();
   #endif
 }
 
