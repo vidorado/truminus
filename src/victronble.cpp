@@ -112,15 +112,30 @@ static bool aesCtrDecrypt(const uint8_t* cipher, int len,
 //   [6-7]  Yield today      (uint16 LE, ×10 → Wh)
 //   [8-9]  PV power         (uint16 LE, W)
 static void parseMfrData(const uint8_t* mfr, int len) {
-    if (len < 18) return;
-    if (mfr[0] != 0xE1 || mfr[1] != 0x02) return;
-    if (mfr[2] != 0x10) return;   // Instant Readout marker — only in SCAN_RSP
+    if (len < 18) {
+        LOG_BLE_PF("[ble] adv too short len=%d (need >=18)\n", len);
+        return;
+    }
+    if (mfr[0] != 0xE1 || mfr[1] != 0x02) {
+        LOG_BLE_PF("[ble] adv bad company id %02X %02X (want E1 02)\n", mfr[0], mfr[1]);
+        return;
+    }
+    if (mfr[2] != 0x10) {
+        LOG_BLE_PF("[ble] adv not Instant Readout marker=%02X (want 10)\n", mfr[2]);
+        return;   // Instant Readout marker — only in SCAN_RSP
+    }
 
     // Key-check byte: must match key[0] before attempting decryption
-    if (mfr[9] != s_aesKey[0]) return;
+    if (mfr[9] != s_aesKey[0]) {
+        LOG_BLE_PF("[ble] key mismatch adv=%02X cfg=%02X\n", mfr[9], s_aesKey[0]);
+        return;
+    }
 
     uint8_t out[16] = {};
-    if (!aesCtrDecrypt(mfr + 10, 16, mfr[7], mfr[8], out)) return;
+    if (!aesCtrDecrypt(mfr + 10, 16, mfr[7], mfr[8], out)) {
+        LOG_BLE_PL("[ble] AES decrypt failed");
+        return;
+    }
 
     int16_t  rawV  = (int16_t)((uint16_t)out[2] | ((uint16_t)out[3] << 8));
     int16_t  rawA  = (int16_t)((uint16_t)out[4] | ((uint16_t)out[5] << 8));
@@ -149,16 +164,21 @@ class VictronScanCb : public NimBLEScanCallbacks {
     void onResult(const NimBLEAdvertisedDevice* dev) override {
         if (!dev->haveManufacturerData()) return;
 
-        std::string raw = dev->getManufacturerData();
-        const uint8_t* mfr = (const uint8_t*)raw.data();
-        int mlen = (int)raw.size();
-
-
         // Filter by MAC if configured
         if (s_targetAddr.length() > 0) {
             String devAddr = normaliseAddr(dev->getAddress().toString());
             if (devAddr != s_targetAddr) return;
         }
+
+        std::string raw = dev->getManufacturerData();
+        const uint8_t* mfr = (const uint8_t*)raw.data();
+        int mlen = (int)raw.size();
+
+        LOG_BLE_PF("[ble] adv from %s len=%d head=%02X%02X%02X\n",
+                      dev->getAddress().toString().c_str(), mlen,
+                      mlen > 0 ? mfr[0] : 0,
+                      mlen > 1 ? mfr[1] : 0,
+                      mlen > 2 ? mfr[2] : 0);
 
         parseMfrData(mfr, mlen);
     }
@@ -193,13 +213,15 @@ static void bleSupervisorTask(void* /*arg*/) {
         // ── 1. Burst scan for Victron ─────────────────────────────────────
         if (s_configured && s_bleScan) {
             s_bleScan->clearResults();
-            // NimBLE 2.x: start(duration_ms, isContinue). The previous
-            // codebase passed seconds (start(2,...)) which on 2.x means
-            // 2 ms — the scan never effectively ran. 5000 ms = 5 s burst.
-            int rc = s_bleScan->start(5000, false);
-            if (rc != 0) {
+            // NimBLE 2.x: start(duration_ms, isContinue) returns bool
+            // (true = ok, false = error). Previous code mis-treated it as
+            // a NimBLE 1.x-style int rc, so every successful scan counted
+            // as a failure and the backoff dropped polling to one every
+            // 2 minutes.
+            bool ok = s_bleScan->start(5000, false);
+            if (!ok) {
                 failCount++;
-                LOG_BLE_PF("[ble-sup] scan start rc=%d (fail #%d)\n", rc, failCount);
+                LOG_BLE_PF("[ble-sup] scan start failed (#%d)\n", failCount);
             } else {
                 failCount = 0;
             }

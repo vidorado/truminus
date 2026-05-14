@@ -104,6 +104,7 @@ static void lvRun(uint32_t ms = 10) {
         lv_tick_inc(now - s_lvLastTick);
         s_lvLastTick = now;
         lv_timer_handler();
+        esp_task_wdt_reset();   // some callers loop here for up to 15 s
         delay(2);
     } while (millis() < end);
 }
