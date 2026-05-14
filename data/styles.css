@@ -1,7 +1,7 @@
 /* ── Font Awesome 5 subset ────────────────────────────────────────────── */
 @font-face {
   font-family: 'fa5s';
-  src: url('fa-subset.woff') format('woff');
+  src: url('fa-subset.woff?v=552c4565') format('woff');
   font-weight: 900;
   font-style: normal;
 }
