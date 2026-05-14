@@ -1397,11 +1397,9 @@ void loop() {
   wsQueueDrain();
   // Limit concurrent WS clients to keep heap usage bounded; matches WS_MAX_CLIENTS
   // in webserver.cpp. Inactive/stale clients past the limit are evicted here.
-  #ifdef CYD
-  ws.cleanupClients(2);
-  #else
+  // Cap 4 (was 2 on CYD) so that a page reload — where the browser briefly
+  // holds the old WS open while opening a new one — does not evict either.
   ws.cleanupClients(4);
-  #endif
   #endif
 }
 
@@ -1512,6 +1510,15 @@ void wsConnected() {
   //sends the current settings
   for (int i=0; i<SETPOINTS ;i++) {
     MqttSetpoint[i]->PublishValue(false);
+  }
+  // Send WiFi SSID so the web status bar can display it like the CYD does.
+  {
+    String ssid = WiFi.SSID();
+    char buf[96];
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"status\",\"id\":\"ssid\",\"value\":\"%s\"}",
+             ssid.c_str());
+    ws.textAll(buf);
   }
   // Send current energy mode index
   {

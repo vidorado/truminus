@@ -5,6 +5,7 @@ var gateway = 'ws://' + window.location.hostname +
               (window.location.port ? ':' + window.location.port : '') + '/ws';
 var wserror      = true;
 var linerror     = false;
+var s_ssid       = '';
 
 // ── Application state ─────────────────────────────────────────────────────
 var s_temp        = 20.0;
@@ -24,6 +25,9 @@ function updateStatusBar() {
     var msg = document.getElementById('statusMsg');
     var ip  = document.getElementById('deviceIp');
     if (!msg) return;
+    // Format: "SSID  IP" — matches the CYD physical status bar.
+    var addr = window.location.hostname;
+    var ipText = s_ssid ? (s_ssid + '  ' + addr) : addr;
     if (wserror) {
         msg.textContent  = t('ws_conn');
         msg.style.color  = '#ffaa00';
@@ -31,11 +35,11 @@ function updateStatusBar() {
     } else if (linerror) {
         msg.textContent  = t('ws_no_lin');
         msg.style.color  = '#ff4444';
-        if (ip) { ip.textContent = window.location.hostname; }
+        if (ip) { ip.textContent = ipText; }
     } else {
         msg.textContent  = '';
         msg.style.color  = '';
-        if (ip) { ip.textContent = window.location.hostname; }
+        if (ip) { ip.textContent = ipText; }
     }
 }
 updateStatusBar();
@@ -106,6 +110,12 @@ function applySetting(id, value) {
 function applyStatus(id, value) {
     var el = document.getElementById(id);
     if (el) el.textContent = value;
+
+    if (id === 'ssid') {
+        s_ssid = value || '';
+        updateStatusBar();
+        return;
+    }
 
     if (id === 'linok') {
         linerror = parseInt(value) !== 1;

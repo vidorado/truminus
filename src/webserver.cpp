@@ -78,12 +78,11 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
 }
 
 // Cap the number of concurrent WebSocket clients. Each client costs ~10 KB of
-// heap (AsyncTCP control + send/recv buffers). On CYD only ~33 KB free at runtime.
-#ifdef CYD
-static constexpr uint8_t WS_MAX_CLIENTS = 2;
-#else
+// heap (AsyncTCP control + send/recv buffers). Cap 4 leaves room for browser
+// reload overlaps (old WS not yet GC'd while new one opens) without evicting.
+// With LVGL pool in PSRAM and BLE memory in check there is enough internal
+// SRAM (~60 KB at runtime) to host 4 clients on C5.
 static constexpr uint8_t WS_MAX_CLIENTS = 4;
-#endif
 
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
              AwsEventType type, void *arg, uint8_t *data, size_t len) {
