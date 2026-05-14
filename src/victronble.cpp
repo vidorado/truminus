@@ -202,7 +202,15 @@ static void bleSupervisorTask(void* /*arg*/) {
     vTaskDelay(pdMS_TO_TICKS(15000));   // let WiFi/MQTT/web settle first
     LOG_BLE_PL("[ble-sup] supervisor task started");
 
-    int failCount = 0;
+    int      failCount  = 0;
+    uint32_t cycleCount = 0;
+
+    // Victron Instant Readout is published at ~1 Hz; the display marks
+    // data stale at age >120 s. Run a Victron scan every cycle so a
+    // single missed advertisement does not blow the staleness budget.
+    // The BMS (SOC, pack voltage, current) changes slowly — poll once
+    // every N cycles to amortise its ~5-10 s GATT round-trip.
+    constexpr uint32_t ULTIMATRON_EVERY_N_CYCLES = 6;   // ~60 s with 10 s cycle
 
     for (;;) {
         if (s_bleStopped || s_bleSuspended) {
@@ -213,11 +221,7 @@ static void bleSupervisorTask(void* /*arg*/) {
         // ── 1. Burst scan for Victron ─────────────────────────────────────
         if (s_configured && s_bleScan) {
             s_bleScan->clearResults();
-            // NimBLE 2.x: start(duration_ms, isContinue) returns bool
-            // (true = ok, false = error). Previous code mis-treated it as
-            // a NimBLE 1.x-style int rc, so every successful scan counted
-            // as a failure and the backoff dropped polling to one every
-            // 2 minutes.
+            // NimBLE 2.x: start(duration_ms, isContinue) returns bool.
             bool ok = s_bleScan->start(5000, false);
             if (!ok) {
                 failCount++;
@@ -228,15 +232,20 @@ static void bleSupervisorTask(void* /*arg*/) {
         }
 
         // ── 2. Ultimatron BMS poll (NimBLE already up) ────────────────────
-        if (ultimatronIsConfigured()) {
+        // Throttled: only every N cycles. SOC drift is slow, no need to
+        // pay the GATT cost every Victron tick.
+        if (ultimatronIsConfigured() && (cycleCount % ULTIMATRON_EVERY_N_CYCLES) == 0) {
             ultimatronPollOnce();
         }
+        cycleCount++;
 
         // ── 3. Idle window — RF released to WiFi ──────────────────────────
-        // Aggressive: ~20 s sleep → ~30 s total cycle
-        // Save     : ~60 s sleep → ~70 s total cycle
-        uint32_t idleMs = s_aggressive ? 20000 : 60000;
-        if (failCount > 3) idleMs = 120000;
+        // Aggressive: 5 s idle → ~10 s cycle (Victron updates ~10 s)
+        // Save     : 30 s idle → ~35 s cycle
+        // Cap backoff at 30 s even on repeated scan failures, so a string
+        // of misses cannot push data past the 120 s staleness threshold.
+        uint32_t idleMs = s_aggressive ? 5000 : 30000;
+        if (failCount > 3) idleMs = 30000;
         vTaskDelay(pdMS_TO_TICKS(idleMs));
     }
 }
