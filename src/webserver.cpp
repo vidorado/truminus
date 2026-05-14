@@ -14,17 +14,67 @@
 // reservan sus buffers en heap interno (DMA + mutex constraints), así que
 // servir desde LittleFS dispara igualmente OOM con 6+ requests paralelos.
 #include "webfiles.h"
+#include <atomic>
+#include <memory>
+
+// Soft cap on concurrent emitting responses. Browsers open up to 6 parallel
+// TCP connections to the same host; after a cache-bust all referenced
+// assets invalidate at once and the burst can pressure internal SRAM (each
+// AsyncCallbackResponse copies its chunk into AsyncTCP's send buffer,
+// which lives in DMA-capable heap).
+//
+// We accept every request — rejecting with 503 is useless because browsers
+// do not retry sub-resources — and call send() immediately so the
+// framework does not 501 the handler. Backpressure happens inside the
+// chunk-fill callback: while too many responses are already emitting data,
+// the callback returns RESPONSE_TRY_AGAIN. AsyncTCP keeps the connection
+// idle and re-invokes the callback later, so the response object exists
+// but its TCP send buffer stays empty until a slot frees.
+//
+// The counter is only mutated from the async_tcp task (fill callback +
+// onDisconnect), so no mutex is needed beyond std::atomic for ordering.
+static constexpr int MAX_EMITTING_HTTP = 2;
+static std::atomic<int> s_emittingHttp{0};
+
+struct ChunkState {
+    const uint8_t* data;
+    size_t         size;
+    bool           acquired = false;   // true once a slot was reserved
+};
 
 static void sendMemFile(AsyncWebServerRequest* req,
                         const uint8_t* data, size_t size,
                         const char* ct, bool gzipped)
 {
+    auto state = std::make_shared<ChunkState>();
+    state->data = data;
+    state->size = size;
+
+    // Release the slot when the response finishes (sent OR aborted).
+    req->onDisconnect([state]() {
+        if (state->acquired) {
+            s_emittingHttp.fetch_sub(1, std::memory_order_release);
+            state->acquired = false;
+        }
+    });
+
     AsyncWebServerResponse* r = req->beginResponse(
         ct, size,
-        [data, size](uint8_t* dst, size_t maxLen, size_t idx) -> size_t {
-            if (idx >= size) return 0;
-            size_t chunk = (maxLen < size - idx) ? maxLen : (size - idx);
-            memcpy(dst, data + idx, chunk);
+        [state](uint8_t* dst, size_t maxLen, size_t idx) -> size_t {
+            // First call: try to acquire a slot.
+            if (!state->acquired) {
+                int prev = s_emittingHttp.fetch_add(1, std::memory_order_acq_rel);
+                if (prev >= MAX_EMITTING_HTTP) {
+                    // No slot — back off and ask AsyncTCP to retry later.
+                    s_emittingHttp.fetch_sub(1, std::memory_order_release);
+                    return RESPONSE_TRY_AGAIN;
+                }
+                state->acquired = true;
+            }
+            // Emit data.
+            if (idx >= state->size) return 0;   // end of stream
+            size_t chunk = (maxLen < state->size - idx) ? maxLen : (state->size - idx);
+            memcpy(dst, state->data + idx, chunk);
             return chunk;
         });
     if (!r) { req->send(503); return; }
