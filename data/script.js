@@ -246,19 +246,14 @@ function refreshIndicators() {
                  : (wPct < 0.85) ? '#ffbb00'
                                  : '#ff3333';
         wTempFill.style.background = wCol;
-
-        // Blink border when heating and not at temp (fill disappears during off-phase)
+        wTempFill.style.opacity = '1';
+        // Boiler body is intentionally static when heating — only the
+        // topbar drop icon (#ind-tint) blinks to signal demand, matching
+        // the CYD physical layout.
         var body = document.querySelector('.water-temp-body');
         if (body) {
-            if (wDemand) {
-                body.style.borderColor = '#55aaff';
-                body.style.animation = 'ind-blink 1s step-start infinite';
-                wTempFill.style.opacity = '0';
-            } else {
-                body.style.borderColor = '#888888';
-                body.style.animation = '';
-                wTempFill.style.opacity = '1';
-            }
+            body.style.borderColor = '#888888';
+            body.style.animation = '';
         }
     }
 }
