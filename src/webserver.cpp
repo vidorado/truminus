@@ -126,7 +126,10 @@ void initWebSocket() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 // Max queued messages and max payload length (bytes)
-static constexpr uint8_t  WS_QUEUE_LEN  = 16;
+// 16 -> 4: saves ~1.8 KB of internal SRAM. With 1-2 clients and periodic
+// publications it does not fill; if messages start dropping under load,
+// bump back to 8.
+static constexpr uint8_t  WS_QUEUE_LEN  = 4;
 static constexpr uint16_t WS_QUEUE_SIZE = 150;
 
 bool wsQueueSend(const char* msg)

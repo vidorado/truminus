@@ -264,10 +264,13 @@ bool mqttEnabled=false;  // false si el usuario omitió la config MQTT
 
 //---------------------------------------------------------------------
 static void logMem(const char* tag) {
-  LOG_MEM_PF("[mem] %s free=%u largest=%u\n",
+  // Internal SRAM is the real constraint on C5: WiFi/BLE/LWIP/AsyncTCP need
+  // DMA-capable memory and cannot use PSRAM. Report it separately.
+  LOG_MEM_PF("[mem] %s int_free=%u int_largest=%u psram_free=%u\n",
     tag,
-    (unsigned)ESP.getFreeHeap(),
-    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+    (unsigned)ESP.getFreePsram());
 }
 
 void setup() {
@@ -437,13 +440,16 @@ void setup() {
   // no obtiene IP ni responde a ping. Estas funciones se pueden llamar con el
   // driver corriendo; el cambio se aplica en el siguiente connect (WiFi.begin).
   WiFi.mode(WIFI_STA);
+  // Force 2.4 GHz only — most home routers do not advertise 5 GHz.
+  // The protocol is left at the driver default: passing WIFI_PROTOCOL_11A
+  // on a 2.4 GHz STA returned ESP_ERR_INVALID_ARG (proto=258) and left
+  // the protocol in an inconsistent state.
   esp_err_t e_band = esp_wifi_set_band_mode(WIFI_BAND_MODE_2G_ONLY);
-  esp_err_t e_prot = esp_wifi_set_protocol(WIFI_IF_STA,
-                        WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-  WiFi.setSleep(false);
-  esp_err_t e_ps = esp_wifi_set_ps(WIFI_PS_NONE);   // belt-and-braces: ARP responsivo
-  LOG_WIFI_PF("[wifi] C5 cfg: band=%d proto=%d ps=%d (0=OK)\n",
-                e_band, e_prot, e_ps);
+  WiFi.setSleep(true);
+  // MIN_MODEM allows the WiFi radio to micro-sleep, giving BLE scan windows
+  // via the coexistence arbiter.  NONE keeps WiFi 100% awake and starves BLE.
+  esp_err_t e_ps = esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+  LOG_WIFI_PF("[wifi] C5 cfg: 2G_ONLY band=%d ps=%d (0=OK)\n", e_band, e_ps);
 
   // Event handler para diagnosticar por qué no asocia / no obtiene IP.
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
@@ -467,9 +473,9 @@ void setup() {
         case ARDUINO_EVENT_WIFI_STA_GOT_IP: {
           LOG_WIFI_PF("[wifi-evt] GOT_IP %s\n",
                         IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
-          // El driver re-aplica power save al asociar. Forzamos OFF otra vez
-          // y verificamos por lectura.
-          esp_wifi_set_ps(WIFI_PS_NONE);
+          // El driver re-aplica power save al asociar. Forzamos MIN_MODEM
+          // otra vez para que el árbitro de coexistencia siga activo.
+          esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
           wifi_ps_type_t ps;
           if (esp_wifi_get_ps(&ps) == ESP_OK) {
             LOG_WIFI_PF("[wifi-evt] ps after GOT_IP = %d (0=NONE)\n", (int)ps);
@@ -506,8 +512,9 @@ void setup() {
   // an inconsistent state.  Do NOT call esp_coex_preference_set() — it is
   // not supported on the C5 SDK and triggers IllegalInstruction panic.
   logMem("before BLE init");
-  victronBleInit();
-  ultimatronBleInit();
+  victronBleInit();         // loads "solar" NVS only — NimBLE stays down
+  ultimatronBleInit();      // loads "batt"  NVS only — NimBLE stays down
+  bleSupervisorStart();     // starts lazy init/scan/poll/deinit task
   logMem("after BLE init");
 
   //starts the mqtt connection to the broker
@@ -635,15 +642,20 @@ void setup() {
 
   // LIN bus task: pinned to Core 0 (WiFi core) so the blocking serial reads
   // don't interfere with LVGL (Core 1) or WebSocket response latency.
-  xTaskCreatePinnedToCore(linBusTask, "LinBus", 4096, nullptr, 1, nullptr, 0);
+  // LinBus stack: 4096 -> 3072. Tried 2048 -> stack overflow during the
+  // first frame parse. 3072 leaves reasonable headroom; check with `wm`.
+  xTaskCreatePinnedToCore(linBusTask, "LinBus", 3072, nullptr, 1, nullptr, 0);
   logMem("after LinBus task");
 
   #ifdef CYD
   // Start LVGL task only now — all LVGL init (calibration, wifi/mqtt setup
   // screens, cydDisplayInit) is complete, so no race condition.
   // ESP32-C5 is single-core: pinning to core 1 trips an assert in FreeRTOS.
+  // LVGL stack 10240 -> 7168: measured watermark ~5816 B free -> ~4400 B
+  // used. 7168 leaves a 2.7 KB margin. Re-check with the `wm` CLI after UI
+  // changes; if it gets close to 0, bump back up.
   #ifdef CYD_C5
-  xTaskCreate(lvglTask, "LVGL", 10240, nullptr, 2, nullptr);
+  xTaskCreate(lvglTask, "LVGL", 7168, nullptr, 2, nullptr);
   #else
   xTaskCreatePinnedToCore(lvglTask, "LVGL", 10240, nullptr, 2, nullptr, 1);
   #endif
@@ -720,6 +732,13 @@ void CheckWifi() {
     if (!wifistarted) {
       Serial.print("IP address ");
       Serial.println(WiFi.localIP());
+      uint8_t primaryChan = 0;
+      wifi_second_chan_t secondChan = WIFI_SECOND_CHAN_NONE;
+      if (esp_wifi_get_channel(&primaryChan, &secondChan) == ESP_OK) {
+        Serial.printf("[wifi] channel=%u (%s GHz)\n",
+                      primaryChan,
+                      (primaryChan > 14) ? "5" : "2.4");
+      }
       wifistarted=true;
       #ifdef WEBSERVER
       Serial.println("[wifi] calling StartServer...");
@@ -727,12 +746,13 @@ void CheckWifi() {
       Serial.println("[wifi] StartServer returned");
       #endif
     }
-    // Keep power-save OFF — the C5 driver tends to re-enable it silently
+    // Keep power-save in MIN_MODEM so the coexistence arbiter can schedule
+    // BLE scan windows.  The C5 driver tends to re-enable it silently.
     #ifdef CYD_C5
     static uint32_t s_lastPsForce = 0;
     if (millis() - s_lastPsForce > 30000) {
       s_lastPsForce = millis();
-      esp_wifi_set_ps(WIFI_PS_NONE);
+      esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
     }
     #endif
   } else {

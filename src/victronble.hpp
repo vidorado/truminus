@@ -12,8 +12,16 @@ struct VictronData {
     uint32_t lastMs;     // millis() of last valid reception
 };
 
-// Call once from setup() — no-op if "solar" NVS namespace is not configured.
+// Call once from setup(). Loads NVS config only — does NOT bring NimBLE up.
+// The lazy supervisor handles controller lifecycle.
 void victronBleInit();
+
+// Start the lazy BLE supervisor task. Call AFTER both victronBleInit() and
+// ultimatronBleInit() have loaded their respective NVS configs. The task
+// cycles: NimBLE init → scan Victron → poll Ultimatron → NimBLE deinit →
+// sleep ~20 s. During the sleep window, internal SRAM is fully available
+// so AsyncTCP/LWIP can service web traffic.
+void bleSupervisorStart();
 
 VictronData        victronGetData();   // returns a mutex-protected copy
 bool               victronIsConfigured();

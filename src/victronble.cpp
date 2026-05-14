@@ -1,10 +1,12 @@
 #include "victronble.hpp"
+#include "ultimatronble.hpp"
 #include "logs.hpp"
 #include <math.h>
 #if defined(ENABLE_BLE)
 #include <Preferences.h>
 #include <NimBLEDevice.h>
 #include <mbedtls/aes.h>
+#include <esp_heap_caps.h>
 
 // ── NVS ───────────────────────────────────────────────────────────────────
 static const char* NVS_NS   = "solar";
@@ -162,38 +164,55 @@ class VictronScanCb : public NimBLEScanCallbacks {
     }
 };
 
-// ── Periodic scan task (Core 1) ───────────────────────────────────────────
-static void bleTask(void* /*arg*/) {
-    vTaskDelay(pdMS_TO_TICKS(15000));   // wait for WiFi/MQTT to finish init
-    LOG_BLE_PL("[ble] scan task started");
+// ── BLE supervisor task ───────────────────────────────────────────────────
+// NimBLE is initialised once in setup() (controller buffers stay allocated
+// permanently — ~37 KB of internal SRAM is paid up-front). The supervisor
+// only orchestrates burst scan + Ultimatron poll cycles:
+//
+//   1. Active scan 5 s            → Victron Instant Readout
+//   2. ultimatronPollOnce()       → BMS GATT poll (~5–10 s)
+//   3. Sleep ~20 s                → RF freed for WiFi
+//
+// Lazy init/deinit was attempted but the C5 BLE controller's HCI bring-up
+// fails when called from a non-setup task context after WiFi/AsyncTCP have
+// fragmented internal SRAM (largest free block < ~20 KB). Permanent init
+// is the pragmatic choice; memory headroom is recovered by trimming LVGL
+// pool, task stacks, and WebSocket queue size.
+static void bleSupervisorTask(void* /*arg*/) {
+    vTaskDelay(pdMS_TO_TICKS(15000));   // let WiFi/MQTT/web settle first
+    LOG_BLE_PL("[ble-sup] supervisor task started");
+
     int failCount = 0;
+
     for (;;) {
         if (s_bleStopped || s_bleSuspended) {
-            // Yield CPU and RF to WiFi / Ultimatron connection
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(500));
             continue;
         }
-        if (s_bleScan) {
+
+        // ── 1. Burst scan for Victron ─────────────────────────────────────
+        if (s_configured && s_bleScan) {
             s_bleScan->clearResults();
-            // Reduced from 3 s to 1 s to free RF for WiFi coexistence on C5
-            int rc = s_bleScan->start(1, false);
+            int rc = s_bleScan->start(5, false);   // blocking 5 s
             if (rc != 0) {
-                // rc=519 (BLE_HS_ENOTCONN) usually means the controller is busy
-                // with WiFi RF.  Exponential-ish backoff to avoid flooding serial.
                 failCount++;
-                unsigned long backoffMs;
-                if (failCount <= 3)      backoffMs = 5000;     // 5 s
-                else if (failCount <= 6) backoffMs = 30000;    // 30 s
-                else                     backoffMs = 300000;   // 5 min
-                LOG_BLE_PF("[ble] scan start failed %d times (last rc=%d), backoff %lus\n",
-                           failCount, rc, backoffMs / 1000);
-                vTaskDelay(pdMS_TO_TICKS(backoffMs));
-                continue;
+                LOG_BLE_PF("[ble-sup] scan start rc=%d (fail #%d)\n", rc, failCount);
+            } else {
+                failCount = 0;
             }
-            failCount = 0;
-            // 2 s idle = 3 s period (aggressive)  or  17 s idle = 18 s period (save)
-            vTaskDelay(pdMS_TO_TICKS(s_aggressive ? 2000 : 17000));
         }
+
+        // ── 2. Ultimatron BMS poll (NimBLE already up) ────────────────────
+        if (ultimatronIsConfigured()) {
+            ultimatronPollOnce();
+        }
+
+        // ── 3. Idle window — RF released to WiFi ──────────────────────────
+        // Aggressive: ~20 s sleep → ~30 s total cycle
+        // Save     : ~60 s sleep → ~70 s total cycle
+        uint32_t idleMs = s_aggressive ? 20000 : 60000;
+        if (failCount > 3) idleMs = 120000;
+        vTaskDelay(pdMS_TO_TICKS(idleMs));
     }
 }
 
@@ -223,9 +242,30 @@ void victronBleResume() {
 }
 
 // ── Public API ────────────────────────────────────────────────────────────
-bool victronIsConfigured() { return s_configured; }
+bool victronIsConfigured() {
+#ifdef ENABLE_SOLAR_DUMMY
+    return true;   // pretend configured so UI shows the dummy values
+#else
+    return s_configured;
+#endif
+}
 
 VictronData victronGetData() {
+#ifdef ENABLE_SOLAR_DUMMY
+    // Dev-mode override: ignore real BLE data and synthesise oscillating
+    // values so the UI can be tested without panels/battery nearby.
+    float t = millis() / 1000.0f;
+    VictronData d = {};
+    d.pvW      = 80.0f + 40.0f * sinf(t * 0.8f);
+    d.battA    = 3.0f + 2.5f * sinf(t * 0.5f);
+    d.battV    = 13.0f + 0.3f * sinf(t * 1.2f);
+    d.kWhToday = 1.25f + 0.01f * t;
+    d.state    = 3;
+    d.errCode  = 0;
+    d.valid    = true;
+    d.lastMs   = millis();
+    return d;
+#else
     VictronData copy = {};
     if (s_dataMux) {
         xSemaphoreTake(s_dataMux, portMAX_DELAY);
@@ -233,35 +273,56 @@ VictronData victronGetData() {
         xSemaphoreGive(s_dataMux);
     }
     return copy;
+#endif
 }
 
 void victronBleInit() {
+    // Loads NVS config only. NimBLE controller is brought up by bleSupervisorStart().
     String addr, keyHex;
-    if (!victronLoadConfig(addr, keyHex)) return;
+    if (!victronLoadConfig(addr, keyHex)) {
+        LOG_BLE_PL("[ble] Victron not configured (no NVS entry)");
+        return;
+    }
     if (!hexToBytes(keyHex, s_aesKey, 16)) {
         LOG_BLE_PL("[ble] bad encryption key — not 32 valid hex chars");
         return;
     }
+    s_targetAddr = addr;
+    s_configured = true;
+    if (!s_dataMux) s_dataMux = xSemaphoreCreateMutex();
+    LOG_BLE_PF("[ble] Victron cfg loaded, target=%s\n", s_targetAddr.c_str());
+}
 
-    s_targetAddr  = addr;   // already uppercase from NVS
-    s_configured  = true;
-    s_dataMux     = xSemaphoreCreateMutex();
+// Bring NimBLE up and start the supervisor task. Call once after both
+// victronBleInit() and ultimatronBleInit() have loaded their NVS configs.
+// Must be invoked from setup() BEFORE LinBus/LVGL tasks are created — the
+// C5 BLE controller can only allocate its ~37 KB of internal SRAM cleanly
+// when the heap is not yet fragmented.
+void bleSupervisorStart() {
+    if (s_bleTaskHandle) return;
+    if (!s_configured && !ultimatronIsConfigured()) {
+        LOG_BLE_PL("[ble-sup] not started — nothing BLE configured");
+        return;
+    }
 
-    LOG_BLE_PF("[ble] heap before init: free=%u largest=%u\n",
-                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    LOG_BLE_PF("[ble] NimBLE init  int_free=%u int_largest=%u\n",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     NimBLEDevice::init("");
-    LOG_BLE_PF("[ble] heap after init:  free=%u\n", ESP.getFreeHeap());
-    s_bleScan = NimBLEDevice::getScan();
-    s_bleScan->setScanCallbacks(new VictronScanCb(), /*wantDuplicates=*/true);
-    s_bleScan->setActiveScan(true);    // active scan needed to receive SCAN_RSP (Instant Readout)
-    // Reduce duty cycle to leave RF time for WiFi on ESP32-C5.
-    // Interval=160 (100 ms), Window=30 (~19 ms) → ~19% duty cycle.
-    s_bleScan->setInterval(160);
-    s_bleScan->setWindow(30);
-    s_bleScan->setMaxResults(0);       // no caching — fire onResult for every adv
+    LOG_BLE_PF("[ble] NimBLE up    int_free=%u\n",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
-    xTaskCreate(bleTask, "ble_vic", 3072, nullptr, 1, &s_bleTaskHandle);
-    LOG_BLE_PF("[ble] Victron BLE init ok, target=%s\n", s_targetAddr.c_str());
+    if (s_configured) {
+        s_bleScan = NimBLEDevice::getScan();
+        s_bleScan->setScanCallbacks(new VictronScanCb(), /*deleteCallbacks=*/true);
+        s_bleScan->setActiveScan(true);   // SCAN_RSP carries Instant Readout
+        s_bleScan->setInterval(160);      // 100 ms
+        s_bleScan->setWindow(80);         // 50 ms (50 % duty during the 5 s burst)
+        s_bleScan->setMaxResults(0);      // fire callback for every adv
+    }
+
+    xTaskCreate(bleSupervisorTask, "ble_sup", 4096, nullptr, 1, &s_bleTaskHandle);
+    LOG_BLE_PL("[ble-sup] supervisor task created");
 }
 
 #else // !ENABLE_BLE — stubs (dummy data only when ENABLE_SOLAR_DUMMY is set)
@@ -274,6 +335,7 @@ static VictronData s_fakeVictron = {
 #endif
 
 void victronBleInit() {}
+void bleSupervisorStart() {}
 
 VictronData victronGetData() {
 #ifdef ENABLE_SOLAR_DUMMY

@@ -31,22 +31,31 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     #ifdef CYD_C5
-        /* 48 KB. Bajado de 96 KB tras detectar OOM en AsyncTCP/AsyncWeb: solo
-         * quedaban ~21 KB de SRAM interna libre tras arrancar el servidor.
-         * AsyncTCP no puede usar PSRAM (sus buffers viven en heap interno por
-         * la ISR WiFi), asi que cada KB de LV_MEM_SIZE compite directamente
-         * con los buffers TCP. 48 KB siguen sobrando para la UI actual
-         * (10 paneles, 5 fuentes, sin imagenes grandes). */
-        #define LV_MEM_SIZE (48 * 1024U)
+        /* 64 KB in PSRAM. Previously lived in internal SRAM (32 KB)
+         * competing with WiFi/AsyncTCP/NimBLE. With NimBLE permanently
+         * up this was unworkable.
+         *
+         * The pool goes to PSRAM via LV_MEM_POOL_ALLOC = heap_caps_malloc(
+         * ..., MALLOC_CAP_SPIRAM). PSRAM is not DMA-capable, but LVGL
+         * only uses this pool for its own internal structs (objects,
+         * styles, events) — the display framebuffers are handled by
+         * smartdisplay in internal SRAM where DMA to SPI is required.
+         *
+         * Cost: PSRAM is ~3-4x slower than SRAM. For a UI whose values
+         * change every couple of seconds it is unnoticeable; fast scroll
+         * or animations may show slight lag. */
+        #define LV_MEM_SIZE (64 * 1024U)
+        #define LV_MEM_POOL_INCLUDE "esp_heap_caps.h"
+        #define LV_MEM_POOL_ALLOC(size) heap_caps_malloc((size), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
     #else
-        #define LV_MEM_SIZE (40 * 1024U)    /* 40 KB: reducido de 48 KB para liberar BSS con BLE activo */
+        #define LV_MEM_SIZE (40 * 1024U)    /* 40 KB: reduced from 48 KB to free BSS with BLE active */
+        #define LV_MEM_ADR 0
+        #if LV_MEM_ADR == 0
+            #undef LV_MEM_POOL_INCLUDE
+            #undef LV_MEM_POOL_ALLOC
+        #endif
     #endif
     #define LV_MEM_POOL_EXPAND_SIZE 0
-    #define LV_MEM_ADR 0
-    #if LV_MEM_ADR == 0
-        #undef LV_MEM_POOL_INCLUDE
-        #undef LV_MEM_POOL_ALLOC
-    #endif
 #endif
 
 /*====================

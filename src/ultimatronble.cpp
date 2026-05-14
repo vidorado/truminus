@@ -1,6 +1,5 @@
 #include "ultimatronble.hpp"
 #include "logs.hpp"
-#include "victronble.hpp"
 #include <math.h>
 #if defined(ENABLE_BLE)
 #include <Preferences.h>
@@ -38,7 +37,6 @@ static SemaphoreHandle_t s_dataMux    = nullptr;
 static SemaphoreHandle_t s_rxSem      = nullptr;
 static UltimatronData     s_data       = {};
 
-static TaskHandle_t  s_taskHandle     = nullptr;
 static volatile bool s_ultSuspended   = false;
 
 // ── BLE response buffer ───────────────────────────────────────────────────
@@ -118,15 +116,14 @@ static void parseResponse(const uint8_t* d, int len) {
 }
 
 // ── Single poll: connect → subscribe → query → parse → disconnect ─────────
-static bool pollUltimatron() {
+// Called by the BLE supervisor in victronble.cpp. Assumes NimBLEDevice::init()
+// has been called and the controller is up. Returns true on success.
+bool ultimatronPollOnce() {
+    if (!s_configured) return false;
+    if (s_ultSuspended) return false;
+
     uint32_t t0 = millis();
     LOG_ULT_PF("[ult] poll start → %s\n", s_targetAddr.c_str());
-
-    victronBleSuspend();
-    // Wait long enough for Victron scan (max 1 s) + idle delay to finish.
-    // If bleTask was suspended with vTaskSuspend it could be inside NimBLE
-    // APIs and corrupt the controller; with the flag it exits gracefully.
-    vTaskDelay(pdMS_TO_TICKS(1500));
 
     std::string macStr = formatMac(s_targetAddr);
     // NimBLE 2.x: address type must be explicit (0 = BLE_ADDR_PUBLIC).
@@ -149,7 +146,6 @@ static bool pollUltimatron() {
     if (!connected) {
         LOG_ULT_PF("[ult] connect failed after 3 attempts (+%lums)\n", millis() - t0);
         NimBLEDevice::deleteClient(client);
-        victronBleResume();
         return false;
     }
     LOG_ULT_PF("[ult] connected (+%lums, conn took %lums)\n",
@@ -161,7 +157,6 @@ static bool pollUltimatron() {
         LOG_ULT_PF("[ult] service ff00 not found (+%lums)\n", millis() - t0);
         client->disconnect();
         NimBLEDevice::deleteClient(client);
-        victronBleResume();
         return false;
     }
 
@@ -171,7 +166,6 @@ static bool pollUltimatron() {
         LOG_ULT_PF("[ult] ff01/ff02 chars not found (+%lums)\n", millis() - t0);
         client->disconnect();
         NimBLEDevice::deleteClient(client);
-        victronBleResume();
         return false;
     }
     LOG_ULT_PF("[ult] service+chars discovered (+%lums, disc took %lums)\n",
@@ -182,7 +176,6 @@ static bool pollUltimatron() {
         LOG_ULT_PF("[ult] subscribe failed (+%lums)\n", millis() - t0);
         client->disconnect();
         NimBLEDevice::deleteClient(client);
-        victronBleResume();
         return false;
     }
     LOG_ULT_PF("[ult] subscribed (+%lums, sub took %lums)\n",
@@ -240,7 +233,6 @@ static bool pollUltimatron() {
 
     client->disconnect();
     NimBLEDevice::deleteClient(client);
-    victronBleResume();
 
     if (!got) {
         LOG_ULT_PF("[ult] poll failed (total %lums)\n", millis() - t0);
@@ -252,25 +244,28 @@ static bool pollUltimatron() {
     return true;
 }
 
-// ── Periodic poll task ────────────────────────────────────────────────────
-static void ultimatronTask(void* /*arg*/) {
-    vTaskDelay(pdMS_TO_TICKS(22000));   // let Victron and WiFi/MQTT settle first
-    LOG_ULT_PL("[ult] poll task started");
-
-    for (;;) {
-        if (s_ultSuspended) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
-        }
-        pollUltimatron();
-        vTaskDelay(pdMS_TO_TICKS(30000));   // poll every 30 s
-    }
+// ── Public API ────────────────────────────────────────────────────────────
+bool ultimatronIsConfigured() {
+#ifdef ENABLE_SOLAR_DUMMY
+    return true;   // pretend configured so UI shows the dummy values
+#else
+    return s_configured;
+#endif
 }
 
-// ── Public API ────────────────────────────────────────────────────────────
-bool ultimatronIsConfigured() { return s_configured; }
-
 UltimatronData ultimatronGetData() {
+#ifdef ENABLE_SOLAR_DUMMY
+    // Dev-mode override: synthesise BMS values without the BMS nearby.
+    float t = millis() / 1000.0f;
+    UltimatronData d = {};
+    d.soc    = (uint8_t)(60 + (int)(20.0f * sinf(t * 0.6f)));
+    d.battA  = -1.5f + 1.0f * sinf(t * 0.9f);
+    d.battV  = 13.0f + 0.2f * sinf(t * 1.1f);
+    d.tempC  = 18.0f + 3.0f * sinf(t * 0.4f);
+    d.valid  = true;
+    d.lastMs = millis();
+    return d;
+#else
     UltimatronData copy = {};
     if (s_dataMux) {
         xSemaphoreTake(s_dataMux, portMAX_DELAY);
@@ -278,6 +273,7 @@ UltimatronData ultimatronGetData() {
         xSemaphoreGive(s_dataMux);
     }
     return copy;
+#endif
 }
 
 void ultimatronBleSuspend() {
@@ -300,9 +296,9 @@ void ultimatronBleInit() {
     s_dataMux     = xSemaphoreCreateMutex();
     s_rxSem       = xSemaphoreCreateBinary();
 
-    // NimBLE already initialised by victronBleInit(); calling init("") is idempotent.
-    xTaskCreate(ultimatronTask, "ult_batt", 3072, nullptr, 1, &s_taskHandle);
-    LOG_ULT_PF("[ult] Ultimatron init ok, target=%s pass=%s\n",
+    // No task here — the BLE supervisor in victronble.cpp will call
+    // ultimatronPollOnce() inside its lazy init/scan/poll/deinit cycle.
+    LOG_ULT_PF("[ult] Ultimatron cfg loaded, target=%s pass=%s\n",
                   s_targetAddr.c_str(), s_password.length() ? "yes" : "no");
 }
 
@@ -331,6 +327,7 @@ UltimatronData ultimatronGetData() {
 }
 
 bool ultimatronIsConfigured() { return true; }
+bool ultimatronPollOnce() { return false; }
 void ultimatronBleSuspend() {}
 void ultimatronBleResume() {}
 bool ultimatronLoadConfig(String& addr, String& pass) { (void)addr; (void)pass; return false; }
