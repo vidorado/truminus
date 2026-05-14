@@ -27,7 +27,7 @@ function updateStatusBar() {
     if (!msg) return;
     // Format: "SSID  IP" — matches the CYD physical status bar.
     var addr = window.location.hostname;
-    var ipText = s_ssid ? (s_ssid + '  ' + addr) : addr;
+    var ipText = s_ssid ? (s_ssid + ' / ' + addr) : addr;
     if (wserror) {
         msg.textContent  = t('ws_conn');
         msg.style.color  = '#ffaa00';
@@ -49,17 +49,26 @@ var ws = new ReconnectingWebSocket(gateway);
 function ping() { ws.send('ping'); setTimeout(ping, 10000); }
 setTimeout(ping, 10000);
 
+// Debounce the "WS down" indicator: brief reconnect cycles (under 3 s)
+// would otherwise flicker the WiFi dot and the "Connecting..." footer.
+// The physical CYD display never shows transient drops, mirror that UX.
+var s_wsDownTimer = null;
 ws.onopen = function () {
+    if (s_wsDownTimer) { clearTimeout(s_wsDownTimer); s_wsDownTimer = null; }
     wserror = false;
     updateStatusBar();
     setDot('dot-wifi', 'ok');
     ws.send('settings');
 };
 ws.onclose = function () {
-    wserror = true;
-    updateStatusBar();
-    setDot('dot-wifi', 'err');
-    setDot('dot-lin',  'err');
+    if (s_wsDownTimer) return;   // already counting down
+    s_wsDownTimer = setTimeout(function () {
+        s_wsDownTimer = null;
+        wserror = true;
+        updateStatusBar();
+        setDot('dot-wifi', 'err');
+        setDot('dot-lin',  'err');
+    }, 3000);
 };
 ws.onmessage = function (event) {
     var d = JSON.parse(event.data);

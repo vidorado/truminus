@@ -295,7 +295,7 @@ body {
   gap: 1px;
 }
 .sb-msg { font-size: 1em; }
-.sb-ip  { font-size: 1em; color: #88aaff; }
+.sb-ip  { font-size: 0.9em; color: #88aaff; }
 
 .footer-logo {
   height: 32px;
