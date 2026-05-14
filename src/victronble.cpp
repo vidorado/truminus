@@ -193,7 +193,10 @@ static void bleSupervisorTask(void* /*arg*/) {
         // ── 1. Burst scan for Victron ─────────────────────────────────────
         if (s_configured && s_bleScan) {
             s_bleScan->clearResults();
-            int rc = s_bleScan->start(5, false);   // blocking 5 s
+            // NimBLE 2.x: start(duration_ms, isContinue). The previous
+            // codebase passed seconds (start(2,...)) which on 2.x means
+            // 2 ms — the scan never effectively ran. 5000 ms = 5 s burst.
+            int rc = s_bleScan->start(5000, false);
             if (rc != 0) {
                 failCount++;
                 LOG_BLE_PF("[ble-sup] scan start rc=%d (fail #%d)\n", rc, failCount);
