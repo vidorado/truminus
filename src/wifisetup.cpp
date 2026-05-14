@@ -781,6 +781,7 @@ bool runWifiSetup(String& ssid, String& pass) {
         lv_tick_inc(now - s_lvLastTick);
         s_lvLastTick = now;
         lv_timer_handler();
+        esp_task_wdt_reset();   // user may take >10 s typing the password
         if (s_connectRequested) wifiDoConnect();
         delay(5);
     }
@@ -987,6 +988,7 @@ bool runMqttSetup(String& uri, String& user, String& pass) {
         lv_tick_inc(now - s_lvLastTick);
         s_lvLastTick = now;
         lv_timer_handler();
+        esp_task_wdt_reset();   // user may take >10 s typing host/port/creds
         delay(5);
     }
 
