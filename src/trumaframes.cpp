@@ -40,9 +40,12 @@ void TMqttPublisherBase::setValue(uint32_t newvalue)
     fvalue=newvalue;
     String payload=getPayload();
     #ifdef WEBSERVER
-    /* the asyncwebsocket gets bogged down if it has to send too many messages
-       just send when the value has changed or a new client just connected */
-    if (valuechanged || fforcesend) {
+    /* WebSocket: send when the value changes, when a new client just
+       connected (fforcesend), OR at least every 10 s. The periodic
+       refresh covers reload races where a client missed the connect
+       burst and sits on stale data. AsyncWebSocket can handle the
+       resulting ~2 msg/s without queue pressure. */
+    if (valuechanged || fforcesend || elapsed > 10000) {
         char buf[200];
         snprintf(buf, sizeof(buf),
                  "{\"command\":\"status\",\"id\":\"%s\",\"value\":\"%s\"}",
@@ -64,6 +67,14 @@ void TMqttPublisherBase::setValue(uint32_t newvalue)
 void TMqttPublisherBase::setForcesend(){
     fforcesend=true;
 };
+
+void TMqttPublisherBase::appendKeyValueJson(String& out) {
+    out += "\"";
+    out += ftopic;
+    out += "\":\"";
+    out += getPayload();
+    out += "\"";
+}
 
 TFrame14::TFrame14()  : TFrameBase()
 {
@@ -111,6 +122,14 @@ void TFrameBase::setForcesend()
 {
     for (int i=0; i<fpublishers.size(); i++) {
         fpublishers[i]->setForcesend();
+    }
+}
+
+void TFrameBase::appendKeyValueJson(String& out)
+{
+    for (int i=0; i<fpublishers.size(); i++) {
+        if (out.length() > 0 && out[out.length()-1] != '{') out += ",";
+        fpublishers[i]->appendKeyValueJson(out);
     }
 }
 

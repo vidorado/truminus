@@ -75,6 +75,26 @@ ws.onmessage = function (event) {
     if (!d.command) return;
     if (d.command === 'solar') { applySolar(d); return; }
     if (d.command === 'batt')  { applyBatt(d);  return; }
+    if (d.command === 'snapshot') {
+        // Full initial-state burst from wsConnected() on the server.
+        // One message with every cached setting and status value to
+        // avoid flooding the per-client WS queue with 30+ messages.
+        if (d.settings) {
+            for (var k in d.settings) {
+                applySetting(k.replace(/^\//, ''), d.settings[k]);
+            }
+        }
+        if (d.status) {
+            for (var k2 in d.status) {
+                applyStatus(k2.replace(/^\//, ''), d.status[k2]);
+            }
+        }
+        if (d.ssid !== undefined)         applyStatus('ssid', d.ssid);
+        if (d.outdoor_temp !== undefined) applyStatus('outdoor_temp', d.outdoor_temp);
+        if (d.energy_idx !== undefined)   applySetting('energy_idx', d.energy_idx);
+        if (d.lang !== undefined)         applySetting('lang', d.lang);
+        return;
+    }
     if (!d.id) return;
     var id = d.id.replace(/^\//, '');
     if (d.command === 'setting') applySetting(id, d.value);

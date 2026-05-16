@@ -157,6 +157,11 @@ class TMqttPublisherBase : public TAutoDiscovery {
     TMqttPublisherBase(String topic);
     void setValue(uint32_t newvalue);
     void setForcesend();
+    // Append "\"<topic>\":\"<payload>\"" to `out`. Used by wsConnected() to
+    // build a single snapshot message containing every cached value, so a
+    // freshly reloaded page does not flood the WS with 30+ separate
+    // messages and overflow the per-client queue.
+    void appendKeyValueJson(String& out);
 };
 
 /****************************************************
@@ -173,6 +178,7 @@ class TFrameBase {
         virtual void setReadResult(boolean ok);
         virtual void setData(uint8_t *data);
         void setForcesend();
+        void appendKeyValueJson(String& out);
         void getData(uint8_t *dest);
         //virtual method called after setData, 
         //each derived class will use it to get the values from the frame

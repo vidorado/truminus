@@ -178,11 +178,14 @@ void initWebSocket() {
 // Thread-safe WS queue (Core 0 -> Core 1)
 // ═════════════════════════════════════════════════════════════════════════════
 
-// Max queued messages and max payload length (bytes)
-// 16 -> 4: saves ~1.8 KB of internal SRAM. With 1-2 clients and periodic
-// publications it does not fill; if messages start dropping under load,
-// bump back to 8.
-static constexpr uint8_t  WS_QUEUE_LEN  = 4;
+// Inter-task queue between async_tcp publishers and loopTask drain.
+// 32 slots: wsConnected() bursts ~25-30 messages (setpoints + frame
+// publishers + master frames + solar/batt) in a single async_tcp run
+// before loopTask gets to drain. With queue=4 the tail of that burst
+// was silently dropped, leaving the page missing room_temp / water_temp
+// / heartbeat etc. until the next value change. ~4.5 KB cost is fine
+// now that LVGL pool sits in PSRAM.
+static constexpr uint8_t  WS_QUEUE_LEN  = 32;
 static constexpr uint16_t WS_QUEUE_SIZE = 150;
 
 bool wsQueueSend(const char* msg)

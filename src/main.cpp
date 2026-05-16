@@ -1511,40 +1511,42 @@ void wsCallback(const String& topic, const String& payload)  {
 //right after the connection the client isn't yet ready to receive)
 void wsConnected() {
   LOG_WEB_PL("wsConnected callback");
-  //sends the current settings
-  for (int i=0; i<SETPOINTS ;i++) {
-    MqttSetpoint[i]->PublishValue(false);
+  // Build one snapshot message with every cached value at once. Sending
+  // 25-30 separate WS messages from this callback overflowed the
+  // per-client queue (closed connection) and the inter-task queue
+  // (silent message drops). One message bypasses both limits.
+  String snap;
+  snap.reserve(2048);
+  snap = "{\"command\":\"snapshot\",\"settings\":{";
+  for (int i=0; i<SETPOINTS; i++) {
+    if (i > 0) snap += ",";
+    snap += "\"";
+    snap += MqttSetpoint[i]->getTopic();
+    snap += "\":\"";
+    snap += MqttSetpoint[i]->getValueString();
+    snap += "\"";
   }
-  // Send WiFi SSID so the web status bar can display it like the CYD does.
-  {
-    String ssid = WiFi.SSID();
-    char buf[96];
-    snprintf(buf, sizeof(buf),
-             "{\"command\":\"status\",\"id\":\"ssid\",\"value\":\"%s\"}",
-             ssid.c_str());
-    ws.textAll(buf);
-  }
-  // Send current energy mode index
-  {
-    char buf[64];
-    snprintf(buf, sizeof(buf), "{\"command\":\"setting\",\"id\":\"/energy_idx\",\"value\":\"%d\"}", (int)s_energyIdx);
-    ws.textAll(buf);
-  }
-  // Send outdoor temperature if available
+  snap += "},\"status\":{";
+  for (int i=0; i<FRAMES_TO_READ; i++) frames_to_read[i]->appendKeyValueJson(snap);
+  for (int i=0; i<MASTER_FRAMES;  i++) master_frames[i]->appendKeyValueJson(snap);
+  snap += "},\"ssid\":\"";
+  snap += WiFi.SSID();
+  snap += "\",\"energy_idx\":\"";
+  snap += String((int)s_energyIdx);
+  snap += "\"";
   if (s_extTemp > -200.0f) {
-    char buf[64];
-    snprintf(buf, sizeof(buf), "{\"command\":\"status\",\"id\":\"outdoor_temp\",\"value\":\"%.1f\"}", s_extTemp);
-    ws.textAll(buf);
+    snap += ",\"outdoor_temp\":\"";
+    snap += String(s_extTemp, 1);
+    snap += "\"";
   }
-  // Send current UI language so the web follows the CYD setting
   #ifdef CYD
-  {
-    const char* lang = (currentLanguage() == Language::EN) ? "en" : "es";
-    char buf[64];
-    snprintf(buf, sizeof(buf), "{\"command\":\"setting\",\"id\":\"/lang\",\"value\":\"%s\"}", lang);
-    ws.textAll(buf);
-  }
+  snap += ",\"lang\":\"";
+  snap += (currentLanguage() == Language::EN) ? "en" : "es";
+  snap += "\"";
   #endif
+  snap += "}";
+  ws.textAll(snap);
+
   //force publish the next received data
   doforcesend=true;
   publishSolarBatt();
