@@ -372,26 +372,21 @@ static void refreshControls() {
         if (s_fanHeatingRow) lv_obj_add_flag(s_fanHeatingRow, LV_OBJ_FLAG_HIDDEN);
         if (s_fanOffRow)     lv_obj_remove_flag(s_fanOffRow,  LV_OBJ_FLAG_HIDDEN);
 
-        bool fanOn       = (fanVal != 0);
-        bool boilerActive = (s_waterSp && s_waterSp->getStringValue() != "off");
+        bool fanOn = (fanVal != 0);
 
         if (fanVal > 0) s_fanLevel = fanVal;
 
-        // Show level row only when fan is on and boiler is idle
+        // Show level row whenever the fan is on. Previously hidden while
+        // the boiler was active, but that meant settings made from the web
+        // (which has no such block) could not be tweaked from the screen.
         if (s_fanLevelRow) {
-            if (fanOn && !boilerActive) lv_obj_remove_flag(s_fanLevelRow, LV_OBJ_FLAG_HIDDEN);
-            else                        lv_obj_add_flag   (s_fanLevelRow, LV_OBJ_FLAG_HIDDEN);
+            if (fanOn) lv_obj_remove_flag(s_fanLevelRow, LV_OBJ_FLAG_HIDDEN);
+            else       lv_obj_add_flag   (s_fanLevelRow, LV_OBJ_FLAG_HIDDEN);
         }
 
-        // Disable fan On/Off when the boiler is active (Truma ignores fan commands while boiling)
         if (s_fanOnBtn && s_fanOffBtn) {
-            if (boilerActive) {
-                lv_obj_add_state(s_fanOnBtn,  LV_STATE_DISABLED);
-                lv_obj_add_state(s_fanOffBtn, LV_STATE_DISABLED);
-            } else {
-                lv_obj_remove_state(s_fanOnBtn,  LV_STATE_DISABLED);
-                lv_obj_remove_state(s_fanOffBtn, LV_STATE_DISABLED);
-            }
+            lv_obj_remove_state(s_fanOnBtn,  LV_STATE_DISABLED);
+            lv_obj_remove_state(s_fanOffBtn, LV_STATE_DISABLED);
             lv_obj_set_style_bg_color(s_fanOnBtn,
                 lv_color_hex(fanOn  ? C_BTN_ON : C_BTN_OFF), LV_PART_MAIN);
             lv_obj_set_style_bg_color(s_fanOffBtn,
@@ -457,23 +452,23 @@ static void fanHeatCb(lv_event_t* e) {
     refreshControls();
 }
 
+// Fan callbacks no longer block on s_waterSp != "off". The web has no such
+// guard, so blocking only the physical path made the UI inconsistent
+// (button could turn ON via web while physical level controls stayed hidden).
 static void fanOnCb(lv_event_t*) {
     if (!s_fanMode) return;
-    if (s_waterSp && s_waterSp->getStringValue() != "off") return;  // boiler active
     s_fanMode->setValue(String(s_fanLevel));
     refreshControls();
 }
 
 static void fanOffCb(lv_event_t*) {
     if (!s_fanMode) return;
-    if (s_waterSp && s_waterSp->getStringValue() != "off") return;  // boiler active
     s_fanMode->setValue(String("off"));
     refreshControls();
 }
 
 static void fanLevelDownCb(lv_event_t*) {
     if (!s_fanMode) return;
-    if (s_waterSp && s_waterSp->getStringValue() != "off") return;  // boiler active
     if (s_fanLevel > 1) {
         s_fanLevel--;
         if (s_fanMode->getIntValue() > 0) s_fanMode->setValue(String(s_fanLevel));
@@ -483,7 +478,6 @@ static void fanLevelDownCb(lv_event_t*) {
 
 static void fanLevelUpCb(lv_event_t*) {
     if (!s_fanMode) return;
-    if (s_waterSp && s_waterSp->getStringValue() != "off") return;  // boiler active
     if (s_fanLevel < 10) {
         s_fanLevel++;
         if (s_fanMode->getIntValue() > 0) s_fanMode->setValue(String(s_fanLevel));
@@ -1296,16 +1290,7 @@ static void updateWaterTempWidget(float temp, bool heating) {
     if (!s_waterTempLbl) return;
     static const int WB_Y  = Y_CONT + 26;
     static const int WF_IH = 52;   // 54 - 2
-
-    // Scale by the active setpoint (40°C eco / 60°C high+boost).
-    // When boiler is off we still show temp scaled to the last setpoint,
-    // or 60°C as fallback so the bar does not jump wildly.
-    double sp = (s_waterSp && s_waterSp->getFloatValue() > 1.0)
-                ? s_waterSp->getFloatValue() : 60.0;
-
-    bool boilerOn = s_waterSp && (s_waterSp->getStringValue() != "off");
-    bool atTemp   = boilerOn && (temp > 0.0f) && ((double)temp >= sp - 1.0);
-    bool blinkOff = heating && !atTemp && ((millis() % 1000) < 500);
+    static const float WTEMP_SCALE = 70.0f;   // 0..70 °C bar range
 
     if (temp < 0.0f || temp > 100.0f) {
         lv_label_set_text(s_waterTempLbl, "--");
@@ -1318,29 +1303,26 @@ static void updateWaterTempWidget(float temp, bool heating) {
     snprintf(buf, sizeof(buf), "%.0f°C", temp);
     lv_label_set_text(s_waterTempLbl, buf);
 
-    // Bar fill — proportional to 0..setpoint, bottom-anchored
-    int fillH = (int)(temp * WF_IH / sp);
+    // Bar fill — proportional to 0..70 °C, bottom-anchored. Fixed scale
+    // independent of boiler state so the bar reads the same temperature
+    // whether the boiler is on or off (matches the web widget).
+    int fillH = (int)(temp * WF_IH / WTEMP_SCALE);
     if (fillH < 0) fillH = 0;
     if (fillH > WF_IH) fillH = WF_IH;
     lv_obj_set_size(s_waterTempFill, 28, fillH);  // 28 = 30 - 2
     lv_obj_set_pos(s_waterTempFill, s_waterTempFillX,
                    WB_Y + 1 + (WF_IH - fillH));
 
-    // Fill colour based on % of setpoint: blue <50%, amber 50-85%, red ≥85%
-    float pct = (sp > 0) ? (temp / sp) : 0;
-    uint32_t color = (pct < 0.50f) ? 0x4488ffu
-                   : (pct < 0.85f) ? 0xffbb00u
-                                   : 0xff3333u;
-
-    if (blinkOff) {
-        // Off phase: border blends into background, fill disappears
-        lv_obj_set_style_border_color(s_waterTempBody, lv_color_hex(C_TOPBAR), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(s_waterTempFill, LV_OPA_0, LV_PART_MAIN);
-    } else {
-        lv_obj_set_style_border_color(s_waterTempBody, lv_color_hex(0x888888), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(s_waterTempFill, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_bg_color(s_waterTempFill, lv_color_hex(color), LV_PART_MAIN);
-    }
+    // Absolute colour thresholds: blue <30 °C, amber 30-51 °C, red ≥51 °C.
+    // The body stays static while heating — only the topbar drop icon
+    // (s_aguaLbl) pulses to signal demand.
+    uint32_t color = (temp < 30.0f) ? 0x4488ffu
+                   : (temp < 51.0f) ? 0xffbb00u
+                                    : 0xff3333u;
+    lv_obj_set_style_border_color(s_waterTempBody, lv_color_hex(0x888888), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_waterTempFill, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_waterTempFill, lv_color_hex(color), LV_PART_MAIN);
+    (void)heating;   // kept in the signature to avoid touching the API
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
