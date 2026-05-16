@@ -117,8 +117,15 @@ function applySetting(id, value) {
 
 // ── Status received from device ───────────────────────────────────────────
 function applyStatus(id, value) {
+    // For temperature topics, swap the Truma "-273" sentinel (and any
+    // value below -200) for "--", matching the physical CYD behaviour.
+    var displayValue = value;
+    if (id === 'room_temp' || id === 'water_temp' || id === 'outdoor_temp') {
+        var f = parseFloat(value);
+        if (isNaN(f) || f <= -200) displayValue = '--';
+    }
     var el = document.getElementById(id);
-    if (el) el.textContent = value;
+    if (el) el.textContent = displayValue;
 
     if (id === 'ssid') {
         s_ssid = value || '';
@@ -233,18 +240,23 @@ function refreshIndicators() {
         }
     }
     if (wTempFill) {
-        var sp = wSet > 0 ? wSet : 60;
+        // Fixed 0-70 °C scale and absolute colour thresholds, independent
+        // of boiler state. The bar reads the same temperature regardless
+        // of setpoint, matching how a household water heater gauge reads.
+        var WTEMP_SCALE = 70;
         var pct = 0;
         if (s_waterTemp !== null && s_waterTemp > 0) {
-            pct = Math.min(100, Math.max(0, (s_waterTemp / sp) * 100));
+            pct = Math.min(100, Math.max(0, (s_waterTemp / WTEMP_SCALE) * 100));
         }
         wTempFill.style.height = pct + '%';
 
-        // Fill colour based on % of setpoint: blue <50%, amber 50-85%, red ≥85%
-        var wPct = (wSet > 0) ? (s_waterTemp / wSet) : 0;
-        var wCol = (wPct < 0.50) ? '#4488ff'
-                 : (wPct < 0.85) ? '#ffbb00'
-                                 : '#ff3333';
+        // Colour thresholds: blue <30 °C, amber 30-51 °C, red ≥51 °C.
+        // (Matches the original "high" boiler mode behaviour: 50 % / 85 %
+        // of a 60 °C target.)
+        var t = s_waterTemp || 0;
+        var wCol = (t < 30) ? '#4488ff'
+                 : (t < 51) ? '#ffbb00'
+                            : '#ff3333';
         wTempFill.style.background = wCol;
         wTempFill.style.opacity = '1';
         // Boiler body is intentionally static when heating — only the
@@ -276,22 +288,24 @@ function changeTemp(delta) {
     sendDebounced('/temp', s_temp.toFixed(1));
 }
 
+// All button actions use sendDebounced (300 ms) so rapid taps coalesce to
+// the last state — matches the physical screen's touch behaviour.
 function toggleHeating() {
     s_heat = !s_heat;
-    if (!s_heat) { s_fan = 'off'; send('/fan', 'off'); }
-    send('/heating', s_heat ? '1' : '0');
+    if (!s_heat) { s_fan = 'off'; sendDebounced('/fan', 'off'); }
+    sendDebounced('/heating', s_heat ? '1' : '0');
     refreshHeat();
 }
 
 function setFan(value) {
     s_fan = value;
-    send('/fan', value);
+    sendDebounced('/fan', value);
     refreshFan();
 }
 
 function setFanSby(mode) {
     s_fan = (mode === 'on') ? String(s_fanLevel) : 'off';
-    send('/fan', s_fan);
+    sendDebounced('/fan', s_fan);
     refreshFan();
 }
 
@@ -306,7 +320,7 @@ function changeFanLvl(delta) {
 
 function setBoiler(value) {
     s_boiler = value;
-    send('/boiler', value);
+    sendDebounced('/boiler', value);
     refreshBoiler();
 }
 
