@@ -2,93 +2,95 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Language policy
+
+**All project code, comments, identifiers, commit messages, log strings, documentation files (READMEs, SKILL.md, design notes) and PR descriptions MUST be in English.** Conversation with the user can be in Spanish, but anything that lands in the repository is English-only. UI-facing strings remain bilingual through `i18n.cpp` (`TK` enum) — never hardcode Spanish text in source files; add a key and use `t(TK::KEY)`.
+
 ## Project Overview
 
-TruMinus is firmware para **ESP32-C5** (board NM-CYD-C5) que emula una unidad de control CP-Plus para gestionar una **Truma Combi D** vía LIN bus. Expone control por MQTT, interfaz web WebSocket, CLI serie y pantalla táctil física.
+TruMinus is firmware for the **JC4880P443C** board (ESP32-P4) that emulates a Truma CP-Plus D control unit to manage a **Truma Combi D** heater over the LIN bus. Control surfaces: MQTT, WebSocket web UI, serial CLI, and a physical 800×480 LCD with capacitive touch.
 
-Los paneles de carga solar (Victron BLE) y SOC de batería (Ultimatron BLE) se muestran tanto en la pantalla física como en la interfaz web.
+Solar charge data (Victron BLE) and battery SOC (Ultimatron BLE) are surfaced both on the LCD and the web UI.
+
+> **Status (2026-05):** the project is mid-migration from the previous ESP32-C5 / NM-CYD-C5 board to the JC4880P443C / ESP32-P4 board. `main/main.cpp` is currently a display-only stub; the LIN/MQTT/WiFi/BLE subsystems exist as source files (`lin_driver.cpp`, `victronble.cpp`, `ultimatronble.cpp`, `webserver.cpp`, …) but are not all wired into `app_main` yet. Treat the codebase as porting-in-progress, not feature-complete.
 
 ## Build System
 
-This project uses **PlatformIO** (not plain Arduino IDE or CMake).
+This project uses **PlatformIO as an SCons/IDE frontend** with the real build delegated to **`idf.py`** (native ESP-IDF 6.0.1). Plain Arduino IDE / pioarduino is NOT used.
 
 ```bash
-# Build and upload firmware
-pio run --target upload
-
-# Build and upload the web interface (LittleFS filesystem)
-pio run --target buildfs
-pio run --target uploadfs
-
-# OTA upload (device must be on the network as truminus.local)
-# Change upload_protocol in platformio.ini to 'espota' first
-pio run --target upload
+pio run                       # build (delegates to idf.py via platformio_idf.py)
+pio run --target upload       # build + flash over USB-CDC
+pio run --target clean        # idf.py fullclean
 ```
+
+`platformio.ini` has a single default env `[env:jc4880_p4]` that:
+- Targets `board = esp32-p4-evboard` (PlatformIO accepts the EVB id; the actual board JSON lives in `boards/jc4880_p4.json`).
+- Symlinks `framework-espidf` to `~/esp/esp-idf` (release/v6.0, IDF 6.0.1) and `toolchain-riscv32-esp` to `~/.espressif/tools/.../esp-15.2.0_20251204`.
+- Loads `extra_scripts = platformio_idf.py`, which neutralises PlatformIO's own builders and routes `build`/`upload`/`clean` to `idf.py`.
+
+An OTA env `[env:jc4880_p4_ota]` extends the main env with `upload_protocol = espota` to `truminus.local`.
+
+### Critical: PlatformIO + IDF 6.0 build pitfalls
+
+Before touching the build (sdkconfig, components, link errors, IRAM overflow, mbedtls undefined refs), **read `.claude/skills/pio-idf-p4/SKILL.md`**. Key facts captured there:
+
+- `sdkconfig.jc4880_p4` (used by PlatformIO's parallel cmake+ninja) must stay in sync with the root `sdkconfig` (used by `idf.py`), with only two project-specific overrides: `CONFIG_HTTPD_WS_SUPPORT=y` and `CONFIG_COMPILER_ORPHAN_SECTIONS_WARNING=y`.
+- Symptoms of drift: `--enable-non-contiguous-regions discards section …`, `unresolvable R_RISCV_* against esp_log_timestamp / _global_interrupt_handler`, or `undefined reference to mbedtls_mutex_lock / mbedtls_calloc / mbedtls_threading_psa_*`.
+- After changing the sdkconfig, **delete stale `.a` files under `.pio/build/jc4880_p4/esp-idf/mbedtls/` and the two `sections.ld` copies** — cmake regenerates `build.ninja` but does not rebuild already-archived libraries.
+- ESP32-P4 rev < v3 (`chip_variant: "esp32p4_es"`) has non-contiguous SRAM (179 KB `sram_low` + 256 KB `sram_high`); `--enable-non-contiguous-regions` silently drops sections that don't fit. The cause is always an IDF config inflating IRAM, never the linker.
+- PlatformIO runs its own SCons link AFTER `idf.py build`. A failing `.pio/` link does not mean `idf.py` failed — the flashable binary is in `build/truminus.bin`.
 
 ### Web assets are embedded, not served from LittleFS
 
-Files in `data/` are compressed by `scripts/compress_fs.py` into `src/webfiles.h` as `static const uint8_t` arrays. **Firmware reflash is required** after any `data/` change. `uploadfs` alone is insufficient.
-
-### Board Selection
-
-Board presets are defined in `platformio.ini`. Activate one by selecting the corresponding `[env:…]` section:
-
-El único board soportado actualmente es **CYD_C5** (NM-CYD-C5, ESP32-C5-WROOM-1). Activa `-DCYD` y `-DCYD_C5` desde el env correspondiente.
-
-| Env | Flags | Notas |
-|-----|-------|-------|
-| `cyd_c5` | `-DCYD`, `-DCYD_C5`, `-DBLE` | Upload por USB. 320×240 ST7789 TFT, XPT2046 táctil, LIN TX=5/RX=4 (P5), DHT=27. |
-| `cyd_c5_ota` | `-DCYD`, `-DCYD_C5`, `-DBLE` | Mismo board, upload por `espota` a `truminus.local`. |
-
-Ambos usan la plataforma `pioarduino` (Arduino 3.3.6 sobre ESP-IDF 5.x).
-
-### Archivo de usuario requerido
-
-`wifi_config.h` no se necesita en CYD_C5: WiFi y MQTT se configuran en la propia pantalla la primera vez que arranca.
+Files in `data/` are compressed by `scripts/compress_fs.py` into `main/webfiles.h` as `static const uint8_t` arrays. **A firmware reflash is required** after any change in `data/`. There is no LittleFS partition. The root `CMakeLists.txt` re-runs `apply_patches.py`, `cache_bust.py` and `compress_fs.py` at every cmake configure so `webfiles.h` is always fresh before build.
 
 ## Architecture
 
 ### Communication Flow
 
 ```
-Truma Combi D ←→ LIN transceiver ←→ ESP32 UART
+Truma Combi D ←→ LIN transceiver ←→ ESP32-P4 UART
                                        ↕
-                              MQTT broker / Web clients / Serial / pantalla táctil
+                              MQTT broker / Web clients / Serial / Touch UI
                                        ↕
                               Victron BLE (solar) / Ultimatron BLE (battery)
 ```
 
-### Source Files (`src/`)
+### Source layout (`main/`)
 
-- **`main.cpp`** — Entry point. Owns WiFi/MQTT lifecycle, the LIN bus task (Core 0), OTA, serial CLI dispatch, LED status task, and solar/battery data broadcast. Defines hardware pins per board variant.
-- **`trumaframes.hpp/.cpp`** — Protocol layer. Defines all readable and writable LIN frames plus master frames. Each frame class parses raw bytes and publishes to MQTT/WebSocket.
-- **`settings.hpp/.cpp`** — Setpoint abstraction layer. Each setting (temperature, boiler mode, fan mode, etc.) validates input from MQTT, WebSocket, or serial, then stores a value consumed by the main loop to write to the Truma via LIN.
-- **`globals.hpp`** — Shared instances: `mqttClient`, `ws` (WebSocket), base MQTT topics, and Home Assistant autodiscovery identifiers.
-- **`autodiscovery.hpp/.cpp`** — Builds and publishes Home Assistant MQTT discovery payloads. Enabled with `-DAUTODISCOVERY` build flag.
-- **`webserver.hpp/.cpp`** — Initializes static file serving (from embedded flash) and handles incoming WebSocket JSON messages by routing them to `settings.cpp`.
-- **`waterboost.hpp/.cpp`** — Manages a 40-minute high-temperature water heating cycle triggered when boiler mode is "boost".
-- **`commandreader.hpp/.cpp`** — Buffers serial input and extracts complete command lines for the CLI in `main.cpp`.
-- **`cyddisplay.hpp/.cpp`** — Display and touch UI (compilado con `-DCYD`). Full 4-panel layout with solar/battery.
-- **`wifisetup.hpp/.cpp`** — Blocking LVGL screens for WiFi/MQTT setup, touch calibration, **solar config** (Victron MAC + key), and **battery config** (Ultimatron MAC).
-- **`victronble.hpp/.cpp`** — Victron Solar Charger BLE listener (Instant Readout protocol). Usa NimBLE-Arduino 2.x. Stubs simulados cuando `-DBLE` no está definido.
-- **`ultimatronble.hpp/.cpp`** — Ultimatron LiFePO4 BMS BLE listener (GATT protocol). Usa NimBLE-Arduino 2.x. Stubs simulados cuando `-DBLE` no está definido.
-- **`i18n.hpp/.cpp`** — Internationalization. `TK` enum with all UI strings in Spanish and English. `t(TK::KEY)` returns the current language string.
+The project follows the ESP-IDF native convention: there is no `src/`; all firmware sources live in `main/` (declared via `platformio.ini` `src_dir = main`).
+
+- **`main.cpp`** — `app_main` entry point. Currently a stub that initialises the LCD and runs a demo update loop; the WiFi/MQTT/LIN/BLE wiring from the previous board is not all re-attached yet.
+- **`p4display.cpp/.hpp`** — LVGL UI for the 800×480 LCD (replaces the old `cyddisplay.cpp`). Public surface: `p4DisplayInit()`, `p4DisplayUpdate(const P4DisplayData&)`, `p4DisplaySetStatus(const char*)`, plus `lvglLock()` / `lvglUnlock()` for callers that need to touch LVGL from other tasks.
+- **`trumaframes.cpp/.hpp`** — LIN protocol layer. Each readable/writable frame class parses raw bytes and publishes to MQTT/WebSocket. See `.claude/skills/truma-protocol/SKILL.md` for the byte-level reference.
+- **`lin_driver.cpp/.hpp`** — Low-level half-duplex LIN driver over ESP-IDF `driver/uart.h` (UART_NUM_1 recommended; UART_NUM_0 is the console).
+- **`settings.cpp/.hpp`** — Setpoint abstraction. `TBoilerSetting`, `TTempSetting`, `TFanSetting`, `TOnOffSetting`, all derived from `TMqttSetting / TAutoDiscovery`. Single source of truth for values consumed by `main.cpp`'s LIN write loop and broadcast back to MQTT/WS/LCD.
+- **`globals.hpp`** — shared `mqttClient`, `ws`, MQTT base topics, Home Assistant autodiscovery identifiers.
+- **`autodiscovery.cpp/.hpp`** — Home Assistant MQTT discovery payloads. Enabled via `-DAUTODISCOVERY`.
+- **`webserver.cpp/.hpp`** — HTTP static serving (from embedded flash via `webfiles.h`) plus WebSocket JSON handler that dispatches to `settings.cpp`.
+- **`waterboost.cpp/.hpp`** — 40-minute high-temperature water boost cycle when boiler mode is "boost".
+- **`commandreader.cpp/.hpp`** — Serial CLI line buffer for `main.cpp`.
+- **`victronble.cpp/.hpp`** — Victron Solar Charger BLE listener (Instant Readout). Uses NimBLE 2.x; stubbed when `-DENABLE_BLE` is absent. See `.claude/skills/victronble/SKILL.md`.
+- **`ultimatronble.cpp/.hpp`** — Ultimatron LiFePO4 BMS BLE listener (GATT). See `.claude/skills/ultimatronble/SKILL.md`.
+- **`i18n.cpp/.hpp`** — `TK` enum + `t(TK::KEY)`. Spanish (default) / English; language persisted in NVS.
+- **`logs.hpp`** — Logging macros / tag conventions.
 
 ### Web Interface (`data/`)
 
-Static files are compressed into `src/webfiles.h` and served from embedded flash. `script.js` communicates via WebSocket (JSON). Must be followed by **firmware reflash** (`pio run --target upload`) whenever changed.
+Static assets compressed into `main/webfiles.h`. `script.js` communicates with the firmware over a WebSocket using JSON envelopes (`{"command": "...", "id": "...", "value": "..."}`). **Firmware reflash is required** for every change.
 
 ## Key Design Patterns
 
-- **Conditional compilation**: `WEBSERVER`, `AUTODISCOVERY`, `COMBIGAS` (WIP for gas-only variant), `CYD`, `BLE` flags gate entire features.
-- **Settings flow**: External input (MQTT/WS/serial/CYD touch) → `settings.cpp` validates → `main.cpp` loop reads value → writes to Truma frame → Truma responds → frame published back to MQTT/WS/CYD.
-- **LIN bus task**: Runs pinned to Core 0 so blocking serial reads don't interfere with WiFi/MQTT/LVGL on Core 1.
-- **MQTT publish optimization**: Values are only published on change or after a 10-second timeout to avoid flooding the broker.
-- **Estado en pantalla**: WiFi y LIN bus se muestran como puntos en la barra superior; no hay LED activo en CYD_C5 (el WS2812B onboard se desuelda para liberar IO27 para el DHT22).
+- **Conditional compilation:** `WEBSERVER`, `AUTODISCOVERY`, `NO_MQTT`, `JC4880_P4`, `ENABLE_BLE`, `ENABLE_SOLAR_DUMMY`, `ENABLE_BOILER_DUMMY` flags gate whole features. `WEBSERVER`, `NO_MQTT` and `JC4880_P4` are pinned in the root `CMakeLists.txt` via `idf_build_set_property(COMPILE_DEFINITIONS … APPEND)` so they're visible to every component.
+- **Settings flow:** external input (MQTT / WebSocket / serial CLI / touch) → `settings.cpp` validates → `main.cpp` loop reads value → writes to the right Truma LIN frame → Truma responds → frame published back to MQTT/WS/LCD.
+- **LIN bus task:** the LIN UART task is pinned to **Core 0** so blocking serial reads don't fight with WiFi/MQTT/LVGL on Core 1. ESP32-P4 is dual-core (RV32IMAFC), so the pinning model from the prior C5 port still applies.
+- **MQTT publish throttling:** values are published on change or after a 10 s timeout to avoid flooding the broker.
+- **LVGL locking:** `lv_timer_handler()` runs on a dedicated FreeRTOS task. Any LVGL access from `app_main` / `loop` / `lin_task` must be wrapped in `lvglLock()` / `lvglUnlock()`. Prefer a short timeout (e.g. 10 ms) over `portMAX_DELAY` to avoid deadlocks if the LVGL task is busy.
 
 ## MQTT Topics
 
-Base topics are defined in `globals.hpp`:
+Base topics defined in `globals.hpp`:
 - Status: `truma/status/<field>`
 - Setpoints: `truma/set/<field>`
 
@@ -96,128 +98,91 @@ Writable setpoints: `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off
 
 ---
 
-## Target Hardware
+## Target Hardware — JC4880P443C (ESP32-P4)
 
-### CYD_C5 — NM-CYD-C5 (RockBase)
+- **MCU:** ESP32-P4-WROOM (RISC-V dual-core RV32IMAFC, 400 MHz). Silicon revision matters: the EVB module shipped here is rev < v3 (`chip_variant: "esp32p4_es"` in `boards/jc4880_p4.json`), which enables `--enable-non-contiguous-regions` on the linker. See `.claude/skills/pio-idf-p4/SKILL.md` §5.
+- **Memory:** 16 MB Flash (QIO @ 80 MHz) / 32 MB PSRAM (HEX @ 200 MHz).
+- **Display:** 4.3" **ST7701** RGB panel, **800×480** landscape, driven through ESP-IDF's `esp_lcd_st7701` component.
+- **Touch:** **GT911** capacitive controller on the shared I2C bus (`BSP_I2C_SCL=GPIO8`, `BSP_I2C_SDA=GPIO7`). Reset and INT are not wired to dedicated pins on this board (`BSP_LCD_TOUCH_RST = GPIO_NUM_NC`).
+- **Audio:** I2S codec wired (SCLK=12, MCLK=13, LCLK=10, DOUT=9, DSIN=48, PA enable=11). Not used by TruMinus yet.
+- **Connectivity:** WiFi (via separate ESP32-C6 co-processor over SDIO/SPI per the BSP; see `components/jc4880_bsp/WIFI_ARCHITECTURE.md`), BLE 5 (also via the C6).
+- **BSP:** vendored locally at `components/jc4880_bsp/` (forked from `csvke/esp32_p4_jc4880p433c_bsp`). Pulls `esp_lcd_st7701`, `esp_lcd_touch_gt911`, `esp_lcd_touch`, `esp_lvgl_port`, `lvgl` from the Espressif component registry on first build.
+- **Upload:** USB-CDC on `/dev/ttyACM0` (no CH340/CP210x bridge needed; the P4 exposes USB natively). Speed 460800.
 
-- MCU: **ESP32-C5-WROOM-1-N16R8**, RISC-V, 240 MHz, Wi-Fi 6 (2.4/5GHz) + BLE 5 + Zigbee/Thread
-- Display: **ST7789** 2.8" TFT, 320×240 landscape
-- Touch: **XPT2046** resistive (shares SPI bus with display and SD card)
-- Memory: **16MB Flash / 8MB PSRAM**
-- PlatformIO board id: `cyd_c5` (custom board JSON in `boards/`)
-- Uses `pioarduino` platform (Arduino 3.3.6) — see `[env:cyd_c5]` in `platformio.ini`
-- Onboard: RGB LED (WS2812B, IO27), SD card slot, speaker (IO26)
-- Connectors: USB-C UART (CH340C), USB-C native (IO13/IO14), P5 (LP-UART IO4/IO5), CN1 (I2C IO8/IO9), FPC2 (12-pin)
+### Pin assignments (LIN / external sensor)
 
-> **Antes de tocar firmware C5, leer `.claude/skills/nm-cyd-c5/SKILL.md` §6 (Quirks de firmware).** Resume las trampas confirmadas en debugging: secuencia WiFi sin `esp_wifi_stop/start`, PSRAM no-DMA (framebuffer y AsyncTCP van a SRAM interna), `LV_MEM_SIZE=48 KB`, web servida desde flash embebida (no LittleFS), LWIP exige `LOCK_TCPIP_CORE()` fuera del tcpip_thread, C5 es single-core (`xTaskCreatePinnedToCore(...,1)` falla), filtrar ADS `:Zone.Identifier` en `compress_fs.py`, CLI serie filtra a ASCII imprimible.
+LIN UART pins and the AM2301/DHT22 external temperature sensor pin live in `main/main.cpp` and are still being finalised on the new board. **Always grep `main/main.cpp` and `main/lin_driver.cpp` for the current mapping rather than relying on this document.** The previous C5 board used TX=GPIO5 / RX=GPIO4 (P5 LP-UART), DHT=GPIO27 — those pin numbers do NOT apply on the JC4880-P4 because GPIO27 is the LCD backlight on this board.
 
-### LIN bus UART pins & external temperature sensor
-Pin assignments live en `src/main.cpp` (sección `#ifdef CYD`) y se resumen en `[env:cyd_c5]` de `platformio.ini`. Consulta esos archivos para el mapeo definitivo.
+### LVGL / display library
 
-> ⚠️ P3 also exposes GPIO 21 (backlight PWM) — don't use it for sensor VCC.
-
-### Display library
-Use **esp32-smartdisplay** (`rzeldent/esp32-smartdisplay`) — handles all SPI pin init, LVGL integration, touch, and backlight automatically via the board definition.
+Use the BSP's own `bsp_display_start()` + `esp_lvgl_port`. Do NOT pull `rzeldent/esp32-smartdisplay` or other Arduino-Core display libraries — those don't support the P4 RGB panel pipeline. The LCD framebuffer must live in PSRAM (panel uses the LCD_CAM peripheral with PSRAM DMA on the P4).
 
 ### External temperature sensor
-AM2301 (DHT22-compatible). Read every 30 s, broadcast to WebSocket clients as `outdoor_temp`.
+
+AM2301 (DHT22-compatible). Read every 30 s, broadcast to web clients as `outdoor_temp`. Currently not wired in `app_main` (see migration status note above).
 
 ---
 
-## Display Implementation (`src/cyddisplay.cpp/.hpp`)
+## Display Implementation (`main/p4display.cpp`)
 
-### Layout (320×240 landscape)
-Four horizontal zones: top bar, content area with **4 panels**, status bar.
+### Layout (800×480 landscape)
 
-**Top bar** (y=0..27): Truma logo left, outdoor temp (x=119), `⚙ Conf.` button (x=186, w=72), WiFi dot, LIN dot.
+Three horizontal bands:
+- **Top bar** (height 55 px): Truma logo, outdoor temp, settings button, WiFi + LIN status dots.
+- **Content area** (height 387 px): split vertically at x=370.
+  - **Left column** (370 px wide): HEATING section (210 px tall) above FAN section (177 px tall).
+  - **Right column** (429 px wide): HOT WATER section (200 px tall) above SOLAR/BATTERY section (187 px tall).
+- **Status bar** (height 38 px): logo, SSID + IP, status message.
 
-**Content area** (y=29..203, 175 px tall): divided by vertical separator at **x=141**.
-- **Left panel** (141 px wide): HEATING section + FAN section
-- **Right panel** (178 px wide): HOT WATER section (top) + SOLAR/BATTERY section (bottom)
+The colour palette is defined as `C_BG / C_PANEL / C_BORDER / C_ACCENT / …` constants at the top of `p4display.cpp`.
 
-**Solar/Battery section** (right panel, y=88..173):
-- Left column (126 px): 4 solar data lines — Estado, Volt., Carga, Prod.
-- Vertical separator (1 px)
-- Right column (46 px): Battery SOC % label + vertical battery icon with fill
+### Public API
 
-**Status bar** (y=205..239): Logo left, `SSID  IP` (montserrat_12, long dot mode), status message right.
+```cpp
+void p4DisplayInit();                       // call once before any LVGL user
+void p4DisplayUpdate(const P4DisplayData&); // refreshes the whole UI; locks LVGL internally
+void p4DisplaySetStatus(const char* msg);   // status-bar message
+bool lvglLock(uint32_t timeout_ms = portMAX_DELAY);
+void lvglUnlock();
+```
 
-### Fonts used on display
-| Font | Size | Usage |
-|------|------|-------|
-| `symbols_14` | 14 px | Icons (tint, fire, thermometer, chevron) |
-| `montserrat_12` | 12 px | Status bar IP/SSID, solar Volt./Carga/Prod. lines |
-| `montserrat_14` | 14 px | Section labels, buttons, SOC label, most UI text |
-| `montserrat_16` | 16 px | Temperature setpoint display |
-| `montserrat_20` | 20 px | Titles (settings screens) |
-| `montserrat_28` | 28 px | Splash screen status |
+`P4DisplayData` carries temperatures (use `< -100.0f` as "no data" sentinel), heating/fan/boiler/energy state, WiFi/LIN flags, SSID/IP strings, and embedded `P4SolarData` + `P4BattData` structs.
 
-### Custom font (`src/symbols_14.c`)
-FontAwesome 5 Solid subset generated by `scripts/gen_symbols.py`. Contains the tint (water drop), home/thermometer, fire, thermometer-half, and chevron-right glyphs. Regenerate with `python scripts/gen_symbols.py` (requires `pip install freetype-py`).
+### Behaviour rules (carried over from the C5 implementation, will be re-implemented for P4)
 
-### `cydDisplayInit(roomSp, waterSp, heatingOn, fanMode)`
-Called once from `setup()` after all settings objects exist. Shows a 2-second splash, then builds the full UI and loads persisted settings (timeout index from NVS).
-
-### `cydDisplayUpdate(...)`
-Called from `loop()` every ~10 ms under the LVGL mutex. Updates temperatures, status dots, error indicators, screen timeout/dimming, solar/battery data, and calls `refreshControls()` to re-sync buttons to current setting values.
-
-### Settings screens
-Accessed via the `⚙ Conf.` button in the top bar. Menu options:
-- **WiFi Config** — blocking scan + connect; saves to NVS and reboots.
-- **MQTT Config** — blocking host/port/user/pass; saves to NVS and reboots.
-- **Carga solar** — Victron MAC (12 hex) + encryption key (32 hex) + Ultimatron battery MAC (12 hex). **Works without BLE** — allows manual entry for when BLE is enabled later. Saves to NVS.
-- **Pantalla** — timeout selector (30 s / 1 min / 3 min / nunca). Saves to NVS immediately.
-- **Idioma** — Spanish / English selector. Saves to NVS and applies immediately.
-
-### Navigation request pattern
-Settings screens that need blocking setup set a flag (`s_navRequest`) from the LVGL callback. `loop()` reads the flag outside the LVGL mutex, takes the mutex, runs the blocking setup screen, then restarts. This avoids re-entrant LVGL calls.
-
-### Screen timeout
-Four options (30 s, 1 min, 3 min, never), persisted to NVS. Implemented as three stages: full brightness → dim warning (5 s before timeout) → backlight off with a transparent wake overlay on `lv_layer_top()`. First touch while off wakes the screen without passing the tap to the UI beneath.
-
-### Fan/heating interaction rules
 - Toggling heat OFF forces fan to "off".
-- Heat ON → shows setpoint row + heating fan row (Eco/Alto/Apag.).
-- Heat OFF → shows On/Off fan row + optional level row (1–10), both disabled while boiler is active.
-- Activating boiler forces fan to "off" (prevents unexpected fan starts when the boiler cycles).
-
-### Boiler modes & energy selection
-Four boiler buttons (off / 40°C / 60°C / 60°C⚡boost) map to `TBoilerSetting` values. Energy dropdown (Gas / Gas+Elec 850W / Gas+Elec 1700W / Elec 850W / Elec 1700W) maps to `TEnergySelection` (0–4); `main.cpp` polls `cydGetEnergyMode()` each cycle and applies it to `EnergySelect` and `SetPowerLimit` frames.
-
-### Solar/Battery data
-- `cydUpdateSolar(const CydSolarData& d)` refreshes the 4 solar lines under the LVGL mutex.
-- `cydUpdateBatt(const CydBattData& d)` refreshes the SOC label and battery fill height/color.
-- Data is published to web clients via WebSocket every 10 s in `publishSolarBatt()`.
-
-### LVGL task / mutex
-`lv_timer_handler()` runs in a dedicated FreeRTOS task (Core 1) every 5 ms. Any LVGL call from `loop()` or `linBusTask()` must be wrapped in `lvglLock()`/`lvglUnlock()`. The `loop()` uses a 10 ms timeout instead of `portMAX_DELAY` to avoid stalling when the LVGL task is busy.
+- Activating boiler forces fan to "off" (avoids unintended fan starts when the boiler cycles).
+- Boiler buttons: off / 40 °C / 60 °C / 60 °C ⚡boost map to `TBoilerSetting`.
+- Energy dropdown: Gas / Gas+Elec 850W / Gas+Elec 1700W / Elec 850W / Elec 1700W → `TEnergySelection` index 0–4.
 
 ### NVS namespaces
+
 | Namespace | Keys | Content |
 |-----------|------|---------|
-| `"wifi"` | `ssid`, `pass` | WiFi credentials |
-| `"mqtt"` | `host`, `port`, `user`, `pass` | MQTT config |
-| `"touchcal"` | `data` | Touch calibration matrix |
-| `"cyd"` | `timeout_idx`, `lang` | Screen timeout option index, language (0=ES, 1=EN) |
-| `"solar"` | `addr`, `key` | Victron BLE MAC + encryption key |
-| `"batt"` | `addr` | Ultimatron BLE MAC |
+| `wifi` | `ssid`, `pass` | WiFi credentials |
+| `mqtt` | `host`, `port`, `user`, `pass` | MQTT broker config |
+| `touchcal` | `data` | Touch calibration matrix (GT911 is factory-calibrated; this key may go unused on P4) |
+| `display` | `timeout_idx`, `lang` | Screen timeout option index, language (0=ES, 1=EN) |
+| `solar` | `addr`, `key` | Victron BLE MAC + encryption key |
+| `batt` | `addr` | Ultimatron BLE MAC |
 
-### wifisetup.hpp public API
-```cpp
-void runWifiSetup(String& ssid, String& pass);
-void runMqttSetup(String& uri, String& user, String& pass);
-bool runSolarSetup(String& addr, String& key);    // solar + battery config screen
-void runTouchCalibration();
-bool loadWifiCredentials(String& ssid, String& pass);
-bool loadMqttConfig(String& host, String& port, String& user, String& pass);
-bool loadSolarConfig(String& addr, String& key);
-void saveSolarConfig(const String& addr, const String& key);
-bool loadBattConfig(String& addr);
-void saveBattConfig(const String& addr);
-```
-All `run*` and `save*` functions save to NVS internally; credentials take effect after `ESP.restart()`.
+### Settings screens
+
+Reachable from the ⚙ button in the top bar (will be ported from the old `wifisetup.cpp` flow):
+- **WiFi config** — blocking scan + connect; saves to NVS and reboots.
+- **MQTT config** — blocking host/port/user/pass; saves to NVS and reboots.
+- **Solar / battery** — Victron MAC + encryption key + Ultimatron MAC. Works without BLE compiled in (allows pre-provisioning).
+- **Display** — timeout selector (30 s / 1 min / 3 min / never).
+- **Language** — Spanish / English; applied immediately.
+
+Settings screens that need to block use the navigation-request pattern: an LVGL callback sets a flag (`s_navRequest`); `loop()` reads it outside the LVGL mutex, takes the lock, runs the blocking screen, then reboots if credentials changed.
 
 ---
 
-### TrumaDisplay project (https://github.com/olivluca/TrumaDisplay)
-An alternative MQTT client (originalmente para CYD Xtensa) que habla con TruMinus topics (same MQTT lib: `cyijun/ESP32MQTTClient`). UI built with Squareline Studio → LVGL. Uses a `std::queue<String>` + `std::mutex` to hand MQTT callbacks to the main thread safely. Has a heartbeat watchdog (15 s timeout on `truma/status/heartbeat`).
+## Related skills
+
+- **`.claude/skills/pio-idf-p4/SKILL.md`** — read before touching the build system, sdkconfig, or any link error.
+- **`.claude/skills/truma-protocol/SKILL.md`** — full Truma LIN frame reference (master/slave frames, byte layouts).
+- **`.claude/skills/victronble/SKILL.md`** — Victron Instant Readout BLE protocol.
+- **`.claude/skills/ultimatronble/SKILL.md`** — Ultimatron BMS GATT protocol.
+- **`.claude/skills/ui-interfaces/SKILL.md`** — coordination between LCD touch UI and the WebSocket web UI (single source of truth in `settings.cpp`).
