@@ -4,4 +4,12 @@
 .vscode/launch.json
 .vscode/ipch
 .claude/
+
+# idf.py / ESP-IDF native build outputs
+build/
+managed_components/
+sdkconfig.old
+
+# Generated web asset blob (rebuilt by scripts/compress_fs.py at cmake configure)
+main/webfiles.h
 src/webfiles.h
