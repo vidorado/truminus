@@ -3,53 +3,97 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "libs/tiny_ttf/lv_tiny_ttf.h"
 #include <stdio.h>
 
 static const char* TAG = "display";
+
+// Embedded TTFs (declared by ESP-IDF via EMBED_FILES in main/CMakeLists.txt).
+extern const uint8_t font_regular_ttf_start[] asm("_binary_font_regular_ttf_start");
+extern const uint8_t font_regular_ttf_end[]   asm("_binary_font_regular_ttf_end");
+extern const uint8_t font_bold_ttf_start[]    asm("_binary_font_bold_ttf_start");
+extern const uint8_t font_bold_ttf_end[]      asm("_binary_font_bold_ttf_end");
+extern const uint8_t font_icons_ttf_start[]   asm("_binary_font_icons_ttf_start");
+extern const uint8_t font_icons_ttf_end[]     asm("_binary_font_icons_ttf_end");
+
+// Runtime-loaded fonts (Tiny TTF supports full Unicode → Latin chars work).
+static lv_font_t* s_font_18      = nullptr;
+static lv_font_t* s_font_20      = nullptr;
+static lv_font_t* s_font_22      = nullptr;
+static lv_font_t* s_font_24      = nullptr;
+static lv_font_t* s_font_28      = nullptr;
+static lv_font_t* s_font_title   = nullptr;  // bold 26
+static lv_font_t* s_font_logo    = nullptr;  // bold 24
+static lv_font_t* s_font_icons22 = nullptr;  // FontAwesome 4.x @ 22
+static lv_font_t* s_font_icons24 = nullptr;  // FontAwesome 4.x @ 24
+
+// FontAwesome 4 codepoints (UTF-8 encoded for inline use in label strings).
+#define FA_TINT       "\xEF\x81\x83"   // U+F043
+#define FA_FIRE       "\xEF\x81\xAD"   // U+F06D
+#define FA_HOME       "\xEF\x80\x95"   // U+F015
+#define FA_THERM_HALF "\xEF\x8B\x89"   // U+F2C9 (thermometer-half / temperature-half)
+#define FA_CHEVRON_R  "\xEF\x81\x94"   // U+F054
+#define FA_WIFI       "\xEF\x87\xAB"   // U+F1EB
+#define FA_RANDOM     "\xEF\x81\xB4"   // U+F074 (random/shuffle in FA4)
+#define FA_COG        "\xEF\x80\x93"   // U+F013
+#define FA_BOLT       "\xEF\x83\xA7"   // U+F0E7 (lightning, for boost)
 
 // ── Layout (800×480 landscape) ────────────────────────────────────────────────
 static constexpr int W         = 800;
 static constexpr int H         = 480;
 static constexpr int TOP_H     = 55;
-static constexpr int STATUS_H  = 38;
+static constexpr int STATUS_H  = 50;
 static constexpr int CONTENT_Y = TOP_H;
-static constexpr int CONTENT_H = H - TOP_H - STATUS_H;   // 387
+static constexpr int CONTENT_H = H - TOP_H - STATUS_H;   // 375
 
-// Left column: CALEFACCION + VENTILADOR
+// Left column: HEATING + FAN
 static constexpr int LEFT_W  = 370;
-static constexpr int HEAT_H  = 210;
+static constexpr int HEAT_H  = 205;
 static constexpr int FAN_Y   = CONTENT_Y + HEAT_H;
-static constexpr int FAN_H   = CONTENT_H - HEAT_H;       // 177
+static constexpr int FAN_H   = CONTENT_H - HEAT_H;       // 170
 
-// Right column: AGUA CALIENTE + CARGA SOLAR
+// Right column: HOT WATER + SOLAR
 static constexpr int RIGHT_X  = LEFT_W + 1;
 static constexpr int RIGHT_W  = W - LEFT_W - 1;          // 429
-static constexpr int WATER_H  = 200;
+static constexpr int WATER_H  = 195;
 static constexpr int SOLAR_Y  = CONTENT_Y + WATER_H;
-static constexpr int SOLAR_H  = CONTENT_H - WATER_H;     // 187
+static constexpr int SOLAR_H  = CONTENT_H - WATER_H;     // 180
 
-// ── Colour palette (blue/navy — matches original CYD aesthetic) ───────────────
-#define C_BG          lv_color_hex(0x09111e)
-#define C_PANEL       lv_color_hex(0x0d1829)
-#define C_BORDER      lv_color_hex(0x1a4878)
-#define C_ACCENT      lv_color_hex(0x2980b9)
+// Shared column for the two vertical bars (water tank & solar battery) —
+// both have the same width and live in the same x column on the right edge.
+static constexpr int TANK_W           = 64;
+static constexpr int TANK_RIGHT_PAD   = 16;   // moved ~10px right vs. previous 26
+static constexpr int TANK_H_WATER     = 118;
+static constexpr int TANK_H_BATT      = 110;  // base raised 8px (top fixed)
+
+// ── Colour palette (matches original CYD aesthetic) ───────────────────────────
+#define C_BG          lv_color_hex(0x1a1a2e)
+#define C_TOPBAR      lv_color_hex(0x0f0f22)
+#define C_SEP         lv_color_hex(0x444466)
+#define C_LABEL       lv_color_hex(0x8888aa)
 #define C_TEXT        lv_color_hex(0xffffff)
-#define C_DIM         lv_color_hex(0x6fa8c8)
-#define C_BTN         lv_color_hex(0x12233d)
-#define C_BTN_ACTIVE  lv_color_hex(0x1565c0)
-#define C_GREEN       lv_color_hex(0x27ae60)
-#define C_RED         lv_color_hex(0xe74c3c)
-#define C_AMBER       lv_color_hex(0xf39c12)
-#define C_WATER_COLD  lv_color_hex(0x2e86c1)
-#define C_WATER_WARM  lv_color_hex(0xf39c12)
-#define C_WATER_HOT   lv_color_hex(0xe74c3c)
+#define C_DIM         lv_color_hex(0xaaccff)
+#define C_CYAN        lv_color_hex(0xaaccff)
+#define C_CYAN_BR     lv_color_hex(0x88ccff)
+#define C_YELLOW      lv_color_hex(0xffdd66)
+#define C_AMBER       lv_color_hex(0xffcc88)
+#define C_BTN         lv_color_hex(0x2a2a4a)
+#define C_BTN_ACTIVE  lv_color_hex(0x3a7bd5)
+#define C_HEAT_ON     lv_color_hex(0x1a8a3a)
+#define C_GREEN       lv_color_hex(0x44ff44)
+#define C_RED         lv_color_hex(0xff4444)
+#define C_AMBER_BAR   lv_color_hex(0xffaa00)
+#define C_WATER_COLD  lv_color_hex(0x4488ff)
+#define C_WATER_WARM  lv_color_hex(0xffaa00)
+#define C_WATER_HOT   lv_color_hex(0xff4444)
+#define C_BORDER_BAT  lv_color_hex(0x888888)
 
 // ── Local UI state ────────────────────────────────────────────────────────────
 static struct {
     float roomSetpoint = 20.0f;
     bool  heatingOn    = false;
-    int   fanMode      = 0;   // 0=off  1=eco  2=high  3..12=level 1..10
-    int   boilerMode   = 0;   // 0=off  1=40°C  2=60°C  3=boost
+    int   fanMode      = 0;
+    int   boilerMode   = 0;
     int   energyIdx    = 0;
 } st;
 
@@ -58,28 +102,31 @@ static struct {
     // Top bar
     lv_obj_t* lbl_room_temp;
     lv_obj_t* lbl_outdoor;
-    lv_obj_t* dot_wifi;
-    lv_obj_t* dot_lin;
+    lv_obj_t* icon_wifi;
+    lv_obj_t* icon_lin;
     lv_obj_t* btn_conf;
 
-    // CALEFACCION panel
+    // HEATING panel
     lv_obj_t* lbl_room_sp;
     lv_obj_t* btn_sp_dn;
     lv_obj_t* btn_sp_up;
     lv_obj_t* btn_heat;
     lv_obj_t* lbl_btn_heat;
+    lv_obj_t* row_sp;
 
-    // VENTILADOR panel
-    lv_obj_t* btnmx_fan;
+    // FAN panel
+    lv_obj_t* btnmx_fan_heat;
+    lv_obj_t* btnmx_fan_off;
     lv_obj_t* slider_fan_lvl;
     lv_obj_t* lbl_fan_lvl;
+    lv_obj_t* lbl_fan_lvl_title;
 
-    // AGUA CALIENTE panel
+    // HOT WATER panel
     lv_obj_t* lbl_water_temp;
     lv_obj_t* bar_water;
     lv_obj_t* btnmx_boiler;
 
-    // CARGA SOLAR panel
+    // SOLAR panel
     lv_obj_t* lbl_solar_status;
     lv_obj_t* lbl_solar_volts;
     lv_obj_t* lbl_solar_current;
@@ -97,26 +144,66 @@ static void refresh_controls();
 static void on_sp_dn(lv_event_t* e);
 static void on_sp_up(lv_event_t* e);
 static void on_heat_toggle(lv_event_t* e);
-static void on_fan_changed(lv_event_t* e);
+static void on_fan_heat_changed(lv_event_t* e);
+static void on_fan_off_changed(lv_event_t* e);
 static void on_fan_lvl_changed(lv_event_t* e);
 static void on_boiler_changed(lv_event_t* e);
 static void on_conf_clicked(lv_event_t* e);
 
+// ── Font loader ───────────────────────────────────────────────────────────────
+static void load_fonts()
+{
+    const size_t reg_sz  = font_regular_ttf_end - font_regular_ttf_start;
+    const size_t bold_sz = font_bold_ttf_end    - font_bold_ttf_start;
+    const size_t ico_sz  = font_icons_ttf_end   - font_icons_ttf_start;
+    s_font_18    = lv_tiny_ttf_create_data(font_regular_ttf_start, reg_sz, 18);
+    s_font_20    = lv_tiny_ttf_create_data(font_regular_ttf_start, reg_sz, 20);
+    s_font_22    = lv_tiny_ttf_create_data(font_regular_ttf_start, reg_sz, 22);
+    s_font_24    = lv_tiny_ttf_create_data(font_regular_ttf_start, reg_sz, 24);
+    s_font_28    = lv_tiny_ttf_create_data(font_regular_ttf_start, reg_sz, 28);
+    s_font_title = lv_tiny_ttf_create_data(font_bold_ttf_start,    bold_sz, 26);
+    s_font_logo  = lv_tiny_ttf_create_data(font_bold_ttf_start,    bold_sz, 24);
+    s_font_icons22 = lv_tiny_ttf_create_data(font_icons_ttf_start, ico_sz, 22);
+    s_font_icons24 = lv_tiny_ttf_create_data(font_icons_ttf_start, ico_sz, 24);
+
+    // Set the icon font as fallback so labels can mix Latin text + FA glyphs
+    // (e.g. "FA_COG  Conf." renders correctly in a single label).
+    if (s_font_18)    s_font_18->fallback    = s_font_icons22;
+    if (s_font_20)    s_font_20->fallback    = s_font_icons22;
+    if (s_font_22)    s_font_22->fallback    = s_font_icons22;
+    if (s_font_24)    s_font_24->fallback    = s_font_icons24;
+    if (s_font_28)    s_font_28->fallback    = s_font_icons24;
+    if (s_font_title) s_font_title->fallback = s_font_icons24;
+    if (s_font_logo)  s_font_logo->fallback  = s_font_icons24;
+}
+
 // ── Style helpers ─────────────────────────────────────────────────────────────
 
-static lv_obj_t* make_panel(lv_obj_t* parent, int x, int y, int w, int h)
+static lv_obj_t* make_section(lv_obj_t* parent, int x, int y, int w, int h)
 {
     lv_obj_t* p = lv_obj_create(parent);
     lv_obj_set_pos(p, x, y);
     lv_obj_set_size(p, w, h);
-    lv_obj_set_style_bg_color(p, C_PANEL, 0);
+    lv_obj_set_style_bg_color(p, C_BG, 0);
     lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(p, C_BORDER, 0);
-    lv_obj_set_style_border_width(p, 2, 0);
-    lv_obj_set_style_radius(p, 4, 0);
-    lv_obj_set_style_pad_all(p, 10, 0);
+    lv_obj_set_style_border_width(p, 0, 0);
+    lv_obj_set_style_radius(p, 0, 0);
+    lv_obj_set_style_pad_all(p, 12, 0);
     lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
     return p;
+}
+
+static lv_obj_t* make_sep(lv_obj_t* parent, int x, int y, int w, int h)
+{
+    lv_obj_t* s = lv_obj_create(parent);
+    lv_obj_set_pos(s, x, y);
+    lv_obj_set_size(s, w, h);
+    lv_obj_set_style_bg_color(s, C_SEP, 0);
+    lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s, 0, 0);
+    lv_obj_set_style_radius(s, 0, 0);
+    lv_obj_clear_flag(s, LV_OBJ_FLAG_SCROLLABLE);
+    return s;
 }
 
 static lv_obj_t* make_label(lv_obj_t* parent, const char* text,
@@ -131,34 +218,22 @@ static lv_obj_t* make_label(lv_obj_t* parent, const char* text,
     return l;
 }
 
-static lv_obj_t* make_section_label(lv_obj_t* parent, const char* text, int y)
+static lv_obj_t* make_section_title(lv_obj_t* parent, const char* text, int y)
 {
-    return make_label(parent, text, &lv_font_montserrat_16, C_DIM, 0, y);
-}
-
-static lv_obj_t* make_status_dot(lv_obj_t* parent)
-{
-    lv_obj_t* d = lv_obj_create(parent);
-    lv_obj_set_size(d, 14, 14);
-    lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(d, C_RED, 0);
-    lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(d, 0, 0);
-    lv_obj_clear_flag(d, LV_OBJ_FLAG_SCROLLABLE);
-    return d;
+    // Bold + larger than body text for emphasis.
+    return make_label(parent, text, s_font_title, C_DIM, 0, y);
 }
 
 static void style_button(lv_obj_t* btn)
 {
     lv_obj_set_style_bg_color(btn, C_BTN, 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(btn, C_ACCENT, 0);
-    lv_obj_set_style_border_width(btn, 1, 0);
-    lv_obj_set_style_radius(btn, 4, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_radius(btn, 5, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_text_color(btn, C_TEXT, 0);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x1e3a5f), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btn, C_BTN_ACTIVE, LV_STATE_PRESSED);
     lv_obj_set_style_bg_color(btn, C_BTN_ACTIVE, LV_STATE_CHECKED);
-    lv_obj_set_style_border_color(btn, C_ACCENT, LV_STATE_CHECKED);
 }
 
 static void style_btnmatrix(lv_obj_t* bm, const lv_font_t* font)
@@ -166,21 +241,18 @@ static void style_btnmatrix(lv_obj_t* bm, const lv_font_t* font)
     lv_obj_set_style_bg_opa(bm, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(bm, 0, 0);
     lv_obj_set_style_pad_all(bm, 0, 0);
-    lv_obj_set_style_pad_gap(bm, 5, 0);
+    lv_obj_set_style_pad_gap(bm, 6, 0);
 
     lv_obj_set_style_bg_color(bm, C_BTN, LV_PART_ITEMS);
     lv_obj_set_style_bg_opa(bm, LV_OPA_COVER, LV_PART_ITEMS);
-    lv_obj_set_style_border_color(bm, C_ACCENT, LV_PART_ITEMS);
-    lv_obj_set_style_border_width(bm, 1, LV_PART_ITEMS);
-    lv_obj_set_style_radius(bm, 4, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(bm, 0, LV_PART_ITEMS);
+    lv_obj_set_style_radius(bm, 5, LV_PART_ITEMS);
     lv_obj_set_style_text_color(bm, C_TEXT, LV_PART_ITEMS);
     lv_obj_set_style_text_font(bm, font, LV_PART_ITEMS);
 
     lv_obj_set_style_bg_color(bm, C_BTN_ACTIVE,
         (lv_style_selector_t)LV_PART_ITEMS | (lv_style_selector_t)LV_STATE_CHECKED);
-    lv_obj_set_style_border_color(bm, C_ACCENT,
-        (lv_style_selector_t)LV_PART_ITEMS | (lv_style_selector_t)LV_STATE_CHECKED);
-    lv_obj_set_style_bg_color(bm, lv_color_hex(0x1e3a5f),
+    lv_obj_set_style_bg_color(bm, C_BTN_ACTIVE,
         (lv_style_selector_t)LV_PART_ITEMS | (lv_style_selector_t)LV_STATE_PRESSED);
 }
 
@@ -193,27 +265,27 @@ static void build_splash(lv_obj_t* scr)
 
     lv_obj_t* title = lv_label_create(scr);
     lv_label_set_text(title, "TruMinus");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_font(title, s_font_28, 0);
     lv_obj_set_style_text_color(title, C_TEXT, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, -20);
 
     lv_obj_t* sub = lv_label_create(scr);
-    lv_label_set_text(sub, "Iniciando...");
-    lv_obj_set_style_text_font(sub, &lv_font_montserrat_18, 0);
-    lv_obj_set_style_text_color(sub, C_DIM, 0);
+    lv_label_set_text(sub, "Iniciando…");
+    lv_obj_set_style_text_font(sub, s_font_18, 0);
+    lv_obj_set_style_text_color(sub, C_LABEL, 0);
     lv_obj_align(sub, LV_ALIGN_CENTER, 0, 20);
 }
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
-// Fan: Apag. / Eco / Alto
-static const char* FAN_MAP[] = { "Apag.", "Eco", "Alto", "" };
+static const char* FAN_HEAT_MAP[] = { "Eco", "Alto", "" };
+static const char* FAN_OFF_MAP[]  = { "Apag.", "Enc.", "" };
 
-// Boiler: 2x2 grid  Off/40°C on row 1, 60°C/Boost on row 2
+// Boiler 2x2 grid (boost uses LVGL CHARGE symbol — built-in, always renders).
 static const char* BOILER_MAP[] = {
-    "Apag.", "40\xc2\xb0""C",
+    "Apag.", "40°C",
     "\n",
-    "60\xc2\xb0""C", "Boost",
+    "60°C", "60°C " FA_BOLT,
     ""
 };
 
@@ -228,244 +300,305 @@ static void build_main_screen()
     lv_obj_t* topbar = lv_obj_create(scr);
     lv_obj_set_pos(topbar, 0, 0);
     lv_obj_set_size(topbar, W, TOP_H);
-    lv_obj_set_style_bg_color(topbar, C_PANEL, 0);
+    lv_obj_set_style_bg_color(topbar, C_TOPBAR, 0);
     lv_obj_set_style_bg_opa(topbar, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_side(topbar, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_border_color(topbar, C_BORDER, 0);
-    lv_obj_set_style_border_width(topbar, 2, 0);
+    lv_obj_set_style_border_width(topbar, 0, 0);
     lv_obj_set_style_radius(topbar, 0, 0);
     lv_obj_set_style_pad_all(topbar, 0, 0);
     lv_obj_clear_flag(topbar, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Room temperature (left side)
-    ui.lbl_room_temp = lv_label_create(topbar);
-    lv_label_set_text(ui.lbl_room_temp, "Hab: --.-\xc2\xb0""C");
-    lv_obj_set_style_text_font(ui.lbl_room_temp, &lv_font_montserrat_22, 0);
-    lv_obj_set_style_text_color(ui.lbl_room_temp, C_TEXT, 0);
-    lv_obj_align(ui.lbl_room_temp, LV_ALIGN_LEFT_MID, 14, 0);
+    // FontAwesome icons: tint (water demand) + fire (heating) — dim while idle.
+    // Sized 24 to match the wifi/lin status icons on the right side of the bar.
+    lv_obj_t* icon_tint = lv_label_create(topbar);
+    lv_label_set_text(icon_tint, FA_TINT);
+    lv_obj_set_style_text_font(icon_tint, s_font_icons24, 0);
+    lv_obj_set_style_text_color(icon_tint, C_CYAN, 0);
+    lv_obj_set_style_text_opa(icon_tint, LV_OPA_30, 0);
+    lv_obj_align(icon_tint, LV_ALIGN_LEFT_MID, 16, 0);
 
-    // Arrow + outdoor temp
-    lv_obj_t* lbl_arrow = lv_label_create(topbar);
-    lv_label_set_text(lbl_arrow, ">");
-    lv_obj_set_style_text_font(lbl_arrow, &lv_font_montserrat_22, 0);
-    lv_obj_set_style_text_color(lbl_arrow, C_DIM, 0);
-    lv_obj_align(lbl_arrow, LV_ALIGN_LEFT_MID, 228, 0);
+    lv_obj_t* icon_flame = lv_label_create(topbar);
+    lv_label_set_text(icon_flame, FA_FIRE);
+    lv_obj_set_style_text_font(icon_flame, s_font_icons24, 0);
+    lv_obj_set_style_text_color(icon_flame, C_AMBER, 0);
+    lv_obj_set_style_text_opa(icon_flame, LV_OPA_30, 0);
+    lv_obj_align(icon_flame, LV_ALIGN_LEFT_MID, 52, 0);
+
+    // Room temperature: home icon + value
+    lv_obj_t* icon_home = lv_label_create(topbar);
+    lv_label_set_text(icon_home, FA_HOME);
+    lv_obj_set_style_text_font(icon_home, s_font_icons24, 0);
+    lv_obj_set_style_text_color(icon_home, C_DIM, 0);
+    lv_obj_align(icon_home, LV_ALIGN_LEFT_MID, 94, 0);
+
+    ui.lbl_room_temp = lv_label_create(topbar);
+    lv_label_set_text(ui.lbl_room_temp, "--·-°C");
+    lv_obj_set_style_text_font(ui.lbl_room_temp, s_font_22, 0);
+    lv_obj_set_style_text_color(ui.lbl_room_temp, C_TEXT, 0);
+    lv_obj_align(ui.lbl_room_temp, LV_ALIGN_LEFT_MID, 130, 0);
+
+    // Outdoor: thermometer (amber) + chevron-right (amber) + value (amber)
+    lv_obj_t* icon_thermo = lv_label_create(topbar);
+    lv_label_set_text(icon_thermo, FA_THERM_HALF);
+    lv_obj_set_style_text_font(icon_thermo, s_font_icons22, 0);
+    lv_obj_set_style_text_color(icon_thermo, C_AMBER, 0);
+    lv_obj_align(icon_thermo, LV_ALIGN_LEFT_MID, 250, 0);
+
+    lv_obj_t* icon_chev = lv_label_create(topbar);
+    lv_label_set_text(icon_chev, FA_CHEVRON_R);
+    lv_obj_set_style_text_font(icon_chev, s_font_icons22, 0);
+    lv_obj_set_style_text_color(icon_chev, C_AMBER, 0);
+    lv_obj_align(icon_chev, LV_ALIGN_LEFT_MID, 278, 0);
 
     ui.lbl_outdoor = lv_label_create(topbar);
-    lv_label_set_text(ui.lbl_outdoor, "--.-\xc2\xb0""C");
-    lv_obj_set_style_text_font(ui.lbl_outdoor, &lv_font_montserrat_22, 0);
-    lv_obj_set_style_text_color(ui.lbl_outdoor, C_ACCENT, 0);
-    lv_obj_align(ui.lbl_outdoor, LV_ALIGN_LEFT_MID, 248, 0);
+    lv_label_set_text(ui.lbl_outdoor, "--·-°C");
+    lv_obj_set_style_text_font(ui.lbl_outdoor, s_font_22, 0);
+    lv_obj_set_style_text_color(ui.lbl_outdoor, C_AMBER, 0);
+    lv_obj_align(ui.lbl_outdoor, LV_ALIGN_LEFT_MID, 304, 0);
 
-    // Right side — chain from right to left: dot_wifi, lbl_wifi, dot_lin, lbl_lin, btn_conf
-    ui.dot_wifi = make_status_dot(topbar);
-    lv_obj_align(ui.dot_wifi, LV_ALIGN_RIGHT_MID, -12, 0);
+    // Right side: order from right → LIN (shuffle), WiFi (left of LIN), Conf.
+    ui.icon_lin = lv_label_create(topbar);
+    lv_label_set_text(ui.icon_lin, FA_RANDOM);
+    lv_obj_set_style_text_font(ui.icon_lin, s_font_icons24, 0);
+    lv_obj_set_style_text_color(ui.icon_lin, C_RED, 0);
+    lv_obj_align(ui.icon_lin, LV_ALIGN_RIGHT_MID, -16, 0);
 
-    lv_obj_t* lbl_wifi = lv_label_create(topbar);
-    lv_label_set_text(lbl_wifi, "WiFi");
-    lv_obj_set_style_text_font(lbl_wifi, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_wifi, C_DIM, 0);
-    lv_obj_align_to(lbl_wifi, ui.dot_wifi, LV_ALIGN_OUT_LEFT_MID, -5, 0);
-
-    ui.dot_lin = make_status_dot(topbar);
-    lv_obj_align_to(ui.dot_lin, lbl_wifi, LV_ALIGN_OUT_LEFT_MID, -12, 0);
-
-    lv_obj_t* lbl_lin = lv_label_create(topbar);
-    lv_label_set_text(lbl_lin, "LIN");
-    lv_obj_set_style_text_font(lbl_lin, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_lin, C_DIM, 0);
-    lv_obj_align_to(lbl_lin, ui.dot_lin, LV_ALIGN_OUT_LEFT_MID, -5, 0);
+    ui.icon_wifi = lv_label_create(topbar);
+    lv_label_set_text(ui.icon_wifi, FA_WIFI);
+    lv_obj_set_style_text_font(ui.icon_wifi, s_font_icons24, 0);
+    lv_obj_set_style_text_color(ui.icon_wifi, C_RED, 0);
+    lv_obj_align_to(ui.icon_wifi, ui.icon_lin, LV_ALIGN_OUT_LEFT_MID, -16, 0);
 
     ui.btn_conf = lv_button_create(topbar);
-    lv_obj_set_size(ui.btn_conf, 96, 38);
-    lv_obj_align_to(ui.btn_conf, lbl_lin, LV_ALIGN_OUT_LEFT_MID, -14, 0);
+    lv_obj_set_size(ui.btn_conf, 150, 40);
+    lv_obj_align_to(ui.btn_conf, ui.icon_wifi, LV_ALIGN_OUT_LEFT_MID, -20, 0);
     style_button(ui.btn_conf);
     lv_obj_t* lbl_conf = lv_label_create(ui.btn_conf);
-    lv_label_set_text(lbl_conf, "Conf.");
-    lv_obj_set_style_text_font(lbl_conf, &lv_font_montserrat_18, 0);
+    lv_label_set_text(lbl_conf, FA_COG "  Conf.");
+    lv_obj_set_style_text_font(lbl_conf, s_font_20, 0);
     lv_obj_center(lbl_conf);
     lv_obj_add_event_cb(ui.btn_conf, on_conf_clicked, LV_EVENT_CLICKED, NULL);
 
-    // Vertical separator between left and right columns
-    lv_obj_t* vsep = lv_obj_create(scr);
-    lv_obj_set_pos(vsep, LEFT_W, CONTENT_Y);
-    lv_obj_set_size(vsep, 1, CONTENT_H);
-    lv_obj_set_style_bg_color(vsep, C_BORDER, 0);
-    lv_obj_set_style_bg_opa(vsep, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(vsep, 0, 0);
+    // ── HEATING panel ─────────────────────────────────────────────────────────
+    lv_obj_t* p_heat = make_section(scr, 0, CONTENT_Y, LEFT_W, HEAT_H);
+    const int hi = LEFT_W - 24;
 
-    // ── CALEFACCION panel ─────────────────────────────────────────────────────
-    lv_obj_t* p_heat = make_panel(scr, 0, CONTENT_Y, LEFT_W, HEAT_H);
-    const int hi = LEFT_W - 20;   // inner width (pad 10 each side)
+    make_section_title(p_heat, "CALEFACCIÓN", 0);
 
-    make_section_label(p_heat, "CALEFACCION", 0);
-
-    // Setpoint row: [–]  20°C  [+]
-    ui.btn_sp_dn = lv_button_create(p_heat);
-    lv_obj_set_size(ui.btn_sp_dn, 56, 50);
-    lv_obj_set_pos(ui.btn_sp_dn, 0, 28);
-    style_button(ui.btn_sp_dn);
-    lv_obj_t* l_dn = lv_label_create(ui.btn_sp_dn);
-    lv_label_set_text(l_dn, "-");
-    lv_obj_set_style_text_font(l_dn, &lv_font_montserrat_28, 0);
-    lv_obj_center(l_dn);
-    lv_obj_add_event_cb(ui.btn_sp_dn, on_sp_dn, LV_EVENT_CLICKED, NULL);
-
-    ui.lbl_room_sp = lv_label_create(p_heat);
-    lv_label_set_text(ui.lbl_room_sp, "20\xc2\xb0""C");
-    lv_obj_set_style_text_font(ui.lbl_room_sp, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(ui.lbl_room_sp, C_ACCENT, 0);
-    lv_obj_align(ui.lbl_room_sp, LV_ALIGN_TOP_MID, 0, 38);
-
-    ui.btn_sp_up = lv_button_create(p_heat);
-    lv_obj_set_size(ui.btn_sp_up, 56, 50);
-    lv_obj_set_pos(ui.btn_sp_up, hi - 56, 28);
-    style_button(ui.btn_sp_up);
-    lv_obj_t* l_up = lv_label_create(ui.btn_sp_up);
-    lv_label_set_text(l_up, "+");
-    lv_obj_set_style_text_font(l_up, &lv_font_montserrat_28, 0);
-    lv_obj_center(l_up);
-    lv_obj_add_event_cb(ui.btn_sp_up, on_sp_up, LV_EVENT_CLICKED, NULL);
-
-    // Heating ON/OFF button — full width, prominent
     ui.btn_heat = lv_button_create(p_heat);
-    lv_obj_set_size(ui.btn_heat, hi, 80);
-    lv_obj_set_pos(ui.btn_heat, 0, 90);
+    lv_obj_set_size(ui.btn_heat, hi, 70);
+    lv_obj_set_pos(ui.btn_heat, 0, 40);
     lv_obj_add_flag(ui.btn_heat, LV_OBJ_FLAG_CHECKABLE);
     style_button(ui.btn_heat);
-    lv_obj_set_style_border_width(ui.btn_heat, 2, 0);
     ui.lbl_btn_heat = lv_label_create(ui.btn_heat);
     lv_label_set_text(ui.lbl_btn_heat, "APAGADO");
-    lv_obj_set_style_text_font(ui.lbl_btn_heat, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(ui.lbl_btn_heat, s_font_24, 0);
     lv_obj_center(ui.lbl_btn_heat);
     lv_obj_add_event_cb(ui.btn_heat, on_heat_toggle, LV_EVENT_VALUE_CHANGED, NULL);
 
-    // ── VENTILADOR panel ──────────────────────────────────────────────────────
-    lv_obj_t* p_fan = make_panel(scr, 0, FAN_Y, LEFT_W, FAN_H);
-    const int fi = LEFT_W - 20;
+    ui.row_sp = lv_obj_create(p_heat);
+    lv_obj_remove_style_all(ui.row_sp);
+    lv_obj_set_pos(ui.row_sp, 0, 118);
+    lv_obj_set_size(ui.row_sp, hi, 60);
+    lv_obj_set_style_bg_opa(ui.row_sp, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(ui.row_sp, LV_OBJ_FLAG_SCROLLABLE);
 
-    make_section_label(p_fan, "VENTILADOR", 0);
+    ui.btn_sp_dn = lv_button_create(ui.row_sp);
+    lv_obj_set_size(ui.btn_sp_dn, 70, 60);
+    lv_obj_set_pos(ui.btn_sp_dn, 0, 0);
+    style_button(ui.btn_sp_dn);
+    lv_obj_t* l_dn = lv_label_create(ui.btn_sp_dn);
+    lv_label_set_text(l_dn, LV_SYMBOL_MINUS);
+    lv_obj_set_style_text_font(l_dn, s_font_28, 0);
+    lv_obj_center(l_dn);
+    lv_obj_add_event_cb(ui.btn_sp_dn, on_sp_dn, LV_EVENT_CLICKED, NULL);
 
-    ui.btnmx_fan = lv_buttonmatrix_create(p_fan);
-    lv_obj_set_pos(ui.btnmx_fan, 0, 26);
-    lv_obj_set_size(ui.btnmx_fan, fi, 56);
-    lv_buttonmatrix_set_map(ui.btnmx_fan, FAN_MAP);
-    lv_buttonmatrix_set_button_ctrl_all(ui.btnmx_fan, LV_BUTTONMATRIX_CTRL_CHECKABLE);
-    lv_buttonmatrix_set_one_checked(ui.btnmx_fan, true);
-    lv_buttonmatrix_set_selected_button(ui.btnmx_fan, 0);
-    style_btnmatrix(ui.btnmx_fan, &lv_font_montserrat_20);
-    lv_obj_add_event_cb(ui.btnmx_fan, on_fan_changed, LV_EVENT_VALUE_CHANGED, NULL);
+    ui.lbl_room_sp = lv_label_create(ui.row_sp);
+    lv_label_set_text(ui.lbl_room_sp, "20°C");
+    lv_obj_set_style_text_font(ui.lbl_room_sp, s_font_28, 0);
+    lv_obj_set_style_text_color(ui.lbl_room_sp, C_TEXT, 0);
+    lv_obj_align(ui.lbl_room_sp, LV_ALIGN_CENTER, 0, 0);
 
-    // Fan level (visible only when fanMode >= 3)
-    make_section_label(p_fan, "Nivel (1-10)", 94);
+    ui.btn_sp_up = lv_button_create(ui.row_sp);
+    lv_obj_set_size(ui.btn_sp_up, 70, 60);
+    lv_obj_set_pos(ui.btn_sp_up, hi - 70, 0);
+    style_button(ui.btn_sp_up);
+    lv_obj_t* l_up = lv_label_create(ui.btn_sp_up);
+    lv_label_set_text(l_up, LV_SYMBOL_PLUS);
+    lv_obj_set_style_text_font(l_up, s_font_28, 0);
+    lv_obj_center(l_up);
+    lv_obj_add_event_cb(ui.btn_sp_up, on_sp_up, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_add_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
+
+    // ── FAN panel ─────────────────────────────────────────────────────────────
+    lv_obj_t* p_fan = make_section(scr, 0, FAN_Y, LEFT_W, FAN_H);
+    const int fi = LEFT_W - 24;
+
+    make_section_title(p_fan, "VENTILADOR", 0);
+
+    ui.btnmx_fan_off = lv_buttonmatrix_create(p_fan);
+    lv_obj_set_pos(ui.btnmx_fan_off, 0, 42);
+    lv_obj_set_size(ui.btnmx_fan_off, fi, 48);
+    lv_buttonmatrix_set_map(ui.btnmx_fan_off, FAN_OFF_MAP);
+    lv_buttonmatrix_set_button_ctrl_all(ui.btnmx_fan_off, LV_BUTTONMATRIX_CTRL_CHECKABLE);
+    lv_buttonmatrix_set_one_checked(ui.btnmx_fan_off, true);
+    lv_buttonmatrix_set_selected_button(ui.btnmx_fan_off, 0);
+    style_btnmatrix(ui.btnmx_fan_off, s_font_20);
+    lv_obj_add_event_cb(ui.btnmx_fan_off, on_fan_off_changed, LV_EVENT_VALUE_CHANGED, NULL);
+
+    ui.btnmx_fan_heat = lv_buttonmatrix_create(p_fan);
+    lv_obj_set_pos(ui.btnmx_fan_heat, 0, 42);
+    lv_obj_set_size(ui.btnmx_fan_heat, fi, 48);
+    lv_buttonmatrix_set_map(ui.btnmx_fan_heat, FAN_HEAT_MAP);
+    lv_buttonmatrix_set_button_ctrl_all(ui.btnmx_fan_heat, LV_BUTTONMATRIX_CTRL_CHECKABLE);
+    lv_buttonmatrix_set_one_checked(ui.btnmx_fan_heat, true);
+    lv_buttonmatrix_set_selected_button(ui.btnmx_fan_heat, 0);
+    style_btnmatrix(ui.btnmx_fan_heat, s_font_20);
+    lv_obj_add_event_cb(ui.btnmx_fan_heat, on_fan_heat_changed, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_flag(ui.btnmx_fan_heat, LV_OBJ_FLAG_HIDDEN);
+
+    ui.lbl_fan_lvl_title = make_label(p_fan, "Nivel (1–10)",
+                                       s_font_18, C_LABEL, 0, 100);
     ui.slider_fan_lvl = lv_slider_create(p_fan);
-    lv_obj_set_pos(ui.slider_fan_lvl, 0, 118);
-    lv_obj_set_size(ui.slider_fan_lvl, fi - 56, 22);
+    lv_obj_set_pos(ui.slider_fan_lvl, 0, 126);
+    lv_obj_set_size(ui.slider_fan_lvl, fi - 50, 22);
     lv_slider_set_range(ui.slider_fan_lvl, 1, 10);
     lv_slider_set_value(ui.slider_fan_lvl, 1, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(ui.slider_fan_lvl, C_BORDER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(ui.slider_fan_lvl, C_ACCENT, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(ui.slider_fan_lvl, C_TEXT, LV_PART_KNOB);
+    lv_obj_set_style_bg_color(ui.slider_fan_lvl, C_SEP,        LV_PART_MAIN);
+    lv_obj_set_style_bg_color(ui.slider_fan_lvl, C_BTN_ACTIVE, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(ui.slider_fan_lvl, C_TEXT,       LV_PART_KNOB);
     lv_obj_add_event_cb(ui.slider_fan_lvl, on_fan_lvl_changed, LV_EVENT_VALUE_CHANGED, NULL);
-    ui.lbl_fan_lvl = make_label(p_fan, "1", &lv_font_montserrat_22, C_TEXT, fi - 32, 113);
+    ui.lbl_fan_lvl = make_label(p_fan, "1", s_font_22, C_TEXT, fi - 28, 121);
 
-    // ── AGUA CALIENTE panel ───────────────────────────────────────────────────
-    lv_obj_t* p_water = make_panel(scr, RIGHT_X, CONTENT_Y, RIGHT_W, WATER_H);
-    const int wi = RIGHT_W - 20;
+    // ── HOT WATER panel ───────────────────────────────────────────────────────
+    lv_obj_t* p_water = make_section(scr, RIGHT_X, CONTENT_Y, RIGHT_W, WATER_H);
+    const int wi = RIGHT_W - 24;
 
-    // Title row: "AGUA CALIENTE" left, water temp right
-    make_section_label(p_water, "AGUA CALIENTE", 2);
+    make_section_title(p_water, "AGUA CALIENTE", 0);
+
+    // Vertical tank widget on the right. NO nubs (it's a water tank, not a battery).
+    // Same x column and width as the solar battery below it.
+    const int tank_x = wi - TANK_W - TANK_RIGHT_PAD;
+    const int tank_y = 46;
+
     ui.lbl_water_temp = lv_label_create(p_water);
-    lv_label_set_text(ui.lbl_water_temp, "--\xc2\xb0""C");
-    lv_obj_set_style_text_font(ui.lbl_water_temp, &lv_font_montserrat_22, 0);
-    lv_obj_set_style_text_color(ui.lbl_water_temp, C_ACCENT, 0);
-    lv_obj_align(ui.lbl_water_temp, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_label_set_text(ui.lbl_water_temp, "--°C");
+    lv_obj_set_style_text_font(ui.lbl_water_temp, s_font_22, 0);
+    lv_obj_set_style_text_color(ui.lbl_water_temp, C_TEXT, 0);
+    lv_obj_set_pos(ui.lbl_water_temp, tank_x, 12);
+    lv_obj_set_width(ui.lbl_water_temp, TANK_W);
+    lv_obj_set_style_text_align(ui.lbl_water_temp, LV_TEXT_ALIGN_CENTER, 0);
 
-    // Horizontal water temperature bar
     ui.bar_water = lv_bar_create(p_water);
-    lv_obj_set_pos(ui.bar_water, 0, 30);
-    lv_obj_set_size(ui.bar_water, wi, 16);
+    lv_obj_set_pos(ui.bar_water, tank_x, tank_y);
+    lv_obj_set_size(ui.bar_water, TANK_W, TANK_H_WATER);
     lv_bar_set_range(ui.bar_water, 0, 70);
     lv_bar_set_value(ui.bar_water, 0, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(ui.bar_water, C_BORDER, LV_PART_MAIN);
+    lv_bar_set_orientation(ui.bar_water, LV_BAR_ORIENTATION_VERTICAL);
+    lv_obj_set_style_bg_color(ui.bar_water, C_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_color(ui.bar_water, C_WATER_COLD, LV_PART_INDICATOR);
     lv_obj_set_style_radius(ui.bar_water, 3, LV_PART_MAIN);
     lv_obj_set_style_radius(ui.bar_water, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_border_color(ui.bar_water, C_BORDER_BAT, LV_PART_MAIN);
+    lv_obj_set_style_border_width(ui.bar_water, 2, LV_PART_MAIN);
 
-    make_section_label(p_water, "Modo", 56);
-
-    // Boiler mode — 2×2 button matrix: Apag./40°C on row 1, 60°C/Boost on row 2
+    const int boiler_w = wi - TANK_W - TANK_RIGHT_PAD - 12;
     ui.btnmx_boiler = lv_buttonmatrix_create(p_water);
-    lv_obj_set_pos(ui.btnmx_boiler, 0, 78);
-    lv_obj_set_size(ui.btnmx_boiler, wi, 88);
+    lv_obj_set_pos(ui.btnmx_boiler, 0, 46);
+    lv_obj_set_size(ui.btnmx_boiler, boiler_w, 116);
     lv_buttonmatrix_set_map(ui.btnmx_boiler, BOILER_MAP);
     lv_buttonmatrix_set_button_ctrl_all(ui.btnmx_boiler, LV_BUTTONMATRIX_CTRL_CHECKABLE);
     lv_buttonmatrix_set_one_checked(ui.btnmx_boiler, true);
     lv_buttonmatrix_set_selected_button(ui.btnmx_boiler, 0);
-    style_btnmatrix(ui.btnmx_boiler, &lv_font_montserrat_20);
+    style_btnmatrix(ui.btnmx_boiler, s_font_20);
     lv_obj_add_event_cb(ui.btnmx_boiler, on_boiler_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
-    // ── CARGA SOLAR panel ─────────────────────────────────────────────────────
-    lv_obj_t* p_sol = make_panel(scr, RIGHT_X, SOLAR_Y, RIGHT_W, SOLAR_H);
-    const int si = RIGHT_W - 20;
-    const int batt_w  = 46;
-    const int batt_h  = 120;
-    const int batt_x  = si - batt_w;
+    // ── SOLAR panel ───────────────────────────────────────────────────────────
+    lv_obj_t* p_sol = make_section(scr, RIGHT_X, SOLAR_Y, RIGHT_W, SOLAR_H);
+    const int si = RIGHT_W - 24;
+    const int batt_x = si - TANK_W - TANK_RIGHT_PAD;   // same column as water tank
+    const int batt_y = 46;
 
-    // Title row: "CARGA SOLAR" left, SOC % right
-    make_section_label(p_sol, "CARGA SOLAR", 2);
+    make_section_title(p_sol, "CARGA SOLAR", 0);
+
+    // SOC label — centered horizontally above the battery
     ui.lbl_batt_soc = lv_label_create(p_sol);
     lv_label_set_text(ui.lbl_batt_soc, "--%");
-    lv_obj_set_style_text_font(ui.lbl_batt_soc, &lv_font_montserrat_22, 0);
+    lv_obj_set_style_text_font(ui.lbl_batt_soc, s_font_22, 0);
     lv_obj_set_style_text_color(ui.lbl_batt_soc, C_TEXT, 0);
-    lv_obj_align(ui.lbl_batt_soc, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_set_pos(ui.lbl_batt_soc, batt_x, 12);
+    lv_obj_set_width(ui.lbl_batt_soc, TANK_W);
+    lv_obj_set_style_text_align(ui.lbl_batt_soc, LV_TEXT_ALIGN_CENTER, 0);
 
-    // Solar data lines (left portion, leaving room for battery bar on right)
-    const int data_w = si - batt_w - 14;
-    ui.lbl_solar_status  = make_label(p_sol, "--",              &lv_font_montserrat_16, C_ACCENT, 0, 28);
-    ui.lbl_solar_volts   = make_label(p_sol, "Volt.: --",       &lv_font_montserrat_16, C_TEXT,   0, 54);
-    ui.lbl_solar_current = make_label(p_sol, "Carga: -- / --",  &lv_font_montserrat_16, C_TEXT,   0, 78);
-    ui.lbl_solar_power   = make_label(p_sol, "Prod.: --",       &lv_font_montserrat_16, C_TEXT,   0, 102);
-    (void)data_w;
+    // Solar data lines (CYD palette: white / cyan / cyan-bright / yellow)
+    ui.lbl_solar_status  = make_label(p_sol, "--",              s_font_20, C_TEXT,    0, 50);
+    ui.lbl_solar_volts   = make_label(p_sol, "Volt.: --",       s_font_18, C_CYAN,    0, 80);
+    ui.lbl_solar_current = make_label(p_sol, "Carga: --",       s_font_18, C_CYAN_BR, 0, 106);
+    ui.lbl_solar_power   = make_label(p_sol, "Prod.: --",       s_font_18, C_YELLOW,  0, 132);
 
-    // Vertical battery bar (right side, fills bottom to top)
+    // Battery nubs (two terminals on top) — kept on the battery only
+    const int nub_w = 12, nub_h = 7;
+    auto make_nub = [&](int x) {
+        lv_obj_t* n = lv_obj_create(p_sol);
+        lv_obj_set_size(n, nub_w, nub_h);
+        lv_obj_set_pos(n, x, batt_y - nub_h);
+        lv_obj_set_style_bg_color(n, C_BORDER_BAT, 0);
+        lv_obj_set_style_bg_opa(n, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(n, 0, 0);
+        lv_obj_set_style_radius(n, 1, 0);
+        lv_obj_clear_flag(n, LV_OBJ_FLAG_SCROLLABLE);
+    };
+    make_nub(batt_x + 10);
+    make_nub(batt_x + TANK_W - 10 - nub_w);
+
     ui.bar_batt = lv_bar_create(p_sol);
-    lv_obj_set_pos(ui.bar_batt, batt_x, 28);
-    lv_obj_set_size(ui.bar_batt, batt_w, batt_h);
+    lv_obj_set_pos(ui.bar_batt, batt_x, batt_y);
+    lv_obj_set_size(ui.bar_batt, TANK_W, TANK_H_BATT);
     lv_bar_set_range(ui.bar_batt, 0, 100);
     lv_bar_set_value(ui.bar_batt, 0, LV_ANIM_OFF);
     lv_bar_set_orientation(ui.bar_batt, LV_BAR_ORIENTATION_VERTICAL);
-    lv_obj_set_style_bg_color(ui.bar_batt, C_BORDER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(ui.bar_batt, C_GREEN,  LV_PART_INDICATOR);
-    lv_obj_set_style_radius(ui.bar_batt, 4, LV_PART_MAIN);
-    lv_obj_set_style_radius(ui.bar_batt, 4, LV_PART_INDICATOR);
-    lv_obj_set_style_border_color(ui.bar_batt, C_ACCENT, LV_PART_MAIN);
-    lv_obj_set_style_border_width(ui.bar_batt, 1, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(ui.bar_batt, C_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(ui.bar_batt, C_GREEN, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(ui.bar_batt, 3, LV_PART_MAIN);
+    lv_obj_set_style_radius(ui.bar_batt, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_border_color(ui.bar_batt, C_BORDER_BAT, LV_PART_MAIN);
+    lv_obj_set_style_border_width(ui.bar_batt, 2, LV_PART_MAIN);
 
     // ── Status bar ────────────────────────────────────────────────────────────
     lv_obj_t* statusbar = lv_obj_create(scr);
     lv_obj_set_pos(statusbar, 0, H - STATUS_H);
     lv_obj_set_size(statusbar, W, STATUS_H);
-    lv_obj_set_style_bg_color(statusbar, C_PANEL, 0);
+    lv_obj_set_style_bg_color(statusbar, C_TOPBAR, 0);
     lv_obj_set_style_bg_opa(statusbar, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(statusbar, 2, 0);
-    lv_obj_set_style_border_side(statusbar, LV_BORDER_SIDE_TOP, 0);
-    lv_obj_set_style_border_color(statusbar, C_BORDER, 0);
+    lv_obj_set_style_border_width(statusbar, 0, 0);
     lv_obj_set_style_radius(statusbar, 0, 0);
     lv_obj_set_style_pad_all(statusbar, 0, 0);
     lv_obj_clear_flag(statusbar, LV_OBJ_FLAG_SCROLLABLE);
 
     ui.lbl_conn = lv_label_create(statusbar);
     lv_label_set_text(ui.lbl_conn, "TruMinus P4");
-    lv_obj_set_style_text_font(ui.lbl_conn, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(ui.lbl_conn, C_DIM, 0);
-    lv_obj_align(ui.lbl_conn, LV_ALIGN_LEFT_MID, 12, 0);
+    lv_obj_set_style_text_font(ui.lbl_conn, s_font_18, 0);
+    lv_obj_set_style_text_color(ui.lbl_conn, C_LABEL, 0);
+    lv_obj_align(ui.lbl_conn, LV_ALIGN_LEFT_MID, 14, 0);
 
     ui.lbl_status = lv_label_create(statusbar);
-    lv_label_set_text(ui.lbl_status, "Iniciando...");
-    lv_obj_set_style_text_font(ui.lbl_status, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(ui.lbl_status, C_DIM, 0);
-    lv_obj_align(ui.lbl_status, LV_ALIGN_RIGHT_MID, -12, 0);
+    lv_label_set_text(ui.lbl_status, "Iniciando…");
+    lv_obj_set_style_text_font(ui.lbl_status, s_font_18, 0);
+    lv_obj_set_style_text_color(ui.lbl_status, C_LABEL, 0);
+    lv_obj_align(ui.lbl_status, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t* lbl_logo = lv_label_create(statusbar);
+    lv_label_set_text(lbl_logo, "TruMinus");
+    lv_obj_set_style_text_font(lbl_logo, s_font_logo, 0);
+    lv_obj_set_style_text_color(lbl_logo, C_TEXT, 0);
+    lv_obj_align(lbl_logo, LV_ALIGN_RIGHT_MID, -14, 0);
+
+    // ── Separators (drawn LAST so they sit on top of panel backgrounds) ──────
+    make_sep(scr, 0, TOP_H - 1, W, 1);                       // under top bar
+    make_sep(scr, LEFT_W, CONTENT_Y, 1, CONTENT_H);          // column divider
+    make_sep(scr, 0, FAN_Y - 1, LEFT_W, 1);                  // left: heat / fan
+    make_sep(scr, RIGHT_X, SOLAR_Y - 1, RIGHT_W, 1);         // right: water / solar
+    make_sep(scr, 0, H - STATUS_H, W, 1);                    // above status bar
 
     lv_screen_load(scr);
     refresh_controls();
@@ -475,45 +608,67 @@ static void build_main_screen()
 
 static void refresh_controls()
 {
-    // Setpoint label
     char buf[20];
-    snprintf(buf, sizeof(buf), "%.0f\xc2\xb0""C", st.roomSetpoint);
+    snprintf(buf, sizeof(buf), "%.0f°C", st.roomSetpoint);
     lv_label_set_text(ui.lbl_room_sp, buf);
 
-    // Heat toggle
     if (st.heatingOn) {
         lv_obj_add_state(ui.btn_heat, LV_STATE_CHECKED);
         lv_label_set_text(ui.lbl_btn_heat, "ENCENDIDO");
+        lv_obj_set_style_bg_color(ui.btn_heat, C_HEAT_ON, 0);
+        lv_obj_remove_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_remove_state(ui.btn_heat, LV_STATE_CHECKED);
         lv_label_set_text(ui.lbl_btn_heat, "APAGADO");
+        lv_obj_set_style_bg_color(ui.btn_heat, C_BTN, 0);
+        lv_obj_add_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
     }
 
-    // Fan matrix (modes 0-2 map to buttons 0-2; modes 3-12 = levels)
-    if (st.fanMode >= 0 && st.fanMode <= 2) {
-        for (int i = 0; i < 3; ++i) {
-            if (i == st.fanMode)
-                lv_buttonmatrix_set_button_ctrl(ui.btnmx_fan, i, LV_BUTTONMATRIX_CTRL_CHECKED);
-            else
-                lv_buttonmatrix_clear_button_ctrl(ui.btnmx_fan, i, LV_BUTTONMATRIX_CTRL_CHECKED);
-        }
+    if (st.heatingOn) {
+        lv_obj_remove_flag(ui.btnmx_fan_heat, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ui.btnmx_fan_off, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(ui.slider_fan_lvl, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(ui.lbl_fan_lvl,    LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ui.lbl_fan_lvl_title, LV_OBJ_FLAG_HIDDEN);
+
+        int sel = (st.fanMode == 1) ? 0 : (st.fanMode == 2) ? 1 : 0;
+        for (int i = 0; i < 2; ++i) {
+            if (i == sel)
+                lv_buttonmatrix_set_button_ctrl(ui.btnmx_fan_heat, i, LV_BUTTONMATRIX_CTRL_CHECKED);
+            else
+                lv_buttonmatrix_clear_button_ctrl(ui.btnmx_fan_heat, i, LV_BUTTONMATRIX_CTRL_CHECKED);
+        }
     } else {
-        for (int i = 0; i < 3; ++i)
-            lv_buttonmatrix_clear_button_ctrl(ui.btnmx_fan, i, LV_BUTTONMATRIX_CTRL_CHECKED);
-        int lvl = st.fanMode - 2;
-        if (lvl < 1)  lvl = 1;
-        if (lvl > 10) lvl = 10;
-        lv_slider_set_value(ui.slider_fan_lvl, lvl, LV_ANIM_OFF);
-        lv_obj_clear_flag(ui.slider_fan_lvl, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(ui.lbl_fan_lvl,    LV_OBJ_FLAG_HIDDEN);
-        char b[8];
-        snprintf(b, sizeof(b), "%d", lvl);
-        lv_label_set_text(ui.lbl_fan_lvl, b);
+        lv_obj_add_flag(ui.btnmx_fan_heat, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(ui.btnmx_fan_off, LV_OBJ_FLAG_HIDDEN);
+
+        bool fanOn = (st.fanMode != 0);
+        int sel = fanOn ? 1 : 0;
+        for (int i = 0; i < 2; ++i) {
+            if (i == sel)
+                lv_buttonmatrix_set_button_ctrl(ui.btnmx_fan_off, i, LV_BUTTONMATRIX_CTRL_CHECKED);
+            else
+                lv_buttonmatrix_clear_button_ctrl(ui.btnmx_fan_off, i, LV_BUTTONMATRIX_CTRL_CHECKED);
+        }
+
+        if (fanOn) {
+            int lvl = st.fanMode - 2;
+            if (lvl < 1)  lvl = 1;
+            if (lvl > 10) lvl = 10;
+            lv_slider_set_value(ui.slider_fan_lvl, lvl, LV_ANIM_OFF);
+            char b[8];
+            snprintf(b, sizeof(b), "%d", lvl);
+            lv_label_set_text(ui.lbl_fan_lvl, b);
+            lv_obj_remove_flag(ui.slider_fan_lvl, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(ui.lbl_fan_lvl,    LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(ui.lbl_fan_lvl_title, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(ui.slider_fan_lvl, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(ui.lbl_fan_lvl,    LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(ui.lbl_fan_lvl_title, LV_OBJ_FLAG_HIDDEN);
+        }
     }
 
-    // Boiler matrix (indices 0-3 match BOILER_MAP button order)
     int bi = (st.boilerMode >= 0 && st.boilerMode <= 3) ? st.boilerMode : 0;
     for (int i = 0; i < 4; ++i) {
         if (i == bi)
@@ -528,14 +683,12 @@ static void refresh_controls()
 static void on_sp_dn(lv_event_t*)
 {
     if (st.roomSetpoint > 5.0f) st.roomSetpoint -= 1.0f;
-    ESP_LOGI(TAG, "setpoint -> %.0f°C", st.roomSetpoint);
     refresh_controls();
 }
 
 static void on_sp_up(lv_event_t*)
 {
     if (st.roomSetpoint < 30.0f) st.roomSetpoint += 1.0f;
-    ESP_LOGI(TAG, "setpoint -> %.0f°C", st.roomSetpoint);
     refresh_controls();
 }
 
@@ -543,19 +696,33 @@ static void on_heat_toggle(lv_event_t* e)
 {
     lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
     st.heatingOn = lv_obj_has_state(btn, LV_STATE_CHECKED);
-    ESP_LOGI(TAG, "heating -> %s", st.heatingOn ? "ON" : "OFF");
+    if (st.heatingOn && (st.fanMode < 1 || st.fanMode > 2)) st.fanMode = 1;
+    if (!st.heatingOn && st.fanMode >= 1 && st.fanMode <= 2) st.fanMode = 0;
     refresh_controls();
 }
 
-static void on_fan_changed(lv_event_t* e)
+static void on_fan_heat_changed(lv_event_t* e)
 {
     lv_obj_t* bm = (lv_obj_t*)lv_event_get_target(e);
     uint32_t idx = lv_buttonmatrix_get_selected_button(bm);
-    if (idx <= 2) {
-        st.fanMode = (int)idx;
-        ESP_LOGI(TAG, "fan mode -> %d", st.fanMode);
+    if (idx <= 1) {
+        st.fanMode = (int)idx + 1;
         refresh_controls();
     }
+}
+
+static void on_fan_off_changed(lv_event_t* e)
+{
+    lv_obj_t* bm = (lv_obj_t*)lv_event_get_target(e);
+    uint32_t idx = lv_buttonmatrix_get_selected_button(bm);
+    if (idx == 0) {
+        st.fanMode = 0;
+    } else if (idx == 1) {
+        int lvl = (int)lv_slider_get_value(ui.slider_fan_lvl);
+        if (lvl < 1) lvl = 5;
+        st.fanMode = lvl + 2;
+    }
+    refresh_controls();
 }
 
 static void on_fan_lvl_changed(lv_event_t* e)
@@ -566,7 +733,6 @@ static void on_fan_lvl_changed(lv_event_t* e)
     char b[8];
     snprintf(b, sizeof(b), "%d", lvl);
     lv_label_set_text(ui.lbl_fan_lvl, b);
-    ESP_LOGI(TAG, "fan level -> %d", lvl);
 }
 
 static void on_boiler_changed(lv_event_t* e)
@@ -575,7 +741,6 @@ static void on_boiler_changed(lv_event_t* e)
     uint32_t idx = lv_buttonmatrix_get_selected_button(bm);
     if (idx <= 3) {
         st.boilerMode = (int)idx;
-        ESP_LOGI(TAG, "boiler mode -> %d", st.boilerMode);
         refresh_controls();
     }
 }
@@ -610,6 +775,7 @@ void p4DisplayInit()
     bsp_display_brightness_set(100);
 
     if (bsp_display_lock(1000)) {
+        load_fonts();
         build_splash(lv_screen_active());
         bsp_display_unlock();
     }
@@ -635,23 +801,22 @@ void p4DisplayUpdate(const P4DisplayData& d)
     st.boilerMode   = d.boilerMode;
     st.energyIdx    = d.energyIdx;
 
-    // Top bar
     if (d.roomTemp > -100.0f)
-        lv_label_set_text_fmt(ui.lbl_room_temp, "Hab: %.1f\xc2\xb0""C", d.roomTemp);
+        lv_label_set_text_fmt(ui.lbl_room_temp, "%.1f°C", d.roomTemp);
     else
-        lv_label_set_text(ui.lbl_room_temp, "Hab: --.-\xc2\xb0""C");
+        lv_label_set_text(ui.lbl_room_temp, "--·-°C");
 
     if (d.outdoorTemp > -100.0f)
-        lv_label_set_text_fmt(ui.lbl_outdoor, "%.1f\xc2\xb0""C", d.outdoorTemp);
+        lv_label_set_text_fmt(ui.lbl_outdoor, "%.1f°C", d.outdoorTemp);
     else
-        lv_label_set_text(ui.lbl_outdoor, "--.-\xc2\xb0""C");
+        lv_label_set_text(ui.lbl_outdoor, "--·-°C");
 
-    lv_obj_set_style_bg_color(ui.dot_wifi, d.wifiOk ? C_GREEN : C_RED, 0);
-    lv_obj_set_style_bg_color(ui.dot_lin,  d.linOk  ? C_GREEN : C_RED, 0);
+    lv_obj_set_style_text_color(ui.icon_wifi, d.wifiOk ? C_GREEN : C_RED, 0);
+    lv_obj_set_style_text_color(ui.icon_lin,  d.linOk  ? C_GREEN : C_RED, 0);
 
-    // Water temp + bar
+    // Water tank
     if (d.waterTemp > -100.0f) {
-        lv_label_set_text_fmt(ui.lbl_water_temp, "%.0f\xc2\xb0""C", d.waterTemp);
+        lv_label_set_text_fmt(ui.lbl_water_temp, "%.0f°C", d.waterTemp);
         int wv = (int)d.waterTemp;
         if (wv < 0)  wv = 0;
         if (wv > 70) wv = 70;
@@ -661,33 +826,46 @@ void p4DisplayUpdate(const P4DisplayData& d)
                                               : C_WATER_HOT;
         lv_obj_set_style_bg_color(ui.bar_water, wc, LV_PART_INDICATOR);
     } else {
-        lv_label_set_text(ui.lbl_water_temp, "--\xc2\xb0""C");
+        lv_label_set_text(ui.lbl_water_temp, "--°C");
         lv_bar_set_value(ui.bar_water, 0, LV_ANIM_OFF);
     }
 
-    // Solar data
-    lv_label_set_text(ui.lbl_solar_status, d.solar.status ? d.solar.status : "--");
-    snprintf(buf, sizeof(buf), "Volt.: %.1f V", d.solar.voltageV);
-    lv_label_set_text(ui.lbl_solar_volts, buf);
-    snprintf(buf, sizeof(buf), "Carga: %.1f A / %d W", d.solar.currentA, d.solar.powerW);
-    lv_label_set_text(ui.lbl_solar_current, buf);
+    // Solar data — when invalid show "--" everywhere
+    if (d.solar.valid) {
+        lv_label_set_text(ui.lbl_solar_status, d.solar.status ? d.solar.status : "--");
+        snprintf(buf, sizeof(buf), "Volt.: %.1f V", d.solar.voltageV);
+        lv_label_set_text(ui.lbl_solar_volts, buf);
+        snprintf(buf, sizeof(buf), "Carga: %.1f A / %d W", d.solar.currentA, d.solar.powerW);
+        lv_label_set_text(ui.lbl_solar_current, buf);
+        snprintf(buf, sizeof(buf), "Prod.: %d W", d.solar.powerW);
+        lv_label_set_text(ui.lbl_solar_power, buf);
+    } else {
+        lv_label_set_text(ui.lbl_solar_status,  "--");
+        lv_label_set_text(ui.lbl_solar_volts,   "Volt.: --");
+        lv_label_set_text(ui.lbl_solar_current, "Carga: --");
+        lv_label_set_text(ui.lbl_solar_power,   "Prod.: --");
+    }
 
-    // Battery SOC + bar
-    int soc = d.batt.soc;
-    if (soc < 0)   soc = 0;
-    if (soc > 100) soc = 100;
-    lv_bar_set_value(ui.bar_batt, soc, LV_ANIM_ON);
-    lv_color_t bc = (soc < 20) ? C_RED : (soc < 50) ? C_AMBER : C_GREEN;
-    lv_obj_set_style_bg_color(ui.bar_batt, bc, LV_PART_INDICATOR);
-    lv_label_set_text_fmt(ui.lbl_batt_soc, "%d%%", soc);
+    // Battery
+    if (d.batt.valid) {
+        int soc = d.batt.soc;
+        if (soc < 0)   soc = 0;
+        if (soc > 100) soc = 100;
+        lv_bar_set_value(ui.bar_batt, soc, LV_ANIM_ON);
+        lv_color_t bc = (soc < 20) ? C_RED : (soc < 50) ? C_AMBER_BAR : C_GREEN;
+        lv_obj_set_style_bg_color(ui.bar_batt, bc, LV_PART_INDICATOR);
+        lv_label_set_text_fmt(ui.lbl_batt_soc, "%d%%", soc);
+    } else {
+        lv_label_set_text(ui.lbl_batt_soc, "--%");
+        lv_bar_set_value(ui.bar_batt, 0, LV_ANIM_OFF);
+    }
 
-    // Status bar connection info
     if (d.wifiOk && d.ssid && d.ip) {
         lv_label_set_text_fmt(ui.lbl_conn, "%s  %s", d.ssid, d.ip);
         lv_obj_set_style_text_color(ui.lbl_conn, C_TEXT, 0);
     } else {
         lv_label_set_text(ui.lbl_conn, "Sin WiFi");
-        lv_obj_set_style_text_color(ui.lbl_conn, C_DIM, 0);
+        lv_obj_set_style_text_color(ui.lbl_conn, C_LABEL, 0);
     }
 
     refresh_controls();

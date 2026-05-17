@@ -7,6 +7,10 @@ idf_component_register(
         "lin_driver.cpp"
     INCLUDE_DIRS
         "."
+    EMBED_FILES
+        "font_regular.ttf"
+        "font_bold.ttf"
+        "font_icons.ttf"
     REQUIRES
         jc4880_bsp
         nvs_flash

@@ -60,10 +60,12 @@ extern "C" void app_main(void)
     demo.linOk         = false;
     demo.ssid          = nullptr;
     demo.ip            = nullptr;
-    demo.solar.status  = "Apagado";
+    demo.solar.valid    = false;
+    demo.solar.status   = nullptr;
     demo.solar.voltageV = 0.0f;
     demo.solar.currentA = 0.0f;
     demo.solar.powerW   = 0;
+    demo.batt.valid     = false;
     demo.batt.soc       = 0;
     demo.batt.voltageV  = 0.0f;
 

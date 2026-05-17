@@ -6,6 +6,7 @@
 // ── Data structs fed to p4DisplayUpdate() ────────────────────────────────
 
 struct P4SolarData {
+    bool        valid;    // false → display all fields as "--"
     const char* status;   // "Bulk" / "Absorción" / "Float" / "Apagado" / ...
     float       voltageV;
     float       currentA;
@@ -13,6 +14,7 @@ struct P4SolarData {
 };
 
 struct P4BattData {
+    bool  valid;      // false → display SOC and bar as "--" / empty
     int   soc;        // 0–100 %
     float voltageV;
 };
