@@ -1,0 +1,7 @@
+--- a/builder/frameworks/espidf.py
++++ b/builder/frameworks/espidf.py
+@@ -1907,7 +1907,8 @@ def build_bootloader(sdk_config):
+     bootloader_extra_includes = [
+         str(Path(FRAMEWORK_DIR) / "components" / "bootloader" / "subproject" / "main" / "ld" / idf_variant),
++        str(Path(FRAMEWORK_DIR) / "components" / "bootloader" / "subproject" / "main" / "ld"),
+     ]

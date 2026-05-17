@@ -1,102 +1,88 @@
+#!/usr/bin/env python3
 """
-compress_fs.py — PlatformIO extra script  (pre:scripts/compress_fs.py)
+compress_fs.py — standalone web asset embedder.
 
-Runs at *configuration* time (before any build targets are set up) so that:
+Reads every file under <project>/data/ and writes <project>/main/webfiles.h:
+a C header containing each asset as a static const uint8_t[] array, gzipped
+when that shrinks the file (and the file is not a binary image type that
+browsers expect raw).
 
-1. Gzip-compresses every file from $PROJECT_DATA_DIR (data/) into
-       .pio/build/<env>/gz_data/<file>.gz
-   and redirects PROJECT_DATA_DIR so mklittlefs builds the FS image
-   from the compressed files.
+Run before each build (driven from the top-level CMakeLists.txt).
+Idempotent — overwrites the header every time.
 
-2. Generates  src/webfiles.h  — a C header with every compressed file
-   as a  static const uint8_t[]  ROM array.  webserver.cpp includes
-   this header and serves static content directly from flash with zero
-   heap allocation per request.  This eliminates the OOM crashes caused
-   by multiple concurrent AsyncFileResponse / malloc buffers competing
-   for the limited ESP32 heap.
-
-   Array naming: dots, dashes and slashes in the filename become
-   underscores, prefixed with  wf_.
-   Example:  index.html  →  wf_index_html / wf_index_html_size
+Array naming: dots, dashes and slashes in the filename become underscores,
+prefixed with wf_.  Example: index.html -> wf_index_html / wf_index_html_size.
 """
-
-Import("env")  # noqa: F821  (injected by SCons / PlatformIO)
 
 import gzip
-import shutil
+import sys
 from pathlib import Path
 
-# ── Resolve paths ──────────────────────────────────────────────────────────
-src     = Path(env.subst("$PROJECT_DATA_DIR"))   # normally  <project>/data
-dst     = Path(env.subst("$BUILD_DIR")) / "gz_data"
-hdr_out = Path(env.subst("$PROJECT_SRC_DIR")) / "webfiles.h"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR     = PROJECT_ROOT / "data"
+HDR_OUT      = PROJECT_ROOT / "main" / "webfiles.h"
 
-if not src.is_dir():
-    pass
-else:
-    # ── (Re)create output directory ────────────────────────────────────────
-    if dst.exists():
-        shutil.rmtree(dst)
-    dst.mkdir(parents=True)
+# Binary image / font formats served without Content-Encoding so browsers
+# render them correctly.  Everything else is gzipped when that helps.
+NO_GZ_EXTS = {".png", ".ico", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+              ".woff", ".woff2"}
 
-    # ── Compress every file + collect data for the C header ───────────────
-    # En WSL/NTFS aparecen ADS "<file>:Zone.Identifier" como archivos. Si los
-    # procesamos se generan identificadores con ':' en webfiles.h (C inválido).
-    def _skip(p: Path) -> bool:
-        name = p.name
-        return (":" in name) or name.endswith(".Identifier") or name.startswith(".")
 
-    entries = []   # list of (ident, gz_bytes) tuples
+def _skip(p: Path) -> bool:
+    """Skip Windows-ADS (foo:Zone.Identifier), dotfiles, etc."""
+    name = p.name
+    return (":" in name) or name.endswith(".Identifier") or name.startswith(".")
+
+
+def _ident(rel: Path) -> str:
+    return str(rel).replace("\\", "_").replace("/", "_") \
+                   .replace(".", "_").replace("-", "_")
+
+
+def main() -> int:
+    if not DATA_DIR.is_dir():
+        print(f"[compress_fs] {DATA_DIR} does not exist — skipping", file=sys.stderr)
+        return 0
+
+    HDR_OUT.parent.mkdir(parents=True, exist_ok=True)
+
     total_in = total_out = 0
-    for f in sorted(src.rglob("*")):
-        if not f.is_file() or _skip(f):
-            continue
-        rel  = f.relative_to(src)
-        out  = dst / (str(rel) + ".gz")
-        out.parent.mkdir(parents=True, exist_ok=True)
-        raw  = f.read_bytes()
-        gz   = gzip.compress(raw, compresslevel=9)
-        out.write_bytes(gz)
-        total_in  += len(raw)
-        total_out += len(gz)
-        pct = 100 * (1 - len(gz) / len(raw)) if raw else 0
-        print(f"  [compress_fs]  {str(rel):<42}  {len(raw):>7} → {len(gz):>6} B  ({pct:.0f}%)")
+    files = sorted(p for p in DATA_DIR.rglob("*") if p.is_file() and not _skip(p))
 
-        ident = str(rel).replace("\\", "_").replace("/", "_") \
-                        .replace(".", "_").replace("-", "_")
-        entries.append((ident, gz))
-
-    if total_in:
-        pct_t = 100 * (1 - total_out / total_in)
-        print(f"  [compress_fs]  Total  {total_in:>7} → {total_out:>6} B  ({pct_t:.0f}% saved)")
-
-    # ── Generate src/webfiles.h ───────────────────────────────────────────
-    # Binary image formats must be served without Content-Encoding so browsers
-    # render transparency correctly.  Text/script files use gzip when it helps.
-    NO_GZ_EXTS = {".png", ".ico", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".woff", ".woff2"}
-
-    with open(str(hdr_out), "w", newline="\n") as h:
+    with open(HDR_OUT, "w", newline="\n") as h:
         h.write("// Auto-generated by scripts/compress_fs.py — do not edit\n")
-        h.write("#pragma once\n#include <stdint.h>\n#include <stddef.h>\n#include <stdbool.h>\n\n")
-        for f in sorted(src.rglob("*")):
-            if not f.is_file() or _skip(f):
-                continue
-            rel   = f.relative_to(src)
-            ident = str(rel).replace("\\", "_").replace("/", "_") \
-                            .replace(".", "_").replace("-", "_")
+        h.write("#pragma once\n#include <stdint.h>\n#include <stddef.h>\n"
+                "#include <stdbool.h>\n\n")
+        for f in files:
+            rel   = f.relative_to(DATA_DIR)
+            ident = _ident(rel)
             raw   = f.read_bytes()
             gz    = gzip.compress(raw, compresslevel=9)
+
             force_raw = f.suffix.lower() in NO_GZ_EXTS
             if not force_raw and len(gz) < len(raw):
-                payload, is_gz = gz,  "true"
+                payload, is_gz = gz, "true"
             else:
                 payload, is_gz = raw, "false"
+
+            total_in  += len(raw)
+            total_out += len(payload)
+            pct = 100 * (1 - len(payload) / len(raw)) if raw else 0
+            print(f"  [compress_fs]  {str(rel):<42}  {len(raw):>7} -> "
+                  f"{len(payload):>6} B  ({pct:.0f}%)")
+
             hex_vals = ", ".join(f"0x{b:02x}" for b in payload)
             h.write(f"static const uint8_t wf_{ident}[] = {{{hex_vals}}};\n")
             h.write(f"static const size_t  wf_{ident}_size    = {len(payload)};\n")
             h.write(f"static const bool    wf_{ident}_gzipped = {is_gz};\n\n")
-    print(f"  [compress_fs]  C header  → {hdr_out}  ({len(entries)} files)")
 
-    # ── Redirect the FS build to the compressed folder ─────────────────────
-    env.Replace(PROJECT_DATA_DIR=str(dst))
-    print(f"  [compress_fs]  FS image will be built from {dst}")
+    if total_in:
+        pct_t = 100 * (1 - total_out / total_in)
+        print(f"  [compress_fs]  Total  {total_in:>7} -> "
+              f"{total_out:>6} B  ({pct_t:.0f}% saved)")
+    print(f"  [compress_fs]  Header   -> {HDR_OUT}  ({len(files)} files)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

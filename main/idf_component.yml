@@ -1,0 +1,15 @@
+dependencies:
+  idf: ">=5.3"
+
+  # JC4880P443C board support package.  Not published in the Espressif
+  # Component Registry, so we pull it directly from the upstream git repo
+  # and pin the exact commit.  scripts/apply_patches.py then adapts
+  # bsp_display.c to IDF 6.0 (see patches/jc4880_bsp_idf6.patch).
+  #
+  # Transitive deps (esp_lcd_st7701, esp_lcd_touch, esp_lcd_touch_gt911,
+  # esp_lvgl_port, lvgl) are listed in the BSP's own idf_component.yml and
+  # are fetched from the registry automatically.
+  jc4880_bsp:
+    git: "https://github.com/csvke/esp32_p4_jc4880p433c_bsp.git"
+    version: "932af3aaee532af144087b6126aaa48eb9124be4"
+    path: "."

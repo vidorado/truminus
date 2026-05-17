@@ -1,0 +1,27 @@
+diff --git a/src/bsp_display.c b/src/bsp_display.c
+index 0308264..631aaa6 100644
+--- a/src/bsp_display.c
++++ b/src/bsp_display.c
+@@ -210,7 +210,10 @@ lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg)
+         .dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
+         .dpi_clock_freq_mhz = CONFIG_BSP_JC4880P443C_DPI_CLOCK_MHZ,
+         .virtual_channel = 0,
+-        .pixel_format = LCD_COLOR_PIXEL_FORMAT_RGB565,
++        // IDF master: pixel_format split into in_/out_color_format,
++        // and the enum was renamed to LCD_COLOR_FMT_RGB565 (FourCC).
++        .in_color_format  = LCD_COLOR_FMT_RGB565,
++        .out_color_format = LCD_COLOR_FMT_RGB565,
+         .num_fbs = CONFIG_BSP_JC4880P443C_NUM_FB,
+         .video_timing = {
+             .h_size = CONFIG_BSP_JC4880P443C_LCD_H_RES,
+@@ -222,7 +225,9 @@ lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg)
+             .vsync_back_porch = 8,
+             .vsync_front_porch = 166,
+         },
+-        .flags = { .use_dma2d = true },
++        // IDF master removed use_dma2d (DMA2D is now used automatically when
++        // available); only disable_lp remains in the flags struct.
++        .flags = { .disable_lp = false },
+     };
+ 
+     st7701_vendor_config_t vendor_config = {
