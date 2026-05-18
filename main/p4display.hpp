@@ -57,8 +57,9 @@ void p4DisplayInit();
 // Call whenever any value changes. Thread-safe: acquires LVGL lock internally.
 void p4DisplayUpdate(const P4DisplayData& d);
 
-// Update the status bar message (e.g. "Conectando…", "LIN OK").
-void p4DisplaySetStatus(const char* msg);
+// Update the status-bar top line. Pass isError=true to paint it red
+// (e.g. when reporting an error code or a hard failure).
+void p4DisplaySetStatus(const char* msg, bool isError = false);
 
 // LVGL mutex — thin wrappers around bsp_display_lock/unlock.
 // timeout_ms = portMAX_DELAY (0xFFFFFFFF) to block forever.
