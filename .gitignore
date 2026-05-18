@@ -1,9 +1,18 @@
-.pio
-.vscode/.browse.c_cpp.db*
+# EEZ Studio build cache
+.eez-project-build
+
+# VSCode — machine-specific settings (copy from settings.json.template)
+.vscode/settings.json
 .vscode/c_cpp_properties.json
 .vscode/launch.json
+.vscode/.browse.c_cpp.db*
 .vscode/ipch
+
+# Claude Code
 .claude/
+
+# PlatformIO build cache (kept for local installs that still use it)
+.pio/
 
 # idf.py / ESP-IDF native build outputs
 build/

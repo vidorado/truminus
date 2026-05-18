@@ -1,0 +1,7 @@
+{
+    "idf.espIdfPath": "/home/YOUR_USER/esp/esp-idf",
+    "idf.toolsPath": "/home/YOUR_USER/.espressif",
+    "idf.port": "/dev/ttyACM0",
+    "idf.flashBaudRate": "460800",
+    "C_Cpp.intelliSenseEngine": "default"
+}

@@ -1,9 +1,13 @@
 {
-    "files.associations": {
-        "cstdint": "cpp",
-        "memory": "cpp",
-        "cmath": "cpp",
-        "*.tcc": "cpp",
-        "fstream": "cpp"
-    }
+  "files.associations": {
+    "cstdint": "cpp",
+    "memory": "cpp",
+    "cmath": "cpp",
+    "*.tcc": "cpp",
+    "fstream": "cpp"
+  },
+  "idf.customExtraVars": {},
+  "idf.port": "/dev/ttyACM0",
+  "idf.flashType": "UART",
+  "idf.currentSetup": "/home/victor/esp/esp-idf"
 }

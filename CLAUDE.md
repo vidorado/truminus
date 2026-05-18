@@ -16,30 +16,34 @@ Solar charge data (Victron BLE) and battery SOC (Ultimatron BLE) are surfaced bo
 
 ## Build System
 
-This project uses **PlatformIO as an SCons/IDE frontend** with the real build delegated to **`idf.py`** (native ESP-IDF 6.0.1). Plain Arduino IDE / pioarduino is NOT used.
+The build is driven by **`idf.py`** (ESP-IDF 6.0.1) via a thin `Makefile`. PlatformIO is not used.
 
 ```bash
-pio run                       # build (delegates to idf.py via platformio_idf.py)
-pio run --target upload       # build + flash over USB-CDC
-pio run --target clean        # idf.py fullclean
+# Once per machine
+git clone --branch release/v6.0 https://github.com/espressif/esp-idf.git ~/esp/esp-idf
+cd ~/esp/esp-idf && ./install.sh esp32p4
+
+# Once per terminal session
+. ~/esp/esp-idf/export.sh
+
+make               # build
+make flash         # build + flash (PORT=/dev/ttyACM0 by default)
+make monitor       # serial monitor
+make flash-monitor # flash then monitor
+make clean         # idf.py fullclean
 ```
 
-`platformio.ini` has a single default env `[env:jc4880_p4]` that:
-- Targets `board = esp32-p4-evboard` (PlatformIO accepts the EVB id; the actual board JSON lives in `boards/jc4880_p4.json`).
-- Symlinks `framework-espidf` to `~/esp/esp-idf` (release/v6.0, IDF 6.0.1) and `toolchain-riscv32-esp` to `~/.espressif/tools/.../esp-15.2.0_20251204`.
-- Loads `extra_scripts = platformio_idf.py`, which neutralises PlatformIO's own builders and routes `build`/`upload`/`clean` to `idf.py`.
+VSCode: install `espressif.esp-idf-extension`, copy `.vscode/settings.json.template` →
+`.vscode/settings.json` and fill in your IDF path. IntelliSense reads
+`build/compile_commands.json` (generated after first build).
 
-An OTA env `[env:jc4880_p4_ota]` extends the main env with `upload_protocol = espota` to `truminus.local`.
+### Critical: IDF 6.0 + ESP32-P4 build pitfalls
 
-### Critical: PlatformIO + IDF 6.0 build pitfalls
+Before touching the build (sdkconfig, components, link errors, IRAM overflow), **read `.claude/skills/pio-idf-p4/SKILL.md`**. Key facts:
 
-Before touching the build (sdkconfig, components, link errors, IRAM overflow, mbedtls undefined refs), **read `.claude/skills/pio-idf-p4/SKILL.md`**. Key facts captured there:
-
-- `sdkconfig.jc4880_p4` (used by PlatformIO's parallel cmake+ninja) must stay in sync with the root `sdkconfig` (used by `idf.py`), with only two project-specific overrides: `CONFIG_HTTPD_WS_SUPPORT=y` and `CONFIG_COMPILER_ORPHAN_SECTIONS_WARNING=y`.
-- Symptoms of drift: `--enable-non-contiguous-regions discards section …`, `unresolvable R_RISCV_* against esp_log_timestamp / _global_interrupt_handler`, or `undefined reference to mbedtls_mutex_lock / mbedtls_calloc / mbedtls_threading_psa_*`.
-- After changing the sdkconfig, **delete stale `.a` files under `.pio/build/jc4880_p4/esp-idf/mbedtls/` and the two `sections.ld` copies** — cmake regenerates `build.ninja` but does not rebuild already-archived libraries.
+- If cmake fails with `cannot read spec file …/build/specs/picolibc.specs` or `build.ninja` is missing: **`rm -rf build/ && make build`** — the build directory is corrupted and cannot be recovered incrementally.
 - ESP32-P4 rev < v3 (`chip_variant: "esp32p4_es"`) has non-contiguous SRAM (179 KB `sram_low` + 256 KB `sram_high`); `--enable-non-contiguous-regions` silently drops sections that don't fit. The cause is always an IDF config inflating IRAM, never the linker.
-- PlatformIO runs its own SCons link AFTER `idf.py build`. A failing `.pio/` link does not mean `idf.py` failed — the flashable binary is in `build/truminus.bin`.
+- ModemManager grabs `/dev/ttyACM0` on plug-in — `sudo systemctl stop ModemManager` if flash fails with "port is busy".
 
 ### Web assets are embedded, not served from LittleFS
 
@@ -181,7 +185,8 @@ Settings screens that need to block use the navigation-request pattern: an LVGL 
 
 ## Related skills
 
-- **`.claude/skills/pio-idf-p4/SKILL.md`** — read before touching the build system, sdkconfig, or any link error.
+- **`.claude/skills/pio-idf-p4/SKILL.md`** — build system, IDF 6.0 pitfalls, ESP32-P4 memory layout, ModemManager, corrupted build dir.
+- **`.claude/skills/lvgl-fonts/SKILL.md`** — Tiny TTF font loading, FA6 icon subset, adding glyphs, `gen_icon_font.py`, EEZ Studio integration.
 - **`.claude/skills/truma-protocol/SKILL.md`** — full Truma LIN frame reference (master/slave frames, byte layouts).
 - **`.claude/skills/victronble/SKILL.md`** — Victron Instant Readout BLE protocol.
 - **`.claude/skills/ultimatronble/SKILL.md`** — Ultimatron BMS GATT protocol.
