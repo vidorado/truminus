@@ -430,7 +430,14 @@ static lv_obj_t* make_scan_overlay(lv_obj_t* prev_screen, const char* title,
     lv_obj_set_size(sp, 36, 36);
     // Cancel btn: RIGHT_MID x=-10, w=130.  Spinner goes 10px left of that.
     lv_obj_align(sp, LV_ALIGN_RIGHT_MID, -(10 + 130 + 10 + 18), 0);
-    lv_obj_set_style_arc_color(sp, C_DIM, LV_PART_INDICATOR);
+    // Dark palette on the (very dark) title bar: track matches screen bg,
+    // indicator matches button bg one shade lighter so the motion is visible
+    // without being bright.
+    lv_obj_set_style_arc_color(sp, C_BG,  LV_PART_MAIN);
+    lv_obj_set_style_arc_color(sp, C_BTN, LV_PART_INDICATOR);
+    // Thinner arc (default is ~8 px and looks too heavy at this size).
+    lv_obj_set_style_arc_width(sp, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(sp, 4, LV_PART_INDICATOR);
     if (spinner_out) *spinner_out = sp;
 
     lv_obj_t* cancel_btn = lv_button_create(bar);
