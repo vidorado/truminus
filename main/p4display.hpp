@@ -80,6 +80,16 @@ struct P4ControlState {
 // Call before building the next P4DisplayData so the demo loop reflects user input.
 void p4GetControlState(P4ControlState& out);
 
+// Setters used by the WebSocket dispatcher to mirror remote button presses
+// back onto the LCD.  All setters acquire the LVGL lock internally and call
+// refresh_controls() so the on-screen state matches.  Fan and boiler use the
+// same integer encoding as p4GetControlState() (see comments in P4DisplayData).
+void p4SetHeating(bool on);
+void p4SetFanMode(int mode);
+void p4SetBoilerMode(int mode);
+void p4SetEnergyIdx(int idx);
+void p4SetRoomSetpoint(float celsius);
+
 // ── Public API ────────────────────────────────────────────────────────────
 
 // Call once from app_main (before any task uses LVGL).
@@ -88,6 +98,12 @@ void p4DisplayInit();
 // Set normal (awake) backlight brightness: 10–100.
 // Persists to NVS; recalculates the warning-dim level.
 void p4SetNormalBrightness(int pct);
+
+// Apply the screen-timeout selection live (and persist to NVS).
+// idx: 0 = 30 s, 1 = 1 min, 2 = 3 min, 3 = never.
+// Without this, changes made from the settings screen only take effect on
+// reboot because s_timeout_ms is sampled once in p4DisplayInit().
+void p4SetScreenTimeoutIdx(uint8_t idx);
 
 // Tear down the current main screen and rebuild it on the next p4DisplayUpdate
 // call (picks up a new language, etc.). Must be called with LVGL lock held.

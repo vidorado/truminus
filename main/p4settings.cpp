@@ -1187,7 +1187,9 @@ static void disp_back_cb(lv_event_t*) {
 
 static void disp_timeout_cb(lv_event_t* e) {
     uint8_t idx = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
-    nvs_write_u8("display", "timeout_idx", idx);
+    // Setter persists to NVS AND updates the live s_timeout_ms so the new
+    // timeout takes effect immediately without rebooting.
+    p4SetScreenTimeoutIdx(idx);
     lv_obj_t* prev = s_disp_prev;
     lv_obj_t* cur  = lv_screen_active();
     lv_screen_load(prev);

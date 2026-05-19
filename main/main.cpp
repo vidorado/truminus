@@ -18,26 +18,166 @@ extern "C" {
 #include "esp_hosted_misc.h"
 }
 #include <cmath>
+#include <cstring>
+#include <cstdlib>
+#include <strings.h>            // strcasecmp
 #include <stdio.h>
 
 static const char* TAG = "main";
 
-// ── WebSocket command dispatcher ─────────────────────────────────────────
+// ── String ↔ int helpers for the wire protocol ───────────────────────────
 //
-// The web UI sends JSON {id, value} frames; in the C5 firmware they were
-// routed through settings.cpp (`TMqttSetting::Validate(...)` per id).  That
-// layer has not been ported to ESP-IDF yet, so for now we simply log the
-// commands and the page acts as read-only.  Wire this to the real settings
-// dispatcher once trumaframes / settings are ported.
-static void onWsCommand(const char* id, const char* value) {
-    ESP_LOGI(TAG, "ws cmd: %s = %s", id ? id : "(null)", value ? value : "(null)");
+// The web UI uses string values for fan/boiler ("eco"/"high"/"1".."10"/etc.);
+// the LCD state uses ints.  These two helpers are the single source of truth
+// for the mapping and are used both when applying remote commands and when
+// broadcasting LCD-originated changes back to the web.
+
+// Fan: 0=off, 1=eco, 2=high, 3..12 = level 1..10.  Unknown strings → -1.
+static int fanStrToInt(const char* v) {
+    if (!v) return -1;
+    if (strcmp(v, "off")  == 0) return 0;
+    if (strcmp(v, "eco")  == 0) return 1;
+    if (strcmp(v, "high") == 0) return 2;
+    int n = atoi(v);
+    if (n >= 1 && n <= 10) return n + 2;
+    return -1;
+}
+static const char* fanIntToStr(int m) {
+    static char lvl[4];
+    switch (m) {
+        case 0:  return "off";
+        case 1:  return "eco";
+        case 2:  return "high";
+        default:
+            if (m >= 3 && m <= 12) { snprintf(lvl, sizeof(lvl), "%d", m - 2); return lvl; }
+            return "off";
+    }
 }
 
-// Browser just connected and sent "settings": push a snapshot of every
-// cached value.  Same TODO as above — without settings.cpp ported we have
-// no cache to snapshot, so emit a minimal heartbeat.
+// Boiler: 0=off, 1=eco, 2=high, 3=boost.
+static int boilerStrToInt(const char* v) {
+    if (!v) return -1;
+    if (strcmp(v, "off")   == 0) return 0;
+    if (strcmp(v, "eco")   == 0) return 1;
+    if (strcmp(v, "high")  == 0) return 2;
+    if (strcmp(v, "boost") == 0) return 3;
+    return -1;
+}
+static const char* boilerIntToStr(int m) {
+    static const char* T[4] = { "off", "eco", "high", "boost" };
+    return (m >= 0 && m < 4) ? T[m] : "off";
+}
+
+// ── WebSocket command dispatcher ─────────────────────────────────────────
+//
+// Routes {id,value} frames sent by the browser to the matching p4display
+// setter.  Once the LCD state changes, the diff in the main loop emits a
+// `setting` broadcast so any other connected tab sees the same change.
+//
+// Without settings.cpp/trumaframes.cpp ported these are the only commands
+// that have any effect; everything else (energy_idx, lang, …) is logged.
+static void onWsCommand(const char* id, const char* value) {
+    if (!id || !value) return;
+    // Strip leading slash — the browser sends "/heating" but the route table
+    // here uses bare names.
+    const char* k = (id[0] == '/') ? id + 1 : id;
+
+    if (strcmp(k, "heating") == 0) {
+        p4SetHeating(strcmp(value, "1") == 0 || strcasecmp(value, "true") == 0);
+    } else if (strcmp(k, "fan") == 0) {
+        int m = fanStrToInt(value);
+        if (m >= 0) p4SetFanMode(m);
+    } else if (strcmp(k, "boiler") == 0) {
+        int m = boilerStrToInt(value);
+        if (m >= 0) p4SetBoilerMode(m);
+    } else if (strcmp(k, "temp") == 0) {
+        p4SetRoomSetpoint(strtof(value, nullptr));
+    } else if (strcmp(k, "energy_idx") == 0) {
+        p4SetEnergyIdx(atoi(value));
+    } else if (strcmp(k, "ping") == 0) {
+        // No-op: just a heartbeat to keep the WS warm.
+    } else {
+        ESP_LOGI(TAG, "ws cmd (unhandled): %s = %s", id, value);
+    }
+}
+
+// Browser just connected and sent "settings": push a snapshot of the
+// current control state so the page reflects the LCD without waiting for
+// the next user interaction.
 static void onWsConnected() {
-    wsQueueSend("{\"command\":\"snapshot\",\"settings\":{},\"status\":{}}");
+    P4ControlState cs;
+    p4GetControlState(cs);
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"snapshot\","
+             "\"settings\":{"
+                 "\"/heating\":\"%d\","
+                 "\"/fan\":\"%s\","
+                 "\"/boiler\":\"%s\","
+                 "\"/temp\":\"%.1f\""
+             "},"
+             "\"status\":{},"
+             "\"energy_idx\":%d"
+             "}",
+             cs.heatingOn ? 1 : 0,
+             fanIntToStr(cs.fanMode),
+             boilerIntToStr(cs.boilerMode),
+             cs.roomSetpoint,
+             cs.energyIdx);
+    wsQueueSend(buf);
+}
+
+// ── Broadcast LCD-originated changes ─────────────────────────────────────
+// Called once per main-loop tick.  Diffs the current control state against
+// the previous snapshot; for each field that changed emits a single WS
+// `setting` frame so every connected browser tab updates without polling.
+static void broadcastControlChanges(const P4ControlState& cs) {
+    static P4ControlState prev = {};
+    static bool          inited = false;
+    char buf[160];
+
+    auto emit = [&](const char* id, const char* value) {
+        snprintf(buf, sizeof(buf),
+                 "{\"command\":\"setting\",\"id\":\"/%s\",\"value\":\"%s\"}",
+                 id, value);
+        wsQueueSend(buf);
+    };
+
+    if (!inited || cs.heatingOn != prev.heatingOn) {
+        emit("heating", cs.heatingOn ? "1" : "0");
+    }
+    if (!inited || cs.fanMode != prev.fanMode) {
+        emit("fan", fanIntToStr(cs.fanMode));
+    }
+    if (!inited || cs.boilerMode != prev.boilerMode) {
+        emit("boiler", boilerIntToStr(cs.boilerMode));
+    }
+    if (!inited || cs.energyIdx != prev.energyIdx) {
+        char v[8]; snprintf(v, sizeof(v), "%d", cs.energyIdx);
+        emit("energy_idx", v);
+    }
+    if (!inited || cs.roomSetpoint != prev.roomSetpoint) {
+        char v[8]; snprintf(v, sizeof(v), "%.1f", cs.roomSetpoint);
+        emit("temp", v);
+    }
+    prev   = cs;
+    inited = true;
+}
+
+// Dedicated WebSocket pump task.  Polls the LCD control state and drains
+// the broadcast queue every 100 ms so user input on the touch screen
+// reaches connected browsers in ≤100 ms.  The main loop runs at 1 s, which
+// is fine for display refresh and BLE/WiFi status polling but felt
+// sluggish over the WS — keep that loop coarse and let this one carry the
+// WS latency budget.
+static void wsPumpTask(void* /*arg*/) {
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        P4ControlState cs;
+        p4GetControlState(cs);
+        broadcastControlChanges(cs);
+        wsQueueDrain();
+    }
 }
 
 // Background boot: everything that does not need to block the splash.
@@ -89,6 +229,10 @@ static void bootTask(void* /*arg*/) {
         ESP_LOGW(TAG, "LittleFS mount failed — run 'idf.py littlefs-flash-littlefs'");
     }
     startWebServer(onWsCommand, onWsConnected);
+
+    // WS pump runs at 100 ms cadence so touch inputs on the LCD reach
+    // connected browsers in ≤100 ms.  Lower than the main loop's 1 s tick.
+    xTaskCreate(wsPumpTask, "ws_pump", 4096, nullptr, 3, nullptr);
 
     // TODO: xTaskCreatePinnedToCore(linBusTask, "lin", 4096, nullptr, 5, nullptr, 0);
 
@@ -145,8 +289,7 @@ extern "C" void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(1000));
         iter++;
 
-        // Drain queued WebSocket frames produced by other tasks (LIN, BLE).
-        wsQueueDrain();
+        // (WS drain + LCD-change broadcast run in wsPumpTask at 100 ms.)
 
         // WiFi status
         WifiStatus ws = wifi_manager_get_status();

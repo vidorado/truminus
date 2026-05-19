@@ -800,6 +800,10 @@ static void on_conf_clicked(lv_event_t*)
 
 // ── Screen timeout ────────────────────────────────────────────────────────────
 // Idle thresholds from NVS "display/timeout_idx" (0=30s 1=1min 2=3min 3=never).
+// Single source of truth — used by both the boot-time read in p4DisplayInit()
+// and the live setter p4SetScreenTimeoutIdx() invoked from the settings UI.
+static const uint32_t SCREEN_TIMEOUT_TBL[] = { 30000, 60000, 180000, 0 };
+
 // Dimming starts 7 s before full off; brightness transitions are animated.
 //
 // Timer runs every 50 ms.
@@ -896,7 +900,6 @@ void p4DisplayInit()
         s_splash_tick = lv_tick_get();
 
         // Screen timeout + brightness — read NVS.
-        static const uint32_t TIMEOUT_TABLE[] = { 30000, 60000, 180000, 0 };
         uint8_t idx   = 3;   // default: never
         uint8_t brite = 100; // default: full brightness
         nvs_handle_t nvs_h;
@@ -911,7 +914,7 @@ void p4DisplayInit()
         s_target            = brite;
         bsp_display_brightness_set(brite);
 
-        s_timeout_ms = (idx < 4) ? TIMEOUT_TABLE[idx] : 0;
+        s_timeout_ms = (idx < 4) ? SCREEN_TIMEOUT_TBL[idx] : 0;
         // Timer runs always (handles brightness animation); only idle logic
         // is gated on s_timeout_ms > 0.
         lv_timer_create(screen_timeout_cb, 50, nullptr);
@@ -923,6 +926,30 @@ void p4DisplayInit()
     }
 
     ESP_LOGI(TAG, "display ready — 800x480 landscape");
+}
+
+void p4SetScreenTimeoutIdx(uint8_t idx)
+{
+    if (idx > 3) idx = 3;
+    s_timeout_ms = SCREEN_TIMEOUT_TBL[idx];
+
+    // If we just disabled the timeout while the screen was already dimmed
+    // or blanked, wake it back up — otherwise the user would have to touch
+    // the screen even though they just told it never to dim.
+    if (s_timeout_ms == 0 && (s_dimmed || s_blanked)) {
+        s_target    = s_brightness_normal;
+        s_dimmed    = false;
+        s_blanked   = false;
+        s_waking    = true;
+        s_wake_tick = lv_tick_get();
+    }
+
+    nvs_handle_t h;
+    if (nvs_open("display", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, "timeout_idx", idx);
+        nvs_commit(h);
+        nvs_close(h);
+    }
 }
 
 void p4SetNormalBrightness(int pct)
@@ -950,6 +977,62 @@ void p4GetControlState(P4ControlState& out)
     out.boilerMode   = st.boilerMode;
     out.energyIdx    = st.energyIdx;
     out.roomSetpoint = st.roomSetpoint;
+}
+
+// Remote setters (called from the WS dispatcher).  Take the LVGL lock so the
+// st mutation + widget refresh happen atomically with the LVGL refresh task.
+// A short timeout keeps a stuck UI from blocking the WS task; on timeout we
+// silently drop the write (the next remote update will retry).
+void p4SetHeating(bool on)
+{
+    if (!bsp_display_lock(50)) return;
+    st.heatingOn = on;
+    // Mirror the on-screen rule: turning heat off clears active heat-fan
+    // modes; turning it on defaults to eco if currently in level mode.
+    if (st.heatingOn && (st.fanMode < 1 || st.fanMode > 2)) st.fanMode = 1;
+    if (!st.heatingOn && st.fanMode >= 1 && st.fanMode <= 2) st.fanMode = 0;
+    refresh_controls();
+    bsp_display_unlock();
+}
+
+void p4SetFanMode(int mode)
+{
+    if (mode < 0)  mode = 0;
+    if (mode > 12) mode = 12;
+    if (!bsp_display_lock(50)) return;
+    st.fanMode = mode;
+    refresh_controls();
+    bsp_display_unlock();
+}
+
+void p4SetBoilerMode(int mode)
+{
+    if (mode < 0) mode = 0;
+    if (mode > 3) mode = 3;
+    if (!bsp_display_lock(50)) return;
+    st.boilerMode = mode;
+    refresh_controls();
+    bsp_display_unlock();
+}
+
+void p4SetEnergyIdx(int idx)
+{
+    if (idx < 0) idx = 0;
+    if (idx > 4) idx = 4;
+    if (!bsp_display_lock(50)) return;
+    st.energyIdx = idx;
+    refresh_controls();
+    bsp_display_unlock();
+}
+
+void p4SetRoomSetpoint(float celsius)
+{
+    if (celsius < 5.0f)  celsius = 5.0f;
+    if (celsius > 30.0f) celsius = 30.0f;
+    if (!bsp_display_lock(50)) return;
+    st.roomSetpoint = celsius;
+    refresh_controls();
+    bsp_display_unlock();
 }
 
 void p4DisplayRebuild()
