@@ -1,4 +1,14 @@
 dependencies:
+  espressif/cjson:
+    component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.19~2
   espressif/cmake_utilities:
     component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
     dependencies:
@@ -99,7 +109,7 @@ dependencies:
       type: service
     version: 1.1.2
   espressif/esp_wifi_remote:
-    component_hash: 97b683db5244f4d224997a9d00d09a8f0e13ea0cf39566e1f3b3a11d73f68ee0
+    component_hash: 5cdfb7b59d312d91c9dd6e8365be6b7b8a16eeef2a2b40d235c4a12f6d0ff769
     dependencies:
     - name: espressif/esp_hosted
       registry_url: https://components.espressif.com
@@ -117,7 +127,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.5.2
+    version: 1.5.3
   espressif/wifi_remote_over_eppp:
     component_hash: 06d8bc15348bbd21f1390daace36ed5adcf6026c93c5b69decc55fa04df2711a
     dependencies:
@@ -178,6 +188,16 @@ dependencies:
       path: .
       type: git
     version: 932af3aaee532af144087b6126aaa48eb9124be4
+  joltwallet/littlefs:
+    component_hash: 29eff7921c4e8bce021aeb7fff2723bfcafed661756de700646ea0f6223c2a32
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.21.1
   lvgl/lvgl:
     component_hash: 184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae
     dependencies: []
@@ -186,11 +206,13 @@ dependencies:
       type: service
     version: 9.5.0
 direct_dependencies:
+- espressif/cjson
 - espressif/esp_hosted
 - espressif/esp_wifi_remote
 - h2zero/esp-nimble-cpp
 - idf
 - jc4880_bsp
-manifest_hash: dcca26f71a1b800493d4ea9d0c114c4d57149760f16f118ab42fab1b4c410b82
+- joltwallet/littlefs
+manifest_hash: 1f393fc00f21671642c20c69f03f2615ac383372b0e51b628adc0c5fbe36b5ef
 target: esp32p4
 version: 3.0.0

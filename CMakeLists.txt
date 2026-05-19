@@ -8,11 +8,10 @@
 
 cmake_minimum_required(VERSION 3.16)
 
-# Pre-build: regenerate cache-busted web asset references + gzip embed.
-# Under PlatformIO these were `pre:` scripts; with idf.py we run them at
-# CMake configure time so main/webfiles.h is up to date before build.
-# Guard them so they don't run during ESP-IDF's early component expansion
-# pass (scripting mode), where python3 might not even be on PATH.
+# Pre-build: rewrite cache-bust query strings in data/index.html so the
+# LittleFS image picks up the new hash.  Web assets themselves are no
+# longer embedded — the LittleFS image is built by main/CMakeLists.txt
+# via littlefs_create_partition_image() and flashed from <project>/data/.
 #
 # NOTE: apply_patches.py is NOT here — it has to run AFTER project() because
 # the Component Manager only resolves and downloads managed_components during
@@ -21,10 +20,6 @@ cmake_minimum_required(VERSION 3.16)
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
     execute_process(
         COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/cache_bust.py
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-    execute_process(
-        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/compress_fs.py
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
 endif()
