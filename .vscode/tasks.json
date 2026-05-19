@@ -1,0 +1,49 @@
+{
+  "version": "2.0.0",
+
+  // All tasks invoke idf.py via `bash -c 'source export.sh && idf.py …'`
+  // because idf.py is not on PATH until the IDF setup script has run.
+  // The Espressif extension does the equivalent setup internally for its
+  // own commands; tasks declared here run in a fresh shell that knows
+  // nothing about it, so we source it ourselves.
+
+  "tasks": [
+    {
+      "label": "TruMinus: Build",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        ". \"${config:idf.currentSetup}/export.sh\" >/dev/null && idf.py build"
+      ],
+      "group": { "kind": "build", "isDefault": true },
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "TruMinus: Flash",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        ". \"${config:idf.currentSetup}/export.sh\" >/dev/null && idf.py -p \"${config:idf.port}\" flash"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "TruMinus: Flash + Monitor",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        ". \"${config:idf.currentSetup}/export.sh\" >/dev/null && idf.py -p \"${config:idf.port}\" flash monitor"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    }
+  ]
+}

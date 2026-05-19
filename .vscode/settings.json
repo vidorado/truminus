@@ -9,5 +9,27 @@
   "idf.customExtraVars": {},
   "idf.port": "/dev/ttyACM0",
   "idf.flashType": "UART",
-  "idf.currentSetup": "/home/victor/esp/esp-idf"
+  "idf.currentSetup": "/home/victor/esp/esp-idf",
+
+  // Status-bar buttons that invoke the tasks in .vscode/tasks.json.
+  // Extension: spencerwmiles.vscode-task-buttons.  These replace the
+  // Espressif extension's built-in Flash icon, which bypasses the
+  // --skip-flashed flag baked into our cmake SUB_ARGS.
+  "VsCodeTaskButtons.tasks": [
+    {
+      "label": "$(tools) Build",
+      "task": "TruMinus: Build",
+      "tooltip": "idf.py build"
+    },
+    {
+      "label": "$(zap) Flash",
+      "task": "TruMinus: Flash",
+      "tooltip": "idf.py flash — honours --skip-flashed so unchanged partitions are not rewritten"
+    },
+    {
+      "label": "$(rocket) Flash + Monitor",
+      "task": "TruMinus: Flash + Monitor",
+      "tooltip": "idf.py flash monitor"
+    }
+  ]
 }
