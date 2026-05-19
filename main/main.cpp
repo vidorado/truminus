@@ -12,6 +12,7 @@
 #include "victronble.hpp"
 #include "ultimatronble.hpp"
 #include "c6_ota.hpp"
+#include "webserver.hpp"
 #include "esp_hosted_host_fw_ver.h"
 extern "C" {
 #include "esp_hosted_misc.h"
@@ -21,10 +22,80 @@ extern "C" {
 
 static const char* TAG = "main";
 
-// ── Global definitions (declared extern in globals.hpp) ───────────────────
-httpd_handle_t  httpServer   = nullptr;
-std::atomic<int> wsClientCount{0};
-QueueHandle_t   wsQueue      = nullptr;
+// ── WebSocket command dispatcher ─────────────────────────────────────────
+//
+// The web UI sends JSON {id, value} frames; in the C5 firmware they were
+// routed through settings.cpp (`TMqttSetting::Validate(...)` per id).  That
+// layer has not been ported to ESP-IDF yet, so for now we simply log the
+// commands and the page acts as read-only.  Wire this to the real settings
+// dispatcher once trumaframes / settings are ported.
+static void onWsCommand(const char* id, const char* value) {
+    ESP_LOGI(TAG, "ws cmd: %s = %s", id ? id : "(null)", value ? value : "(null)");
+}
+
+// Browser just connected and sent "settings": push a snapshot of every
+// cached value.  Same TODO as above — without settings.cpp ported we have
+// no cache to snapshot, so emit a minimal heartbeat.
+static void onWsConnected() {
+    wsQueueSend("{\"command\":\"snapshot\",\"settings\":{},\"status\":{}}");
+}
+
+// Background boot: everything that does not need to block the splash.
+// Runs in parallel with the splash screen so the user sees pixels as fast
+// as bsp_display_start_with_config() returns.  Each step is independent and
+// already non-blocking (BLE supervisor self-spawns, wifi_manager_start is
+// non-blocking, mountWebFs / startWebServer are fast).
+static void bootTask(void* /*arg*/) {
+    // WiFi driver init.  ESP-Hosted transport to the C6 co-processor is
+    // established here; the C6 OTA check that follows depends on it.
+    wifi_manager_init();
+
+    // C6 co-processor OTA: if the embedded slave firmware version differs
+    // from the host ESP-Hosted library (major.minor), reflash the C6 via
+    // SDIO and restart.  The OTA screen overrides the splash; the device
+    // reboots when it completes, so we never return.
+    {
+        char slave_ver[16] = "?";
+        if (c6OtaNeeded(slave_ver, sizeof(slave_ver))) {
+            char host_ver[16];
+            snprintf(host_ver, sizeof(host_ver), "%d.%d.%d",
+                     ESP_HOSTED_VERSION_MAJOR_1,
+                     ESP_HOSTED_VERSION_MINOR_1,
+                     ESP_HOSTED_VERSION_PATCH_1);
+            p4DisplayShowOtaScreen(slave_ver, host_ver);
+            if (c6OtaPerform(p4DisplaySetOtaProgress)) {
+                p4DisplaySetOtaProgress(100);
+                vTaskDelay(pdMS_TO_TICKS(1500));
+                esp_restart();
+            }
+        }
+    }
+
+    wifi_manager_start();
+
+    // Initialize C6 BT controller via ESP-Hosted RPC before NimBLE starts.
+    ESP_ERROR_CHECK(esp_hosted_bt_controller_init());
+    ESP_ERROR_CHECK(esp_hosted_bt_controller_enable());
+
+    victronBleInit();
+    ultimatronBleInit();
+    xTaskCreate([](void*) {
+        bleSupervisorStart();
+        vTaskDelete(nullptr);
+    }, "ble_start", 6144, nullptr, 1, nullptr);
+
+    // Web assets live on a LittleFS partition flashed from <project>/data/.
+    if (mountWebFs() != ESP_OK) {
+        ESP_LOGW(TAG, "LittleFS mount failed — run 'idf.py littlefs-flash-littlefs'");
+    }
+    startWebServer(onWsCommand, onWsConnected);
+
+    // TODO: xTaskCreatePinnedToCore(linBusTask, "lin", 4096, nullptr, 5, nullptr, 0);
+
+    ESP_LOGI("boot", "background boot complete (heap=%lu)",
+             (unsigned long)esp_get_free_heap_size());
+    vTaskDelete(nullptr);
+}
 
 extern "C" void app_main(void)
 {
@@ -47,59 +118,19 @@ extern "C" void app_main(void)
     // cosmetic warning, display works fine. Suppress it.
     esp_log_level_set("ledc", ESP_LOG_ERROR);
 
-    // Display first so the user sees progress immediately.
+    // Display first so the user sees pixels as soon as the panel is up.
+    // Everything below this point runs in the background to keep the
+    // splash visible without artificial padding: p4DisplayUpdate() in the
+    // main loop enforces a 2 s minimum splash; if the background boot
+    // takes longer, the splash naturally stays until it finishes (the
+    // main screen still renders, just with empty fields that fill in as
+    // each subsystem comes online).
     p4DisplayInit();
     p4DisplaySetStatus(t(TK::STATUS_INIT));
 
-    // WiFi: init driver, then start STA and connect to saved credentials.
-    // ESP-Hosted transport to the C6 co-processor is established during init.
-    wifi_manager_init();
-
-    // C6 co-processor OTA: if the embedded slave firmware version differs from
-    // the host ESP-Hosted library (major.minor), reflash the C6 via SDIO and
-    // restart.  This also re-enables BLE on boards that shipped with a WiFi-only
-    // slave build.  The check is a no-op when C6_FW_AVAILABLE is not defined
-    // (i.e. 'make build-c6' has not been run yet).
-    {
-        char slave_ver[16] = "?";
-        if (c6OtaNeeded(slave_ver, sizeof(slave_ver))) {
-            char host_ver[16];
-            snprintf(host_ver, sizeof(host_ver), "%d.%d.%d",
-                     ESP_HOSTED_VERSION_MAJOR_1,
-                     ESP_HOSTED_VERSION_MINOR_1,
-                     ESP_HOSTED_VERSION_PATCH_1);
-            p4DisplayShowOtaScreen(slave_ver, host_ver);
-            if (c6OtaPerform(p4DisplaySetOtaProgress)) {
-                p4DisplaySetOtaProgress(100);
-                vTaskDelay(pdMS_TO_TICKS(1500));
-                esp_restart();
-            }
-            // OTA failed (no binary embedded or write error) — continue anyway.
-        }
-    }
-
-    wifi_manager_start();
-
-    // Initialize C6 BT controller via ESP-Hosted RPC before NimBLE starts.
-    // The C6 slave does NOT auto-initialize BT at boot; these RPC calls trigger
-    // init_bluetooth() and enable_bluetooth() on the slave side.
-    ESP_ERROR_CHECK(esp_hosted_bt_controller_init());
-    ESP_ERROR_CHECK(esp_hosted_bt_controller_enable());
-
-    // BLE: load NVS configs into RAM (fast, NVS only).
-    // bleSupervisorStart() calls NimBLEDevice::init() which blocks on HCI Reset
-    // until the C6 responds — if the C6 firmware doesn't support virtual HCI the
-    // main task would hang and the display would never leave the splash screen.
-    // Run it in a background task so the UI starts immediately regardless.
-    victronBleInit();
-    ultimatronBleInit();
-    xTaskCreate([](void*) {
-        bleSupervisorStart();
-        vTaskDelete(nullptr);
-    }, "ble_start", 6144, nullptr, 1, nullptr);
-
-    // TODO: startWebServer();
-    // TODO: xTaskCreatePinnedToCore(linBusTask, "lin", 4096, nullptr, 5, nullptr, 0);
+    // Spawn the heavy init in a background task so the splash is on screen
+    // immediately and the LVGL refresh task is not starved by app_main.
+    xTaskCreate(bootTask, "boot", 6144, nullptr, 5, nullptr);
 
     P4DisplayData d = {};
     d.roomTemp     = -999.0f;
@@ -113,6 +144,9 @@ extern "C" void app_main(void)
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         iter++;
+
+        // Drain queued WebSocket frames produced by other tasks (LIN, BLE).
+        wsQueueDrain();
 
         // WiFi status
         WifiStatus ws = wifi_manager_get_status();
