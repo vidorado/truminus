@@ -37,9 +37,9 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 #   NO_MQTT     — MQTT subsystem not yet ported.
 #   WEBSERVER   — enables the embedded HTTP/WebSocket server.
 #   JC4880_P4   — board identifier for conditional code paths.
-idf_build_set_property(COMPILE_DEFINITIONS "NO_MQTT"   APPEND)
-idf_build_set_property(COMPILE_DEFINITIONS "WEBSERVER" APPEND)
-idf_build_set_property(COMPILE_DEFINITIONS "JC4880_P4" APPEND)
+idf_build_set_property(COMPILE_DEFINITIONS "NO_MQTT"           APPEND)
+idf_build_set_property(COMPILE_DEFINITIONS "WEBSERVER"         APPEND)
+idf_build_set_property(COMPILE_DEFINITIONS "JC4880_P4"         APPEND)
 
 project(truminus)
 

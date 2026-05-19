@@ -4,6 +4,8 @@ idf_component_register(
     SRCS
         "main.cpp"
         "p4display.cpp"
+        "p4settings.cpp"
+        "i18n.cpp"
         "lin_driver.cpp"
     INCLUDE_DIRS
         "."
@@ -21,4 +23,8 @@ idf_component_register(
         esp_driver_gpio
         esp_timer
         freertos
+)
+
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    "-include" "${CMAKE_CURRENT_SOURCE_DIR}/dummy_flags.h"
 )
