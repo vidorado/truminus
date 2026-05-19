@@ -1010,7 +1010,8 @@ static void ble_scan_victron_cb(lv_event_t*) {
     ctx->list      = list;
     ctx->spinner   = sp;
     ctx->select_cb = ble_victron_select_cb;
-    bleDiscoveryScan(true, ble_scan_done, ctx);
+    // Show all BLE devices (no manufacturer filter); user picks the right one.
+    bleDiscoveryScan(false, ble_scan_done, ctx);
 }
 
 static void ble_scan_batt_cb(lv_event_t*) {

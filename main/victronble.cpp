@@ -222,7 +222,17 @@ static void discovery_scan_task(void* arg) {
     scan->setWindow(80);
     scan->setMaxResults(0);
     scan->clearResults();
-    scan->start(duration_ms, false);
+    // NimBLE 2.x: start() is non-blocking and returns as soon as the GAP
+    // procedure is queued. We need to wait for the duration window (during
+    // which DiscoveryScanCb::onResult fills s_disc) before reporting back.
+    if (scan->start(duration_ms, false)) {
+        uint32_t waited = 0;
+        while (scan->isScanning() && waited < duration_ms + 1000) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            waited += 100;
+        }
+        if (scan->isScanning()) scan->stop();
+    }
 
     // Restore supervisor's scan callback (if configured).
     if (s_configured && s_bleScan) {
