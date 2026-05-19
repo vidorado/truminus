@@ -40,6 +40,8 @@ idf_component_register(
         esp_wifi
         mbedtls
         freertos
+        h2zero__esp-nimble-cpp
+        espressif__esp_hosted
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
@@ -50,5 +52,4 @@ if(EXISTS "${C6_FW_BIN}")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE C6_FW_AVAILABLE=1)
 endif()
 
-# ENABLE_BLE disabled: C6 firmware has hci_stub_drv with BT disabled.
-# To enable: reflash C6 via JP1 with ESP-Hosted slave + CONFIG_ESP_HOSTED_BT_SUPPORT=y
+target_compile_definitions(${COMPONENT_LIB} PRIVATE ENABLE_BLE=1)

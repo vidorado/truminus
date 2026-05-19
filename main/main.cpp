@@ -13,6 +13,9 @@
 #include "ultimatronble.hpp"
 #include "c6_ota.hpp"
 #include "esp_hosted_host_fw_ver.h"
+extern "C" {
+#include "esp_hosted_misc.h"
+}
 #include <cmath>
 #include <stdio.h>
 
@@ -77,6 +80,12 @@ extern "C" void app_main(void)
 
     wifi_manager_start();
 
+    // Initialize C6 BT controller via ESP-Hosted RPC before NimBLE starts.
+    // The C6 slave does NOT auto-initialize BT at boot; these RPC calls trigger
+    // init_bluetooth() and enable_bluetooth() on the slave side.
+    ESP_ERROR_CHECK(esp_hosted_bt_controller_init());
+    ESP_ERROR_CHECK(esp_hosted_bt_controller_enable());
+
     // BLE: load NVS configs into RAM (fast, NVS only).
     // bleSupervisorStart() calls NimBLEDevice::init() which blocks on HCI Reset
     // until the C6 responds — if the C6 firmware doesn't support virtual HCI the
@@ -111,10 +120,8 @@ extern "C" void app_main(void)
         d.ssid   = ws.connected ? ws.ssid : nullptr;
         d.ip     = ws.connected ? ws.ip   : nullptr;
 
-        if (ws.connected)
-            p4DisplaySetStatus(ws.ip);
-        else
-            p4DisplaySetStatus(t(TK::STATUS_NO_WIFI));
+        // Connection info goes to lbl_conn (bottom line) via p4DisplayUpdate.
+        // Top status line is for actions/errors only; don't overwrite it here.
 
         // BLE / solar data
         VictronData    vd = victronGetData();
