@@ -2470,7 +2470,7 @@
               "type": "LVGLPanelWidget",
               "left": 213,
               "top": 240,
-              "width": 270,
+              "width": 304,
               "height": 176,
               "customInputs": [],
               "customOutputs": [],
@@ -2539,7 +2539,7 @@
                 {
                   "objID": "6a0d3447-dd2a-41a7-8f7c-c28a66b639d9",
                   "type": "LVGLLabelWidget",
-                  "left": 187,
+                  "left": 215,
                   "top": 20,
                   "width": 64,
                   "height": 28,
@@ -2587,7 +2587,7 @@
                 {
                   "objID": "ad882d21-4cf9-40d7-b3f4-fc70615b54eb",
                   "type": "LVGLPanelWidget",
-                  "left": 197,
+                  "left": 225,
                   "top": 51,
                   "width": 12,
                   "height": 7,
@@ -2638,7 +2638,7 @@
                 {
                   "objID": "c8f81d2d-171b-44cd-8215-c999d4ffd096",
                   "type": "LVGLPanelWidget",
-                  "left": 229,
+                  "left": 257,
                   "top": 51,
                   "width": 12,
                   "height": 7,
@@ -2689,7 +2689,7 @@
                 {
                   "objID": "b5845805-741e-4565-934b-99759c6e83e3",
                   "type": "LVGLPanelWidget",
-                  "left": 187,
+                  "left": 215,
                   "top": 58,
                   "width": 64,
                   "height": 101,

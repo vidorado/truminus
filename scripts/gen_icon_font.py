@@ -1,8 +1,11 @@
 """
-Generate main/font_icons.ttf — a minimal subset of FontAwesome 6 Free Solid
-containing only the glyphs used by the TruMinus firmware UI.
+Generate main/font_icons.ttf — a merged subset of FontAwesome 6 Free Solid
+and FontAwesome 6 Brands containing only the glyphs used by the TruMinus UI.
 
-Source: scripts/fonts/fa6-free-solid-900.otf  (FA 6.7.2, included in repo)
+Sources (FA 6.7.2, included in repo):
+  scripts/fonts/fa6-free-solid-900.otf   — solid icons
+  scripts/fonts/fa6-brands-400.ttf       — brand icons (bluetooth)
+  scripts/fonts/fa6-regular-400.ttf      — regular icons (currently unused)
 
 Usage:
     python3 scripts/gen_icon_font.py
@@ -12,20 +15,25 @@ Requires fonttools:
 """
 
 import sys
+import tempfile
 from pathlib import Path
 
 try:
     from fontTools import subset as ss
     from fontTools.ttLib import TTFont
+    from fontTools.merge import Merger
 except ImportError:
     sys.exit("fonttools not found — run: pip install fonttools")
 
-ROOT = Path(__file__).parent.parent
-SRC  = ROOT / "scripts" / "fonts" / "fa6-free-solid-900.otf"
-DST  = ROOT / "main" / "font_icons.ttf"
+ROOT       = Path(__file__).parent.parent
+SOLID_SRC  = ROOT / "scripts" / "fonts" / "fa6-free-solid-900.ttf"  # TTF (not OTF) for merge compat
+BRANDS_SRC = ROOT / "scripts" / "fonts" / "fa6-brands-400.ttf"
+DST        = ROOT / "main" / "font_icons.ttf"
 
-# Codepoints used in p4display.cpp — keep in sync with #define FA_* macros.
-GLYPHS = {
+# Glyphs from FA6 Free Solid — keep in sync with #define FA_* in p4display.cpp
+# and p4settings.cpp.
+SOLID_GLYPHS = {
+    # p4display.cpp
     0xE3AF: "house-chimney     FA_HOUSE_CHIM",
     0xF013: "cog               FA_COG",
     0xF043: "tint/water-drop   FA_TINT",
@@ -36,40 +44,70 @@ GLYPHS = {
     0xF1EB: "wifi              FA_WIFI",
     0xF2C9: "thermometer-half  FA_THERM_HALF",
     0xF7E4: "fire-flame-curved FA_FIRE",
+    # p4settings.cpp — settings menu
+    0xF0E0: "envelope          FA_ENVELOPE  (MQTT)",
+    0xF185: "sun               FA_SUN       (Solar/BLE)",
+    0xF108: "display/desktop   FA_DISPLAY   (Display settings)",
+    0xF0AC: "globe             FA_GLOBE     (Language)",
+    # p4settings.cpp — password toggle / navigation
+    0xF06E: "eye               FA_EYE",
+    0xF070: "eye-slash         FA_EYE_SLASH",
+    0xF2F6: "right-to-bracket  FA_SIGN_IN",
 }
 
-def main():
-    if not SRC.exists():
-        sys.exit(f"Source font not found: {SRC}\n"
-                 "Download FA6 Free desktop package and place the OTF at that path.")
+# Glyphs from FA6 Brands — bluetooth is brand-only, not in Solid.
+BRANDS_GLYPHS = {
+    0xF293: "bluetooth         FA_BLUETOOTH (BLE status)",
+}
 
-    options = ss.Options()
-    options.layout_features = []     # drop GSUB/GPOS — not needed for icon display
-    options.name_IDs = [1, 2, 4, 5] # keep family/version names
-    options.recalc_bounds = True
+ALL_GLYPHS = {**SOLID_GLYPHS, **BRANDS_GLYPHS}
 
-    font = ss.load_font(str(SRC), options)
-    subsetter = ss.Subsetter(options)
-    subsetter.populate(unicodes=list(GLYPHS.keys()))
+
+def subset_font(src: Path, codepoints: list, label: str) -> str:
+    opts = ss.Options()
+    opts.layout_features = []
+    opts.name_IDs        = [1, 2, 4, 5]
+    opts.recalc_bounds   = True
+
+    font      = ss.load_font(str(src), opts)
+    subsetter = ss.Subsetter(opts)
+    subsetter.populate(unicodes=codepoints)
     subsetter.subset(font)
 
+    tmp = tempfile.mktemp(suffix=f"_{label}.ttf")
+    ss.save_font(font, tmp, opts)
+    return tmp
+
+
+def main():
+    for src in (SOLID_SRC, BRANDS_SRC):
+        if not src.exists():
+            sys.exit(f"Source font not found: {src}")
+
+    solid_tmp  = subset_font(SOLID_SRC,  list(SOLID_GLYPHS.keys()),  "solid")
+    brands_tmp = subset_font(BRANDS_SRC, list(BRANDS_GLYPHS.keys()), "brands")
+
     DST.parent.mkdir(parents=True, exist_ok=True)
-    ss.save_font(font, str(DST), options)
+    merger = Merger()
+    merged = merger.merge([solid_tmp, brands_tmp])
+    merged.save(str(DST))
 
     # Verify
-    out = TTFont(str(DST))
+    out  = TTFont(str(DST))
     cmap = out.getBestCmap()
     print(f"Written: {DST}  ({DST.stat().st_size} bytes)")
     print()
     ok = True
-    for cp, desc in sorted(GLYPHS.items()):
+    for cp, desc in sorted(ALL_GLYPHS.items()):
         found = cp in cmap
-        print(f"  U+{cp:04X}  {'✓' if found else '✗ MISSING'}  {desc}")
+        src   = "brands" if cp in BRANDS_GLYPHS else "solid"
+        print(f"  U+{cp:04X} [{src:6s}]  {'✓' if found else '✗ MISSING'}  {desc}")
         if not found:
             ok = False
     if not ok:
-        sys.exit("\nSome glyphs are missing from the source font.")
+        sys.exit("\nSome glyphs are missing from the source fonts.")
     print("\nAll glyphs present.")
+
 
 if __name__ == "__main__":
     main()
