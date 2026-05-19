@@ -20,3 +20,10 @@ dependencies:
     version: ">=1.0.0"
   espressif/esp_wifi_remote:
     version: ">=0.9.0"
+
+  # IDF-native C++ NimBLE wrapper (no Arduino deps).
+  # BLE HCI is routed to the ESP32-C6 co-processor via ESP-Hosted virtual HCI.
+  # Requires CONFIG_BT_ENABLED=y + CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
+  # and C6 slave firmware built with BT support (use 'make build-c6').
+  h2zero/esp-nimble-cpp:
+    version: ">=2.0.0"

@@ -132,6 +132,30 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 0.3.2
+  h2zero/esp-nimble-cpp:
+    component_hash: 720050476f7fb47bd0aa08a94642fd09a50536391d60081858702a789405d76f
+    dependencies:
+    - name: espressif/esp_hosted
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      version: '*'
+    - name: espressif/esp_wifi_remote
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      version: '>=0.5.3'
+    - name: idf
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      version: '>=5.3.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.5.0
   idf:
     source:
       type: idf
@@ -155,17 +179,18 @@ dependencies:
       type: git
     version: 932af3aaee532af144087b6126aaa48eb9124be4
   lvgl/lvgl:
-    component_hash: 17e68bfd21f0edf4c3ee838e2273da840bf3930e5dbc3bfa6c1190c3aed41f9f
+    component_hash: 184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae
     dependencies: []
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 9.4.0
+    version: 9.5.0
 direct_dependencies:
 - espressif/esp_hosted
 - espressif/esp_wifi_remote
+- h2zero/esp-nimble-cpp
 - idf
 - jc4880_bsp
-manifest_hash: 721c1324c44c696e6a24393e2d3c46c2804996dd11ea6133c0801a61bcbb41aa
+manifest_hash: dcca26f71a1b800493d4ea9d0c114c4d57149760f16f118ab42fab1b4c410b82
 target: esp32p4
 version: 3.0.0

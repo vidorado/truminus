@@ -47,6 +47,7 @@ CONFIG_LV_TXT_BREAK_CHARS=" ,.;:-_"
 # SysMon shows FPS / CPU overlay — useful for benchmarks, off in production.
 # CONFIG_LV_USE_SYSMON is not set
 # CONFIG_LV_USE_PERF_MONITOR is not set
+CONFIG_LV_USE_TINY_TTF=y
 CONFIG_LV_USE_IMGFONT=y
 CONFIG_LV_USE_DEMO_WIDGETS=y
 CONFIG_LV_USE_DEMO_BENCHMARK=y
@@ -80,6 +81,16 @@ CONFIG_ESP_WIFI_REMOTE_ENABLED=y
 CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
-# BT disabled: C6 firmware has hci_stub_drv with BT support disabled.
-# Re-enable after reflashing C6 via JP1 with ESP-Hosted slave + BT support.
-# CONFIG_BT_ENABLED=y
+# BLE via C6 co-processor virtual HCI (ESP-Hosted).
+# NimBLE host runs on the P4; HCI packets are routed to the C6 over SDIO.
+# CONFIG_BT_NIMBLE_ENABLED must be set before CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE
+# is visible in Kconfig (it depends on BT_NIMBLE_ENABLED).
+CONFIG_BT_ENABLED=y
+CONFIG_BT_CONTROLLER_DISABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+# Disable UART HCI transport (default y when BT_CONTROLLER_DISABLED) so that
+# the ESP_HOSTED_ENABLE_BT_NIMBLE Kconfig option becomes visible.
+# The VHCI transport (ESP-Hosted → C6 over SDIO) is used instead.
+CONFIG_BT_NIMBLE_TRANSPORT_UART=n
+CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
+CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y
