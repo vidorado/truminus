@@ -3,6 +3,20 @@
 #include "lvgl.h"
 #include <stdint.h>
 
+// Shared font set — available after p4DisplayInit() returns.
+struct P4Fonts {
+    const lv_font_t* f18;
+    const lv_font_t* f20;
+    const lv_font_t* f22;
+    const lv_font_t* f24;
+    const lv_font_t* f28;
+    const lv_font_t* title;    // bold 26
+    const lv_font_t* icons22;
+    const lv_font_t* icons24;
+    const lv_font_t* icons36;  // larger icons for menu buttons
+};
+const P4Fonts* p4GetFonts();
+
 // ── Data structs fed to p4DisplayUpdate() ────────────────────────────────
 
 struct P4SolarData {
@@ -44,15 +58,40 @@ struct P4DisplayData {
     const char* ssid;
     const char* ip;
 
+    // BLE status: 0=not configured, 1=configured but no data, 2=has data
+    int bleState;
+
     // Peripherals
     P4SolarData solar;
     P4BattData  batt;
 };
 
+// ── Control state — reflects user button presses ─────────────────────────
+
+struct P4ControlState {
+    bool  heatingOn;
+    int   fanMode;
+    int   boilerMode;
+    int   energyIdx;
+    float roomSetpoint;
+};
+
+// Returns the current interactive state (modified by on-screen button presses).
+// Call before building the next P4DisplayData so the demo loop reflects user input.
+void p4GetControlState(P4ControlState& out);
+
 // ── Public API ────────────────────────────────────────────────────────────
 
 // Call once from app_main (before any task uses LVGL).
 void p4DisplayInit();
+
+// Set normal (awake) backlight brightness: 10–100.
+// Persists to NVS; recalculates the warning-dim level.
+void p4SetNormalBrightness(int pct);
+
+// Tear down the current main screen and rebuild it on the next p4DisplayUpdate
+// call (picks up a new language, etc.). Must be called with LVGL lock held.
+void p4DisplayRebuild();
 
 // Call whenever any value changes. Thread-safe: acquires LVGL lock internally.
 void p4DisplayUpdate(const P4DisplayData& d);

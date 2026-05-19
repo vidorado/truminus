@@ -7,6 +7,7 @@
 #include "globals.hpp"
 #include "logs.hpp"
 #include "p4display.hpp"
+#include <cmath>
 
 static const char* TAG = "main";
 
@@ -58,6 +59,7 @@ extern "C" void app_main(void)
     demo.energyIdx     = 0;
     demo.wifiOk        = false;
     demo.linOk         = false;
+    demo.bleState      = 0;
     demo.ssid          = nullptr;
     demo.ip            = nullptr;
     demo.solar.valid    = false;
@@ -69,11 +71,46 @@ extern "C" void app_main(void)
     demo.batt.soc       = 0;
     demo.batt.voltageV  = 0.0f;
 
-    // Trigger the main screen build (replaces splash).
+    // Trigger the main screen build (replaces splash after 1 s minimum).
     p4DisplayUpdate(demo);
     p4DisplaySetStatus("Esperando módulos...");
 
+    uint32_t iter = 0;
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
+        iter++;
+        float t = (float)iter;
+
+#ifdef ENABLE_SOLAR_DUMMY
+        demo.solar.valid    = true;
+        demo.solar.status   = "Bulk";
+        demo.solar.voltageV = 13.2f + 0.3f * sinf(t * 0.8f);
+        demo.solar.currentA = 5.5f  + 2.5f * sinf(t * 0.5f);
+        demo.solar.powerW   = (int)(80.0f + 40.0f * sinf(t * 0.6f));
+        demo.batt.valid     = true;
+        demo.batt.soc       = (int)(65.0f + 20.0f * sinf(t * 0.4f));
+        demo.batt.voltageV  = 13.0f + 0.2f * sinf(t * 1.1f);
+        demo.bleState       = 2;  // has data
+#endif
+
+#ifdef ENABLE_BOILER_DUMMY
+        demo.waterTemp   = 52.0f + 5.0f * sinf(t * 0.3f);
+#endif
+
+#ifdef ENABLE_TEMP_DUMMY
+        demo.roomTemp    = 20.5f + 0.5f * sinf(t * 0.2f);
+        demo.outdoorTemp = 12.0f + 2.0f * sinf(t * 0.15f);
+#endif
+
+        // Reflect interactive button state back so user changes aren't overwritten.
+        P4ControlState cs;
+        p4GetControlState(cs);
+        demo.heatingOn    = cs.heatingOn;
+        demo.fanMode      = cs.fanMode;
+        demo.boilerMode   = cs.boilerMode;
+        demo.energyIdx    = cs.energyIdx;
+        demo.roomSetpoint = cs.roomSetpoint;
+
+        p4DisplayUpdate(demo);
     }
 }

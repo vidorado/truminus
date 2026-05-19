@@ -1,8 +1,7 @@
 #pragma once
-#ifdef CYD
-#include <Arduino.h>
+#include <stdint.h>
 
-enum class Language : uint8_t { EN = 0, ES = 1 };
+enum class Language : uint8_t { ES = 0, EN = 1 };
 
 enum class TK : uint8_t {
     HEATING,           // panel title: "CALEFACCION" / "HEATING"
@@ -96,6 +95,14 @@ enum class TK : uint8_t {
     VICTRON_KEY_PROMPT,    // "Clave cifrado Victron (32 hex sin \":\"):" / "Victron Encryption Key (32 hex no \":\"):"
     DEVICES_FOUND_FMT,     // "%d dispositivo(s) — toca para seleccionar" / "%d device(s) — tap to select"
     UNNAMED,               // "(sin nombre)" / "(unnamed)"
+    BRIGHTNESS_LABEL,      // "Brillo de pantalla" / "Screen brightness"
+    // ── Solar charge-state strings (Victron names translated) ────────────────
+    SOL_STATUS_OFF,        // "Apagado"           / "Off"
+    SOL_STATUS_LOW_POWER,  // "Baja potencia"     / "Low power"
+    SOL_STATUS_FAULT,      // "Aver\xC3\xAD" "a"  / "Fault"
+    SOL_STATUS_BULK,       // "Carga"             / "Bulk"
+    SOL_STATUS_ABSORB,     // "Absorci\xC3\xB3n"  / "Absorption"
+    SOL_STATUS_FLOAT,      // "Flotaci\xC3\xB3n"  / "Float"
     _COUNT
 };
 
@@ -104,5 +111,3 @@ Language     currentLanguage();
 bool         isLanguageSet();
 void         setLanguage(Language lang);
 void         loadLanguage();
-
-#endif // CYD
