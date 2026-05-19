@@ -32,4 +32,19 @@ flash-monitor: build
 clean:
 	idf.py fullclean
 
-.PHONY: build flash flash-monitor monitor clean
+# Build the ESP32-C6 co-processor (slave) firmware with BLE enabled and copy
+# the resulting binary to main/slave_fw/ so it gets embedded in the next
+# TruMinus build.  Run this once (or whenever ESP-Hosted is upgraded), then
+# run 'make' to rebuild TruMinus with the new C6 firmware embedded.
+SLAVE_DIR := managed_components/espressif__esp_hosted/slave
+C6_FW_OUT := main/slave_fw/network_adapter.bin
+
+build-c6:
+	@echo "==> Building ESP-Hosted slave firmware for ESP32-C6 (WiFi + BLE)..."
+	cd $(SLAVE_DIR) && idf.py set-target esp32c6 && idf.py build
+	mkdir -p main/slave_fw
+	cp $(SLAVE_DIR)/build/network_adapter.bin $(C6_FW_OUT)
+	@echo "==> C6 firmware copied to $(C6_FW_OUT)"
+	@echo "==> Now run 'make' to rebuild TruMinus with the embedded C6 firmware."
+
+.PHONY: build flash flash-monitor monitor clean build-c6

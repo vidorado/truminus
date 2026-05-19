@@ -1,5 +1,15 @@
-# Explicit source list — only files ported to ESP-IDF.
-# Add here as each module is migrated from Arduino.
+# Embed C6 slave firmware if it has been built (run 'make build-c6' first).
+# When present the binary is streamed to the C6 co-processor at startup via
+# SDIO OTA if the version does not match the host ESP-Hosted library.
+set(C6_FW_BIN "${CMAKE_CURRENT_SOURCE_DIR}/slave_fw/network_adapter.bin")
+if(EXISTS "${C6_FW_BIN}")
+    set(C6_FW_EMBED "slave_fw/network_adapter.bin")
+    message(STATUS "TruMinus: C6 slave firmware found — will be embedded")
+else()
+    set(C6_FW_EMBED "")
+    message(STATUS "TruMinus: C6 slave firmware absent — run 'make build-c6' then rebuild")
+endif()
+
 idf_component_register(
     SRCS
         "main.cpp"
@@ -7,12 +17,17 @@ idf_component_register(
         "p4settings.cpp"
         "i18n.cpp"
         "lin_driver.cpp"
+        "wifi_manager.cpp"
+        "victronble.cpp"
+        "ultimatronble.cpp"
+        "c6_ota.cpp"
     INCLUDE_DIRS
         "."
     EMBED_FILES
         "font_regular.ttf"
         "font_bold.ttf"
         "font_icons.ttf"
+        ${C6_FW_EMBED}
     REQUIRES
         jc4880_bsp
         nvs_flash
@@ -22,9 +37,18 @@ idf_component_register(
         esp_driver_uart
         esp_driver_gpio
         esp_timer
+        esp_wifi
+        mbedtls
         freertos
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
     "-include" "${CMAKE_CURRENT_SOURCE_DIR}/dummy_flags.h"
 )
+
+if(EXISTS "${C6_FW_BIN}")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE C6_FW_AVAILABLE=1)
+endif()
+
+# ENABLE_BLE disabled: C6 firmware has hci_stub_drv with BT disabled.
+# To enable: reflash C6 via JP1 with ESP-Hosted slave + CONFIG_ESP_HOSTED_BT_SUPPORT=y
