@@ -54,6 +54,13 @@ SOLID_GLYPHS = {
     0xF06E: "eye               FA_EYE",
     0xF070: "eye-slash         FA_EYE_SLASH",
     0xF2F6: "right-to-bracket  FA_SIGN_IN",
+    # LVGL built-in symbols used by lv_keyboard (LV_SYMBOL_*)
+    # LV_SYMBOL_NEW_LINE (U+F8A2) is not in FA6 Free; it is aliased below to U+F2F6
+    # so the Enter key renders as the right-to-bracket arrow (user request).
+    0xF00C: "check             LV_SYMBOL_OK        (keyboard confirm / tick)",
+    0xF00D: "xmark             LV_SYMBOL_CLOSE     (keyboard close / X)",
+    0xF55A: "delete-left       LV_SYMBOL_BACKSPACE (keyboard backspace)",
+    0xF11C: "keyboard          LV_SYMBOL_KEYBOARD  (mode-switch button in all kb maps)",
 }
 
 # Glyphs from FA6 Brands — bluetooth is brand-only, not in Solid.
@@ -62,6 +69,8 @@ BRANDS_GLYPHS = {
 }
 
 ALL_GLYPHS = {**SOLID_GLYPHS, **BRANDS_GLYPHS}
+# Virtual alias verified separately (not in source fonts, added via cmap patch).
+ALIAS_GLYPHS = {0xF8A2: "enter arrow (aliased from U+F2F6)  LV_SYMBOL_NEW_LINE"}
 
 
 def subset_font(src: Path, codepoints: list, label: str) -> str:
@@ -93,6 +102,17 @@ def main():
     merged = merger.merge([solid_tmp, brands_tmp])
     merged.save(str(DST))
 
+    # Alias U+F8A2 (LV_SYMBOL_NEW_LINE) → same glyph as U+F2F6 (right-to-bracket).
+    # FA6 has no glyph at F8A2; this makes the keyboard Enter key render as the
+    # right-to-bracket arrow while LVGL's internal NEW_LINE logic still works.
+    out = TTFont(str(DST))
+    sign_in_glyph = out.getBestCmap().get(0xF2F6)
+    if sign_in_glyph:
+        for subtable in out['cmap'].tables:
+            if hasattr(subtable, 'cmap'):
+                subtable.cmap[0xF8A2] = sign_in_glyph
+        out.save(str(DST))
+
     # Verify
     out  = TTFont(str(DST))
     cmap = out.getBestCmap()
@@ -103,6 +123,11 @@ def main():
         found = cp in cmap
         src   = "brands" if cp in BRANDS_GLYPHS else "solid"
         print(f"  U+{cp:04X} [{src:6s}]  {'✓' if found else '✗ MISSING'}  {desc}")
+        if not found:
+            ok = False
+    for cp, desc in sorted(ALIAS_GLYPHS.items()):
+        found = cp in cmap
+        print(f"  U+{cp:04X} [alias ]  {'✓' if found else '✗ MISSING'}  {desc}")
         if not found:
             ok = False
     if not ok:
