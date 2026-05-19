@@ -1,8 +1,4 @@
 #pragma once
-#include <atomic>
-#include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
-#include "esp_http_server.h"
 
 #ifndef NO_MQTT
 #include "mqtt_client.h"
@@ -16,14 +12,8 @@ static constexpr char BaseTopicSet[]    = "truma/set";
 #define STATUS_OFFLINE "offline"
 #define STATUS_ONLINE  "online"
 
-// ── HTTP / WebSocket ──────────────────────────────────────────────────────
-extern httpd_handle_t httpServer;
-
-// Number of active WS connections (updated in webserver.cpp).
-extern std::atomic<int> wsClientCount;
-
-// Inter-task WS message queue (linBusTask/BLE → main-task drain).
-extern QueueHandle_t wsQueue;
+// HTTP / WebSocket globals (httpServer, wsClientCount, wsQueue) live in
+// webserver.hpp and are only declared when WEBSERVER is defined.
 
 // ── Home Assistant autodiscovery ──────────────────────────────────────────
 #define HA_DEVICE_ID           "truma_boiler_01"

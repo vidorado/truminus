@@ -1,288 +1,384 @@
 #include "webserver.hpp"
 #include "logs.hpp"
+
 #ifdef WEBSERVER
-#include <WiFi.h>
 
-// Static web files are embedded in flash as const uint8_t arrays generated
-// by scripts/compress_fs.py.  Each response uses ~100 B of heap (the
-// AsyncCallbackResponse object) instead of ~1500 B (AsyncFileResponse read
-// buffer) or the full file size (old malloc approach).  This eliminates the
-// OOM crashes that occurred when 6 concurrent HTTP requests exhausted the
-// ESP32 heap shared with LVGL, WiFi, MQTT y WebSocket.
-//
-// En C5 (8 MB PSRAM) tampoco usamos LittleFS para la web: AsyncTCP / AsyncWeb
-// reservan sus buffers en heap interno (DMA + mutex constraints), así que
-// servir desde LittleFS dispara igualmente OOM con 6+ requests paralelos.
-#include "webfiles.h"
 #include <atomic>
-#include <memory>
+#include <cstdio>
+#include <cstring>
+#include <sys/stat.h>
+#include <sys/param.h>          // MIN / MAX
+#include <sys/socket.h>         // shutdown / close
+#include <unistd.h>
+#include "cJSON.h"
+#include "esp_err.h"
+#include "esp_log.h"
+#include "esp_littlefs.h"
 
-// Soft cap on concurrent emitting responses. Browsers open up to 6 parallel
-// TCP connections to the same host; after a cache-bust all referenced
-// assets invalidate at once and the burst can pressure internal SRAM.
-//
-// We accept every request — rejecting with 503 is useless because browsers
-// do not retry sub-resources — and call send() immediately so the
-// framework does not 501 the handler. Backpressure happens inside the
-// chunk-fill callback: while too many responses are already emitting data,
-// the callback returns RESPONSE_TRY_AGAIN.
-//
-// Cap=4 (was 2): with LVGL pool moved to PSRAM the internal SRAM headroom
-// is comfortable (~60 KB at runtime), so two extra parallel responses
-// fit. Cap=2 was too tight under cache-bust reloads — 4 connections sat
-// in TRY_AGAIN long enough to interleave with the WebSocket handshake,
-// AsyncTCP's queue (CONFIG_ASYNC_TCP_QUEUE_SIZE=8) saturated, and the
-// largest response (the PNG, ~7 KB ungzipped) ended up truncated mid-
-// stream producing ERR_CONTENT_LENGTH_MISMATCH.
-//
-// The counter is only mutated from the async_tcp task (fill callback +
-// onDisconnect), so no mutex is needed beyond std::atomic for ordering.
-static constexpr int MAX_EMITTING_HTTP = 4;
-static std::atomic<int> s_emittingHttp{0};
+// ── Globals ──────────────────────────────────────────────────────────────────
 
-struct ChunkState {
-    const uint8_t* data;
-    size_t         size;
-    bool           acquired = false;   // true once a slot was reserved
-};
+httpd_handle_t   httpServer    = nullptr;
+QueueHandle_t    wsQueue       = nullptr;
+std::atomic<int> wsClientCount{0};
 
-static void sendMemFile(AsyncWebServerRequest* req,
-                        const uint8_t* data, size_t size,
-                        const char* ct, bool gzipped)
-{
-    auto state = std::make_shared<ChunkState>();
-    state->data = data;
-    state->size = size;
+static WsCommandCb    s_cmdCb  = nullptr;
+static WsConnectedCb s_connCb = nullptr;
+static bool           s_lfsMounted = false;
 
-    // Release the slot when the response finishes (sent OR aborted).
-    req->onDisconnect([state]() {
-        if (state->acquired) {
-            s_emittingHttp.fetch_sub(1, std::memory_order_release);
-            state->acquired = false;
-        }
-    });
+// Cross-task WebSocket broadcast queue.
+//   WS_QUEUE_LEN  — slots.  Initial-state burst is ~30 messages; size 48
+//                   keeps headroom for LIN/BLE updates piling in while
+//                   wsQueueDrain() is mid-drain.
+//   WS_QUEUE_MSG  — max payload bytes per message.  All current snapshots
+//                   (setpoint changes, frame publishers, snapshot JSON) fit
+//                   well under 256 B; reserve 256 to absorb future growth.
+static constexpr UBaseType_t WS_QUEUE_LEN = 48;
+static constexpr UBaseType_t WS_QUEUE_MSG = 256;
 
-    AsyncWebServerResponse* r = req->beginResponse(
-        ct, size,
-        [state](uint8_t* dst, size_t maxLen, size_t idx) -> size_t {
-            // First call: try to acquire a slot.
-            if (!state->acquired) {
-                int prev = s_emittingHttp.fetch_add(1, std::memory_order_acq_rel);
-                if (prev >= MAX_EMITTING_HTTP) {
-                    // No slot — back off and ask AsyncTCP to retry later.
-                    s_emittingHttp.fetch_sub(1, std::memory_order_release);
-                    return RESPONSE_TRY_AGAIN;
-                }
-                state->acquired = true;
-            }
-            // Emit data.
-            if (idx >= state->size) return 0;   // end of stream
-            size_t chunk = (maxLen < state->size - idx) ? maxLen : (state->size - idx);
-            memcpy(dst, state->data + idx, chunk);
-            return chunk;
-        });
-    if (!r) { req->send(503); return; }
-    if (gzipped) r->addHeader("Content-Encoding", "gzip");
-    // immutable: browsers will not revalidate during the max-age period,
-    // eliminating concurrent requests on page reload.
-    r->addHeader("Cache-Control", "max-age=31536000, immutable");
-    // Force-close each HTTP connection so the browser cannot keep 6 parallel
-    // TCP sockets open.  On ESP32 WROOM + BLE there is not enough contiguous
-    // heap to hold that many AsyncClient objects simultaneously.
-    r->addHeader("Connection", "close");
-    req->send(r);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// WebSocket
-// ═════════════════════════════════════════════════════════════════════════════
-void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
-  AwsFrameInfo *info = (AwsFrameInfo*)arg;
-  if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-    data[len] = 0;
-    String message = (char*)data;
-    LOG_WEB_P("Received websocket message ");
-    LOG_WEB_PL(message);
-    if (message=="settings") {
-      // Drain any pending bus messages before sending the init burst,
-      // so we don't compete with queued traffic for the per-client queue.
-      wsQueueDrain();
-      if (wsConn!=NULL) { wsConn(); }
-      return;
-    }
-    if (message=="ping") {
-      if (wsCb!=NULL) { wsCb("/ping","1"); }
-      return;
-    }
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, message);
-    if (error.code()==DeserializationError::Ok) {
-      const char *id=doc["id"];
-      const char *value=doc["value"];
-      if (id && value) {
-        if (wsCb!=NULL) { wsCb(id,value); }
-      } else {
-        LOG_WEB_PL("missing id or value");
-      }
-    } else {
-      LOG_WEB_P("Error decoding json: ");
-      LOG_WEB_PL(error.c_str());
-    }
-  }
-}
-
-// Cap the number of concurrent WebSocket clients. Each client costs ~10 KB of
-// heap (AsyncTCP control + send/recv buffers). Cap 4 leaves room for browser
-// reload overlaps (old WS not yet GC'd while new one opens) without evicting.
-// With LVGL pool in PSRAM and BLE memory in check there is enough internal
-// SRAM (~60 KB at runtime) to host 4 clients on C5.
+// Cap on simultaneous WebSocket clients.  esp_http_server reserves one task
+// slot per concurrent request; each open WS uses ~6 KB of internal SRAM
+// (control block + recv buffer).  4 leaves room for one reload overlap on a
+// machine that already has BLE + WiFi-via-C6 + LVGL running.
 static constexpr uint8_t WS_MAX_CLIENTS = 4;
 
-void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
-             AwsEventType type, void *arg, uint8_t *data, size_t len) {
-  switch (type) {
-    case WS_EVT_CONNECT:
-      wsClientCount.fetch_add(1);
-      if (wsClientCount.load() > WS_MAX_CLIENTS) {
-        LOG_WEB_PF("WebSocket client #%u rejected (max %u)\n",
-                      client->id(), WS_MAX_CLIENTS);
-        client->close(1013, "busy");
-        wsClientCount.fetch_sub(1);
-        break;
-      }
-      LOG_WEB_PF("WebSocket client #%u connected from %s  heap=%u\n",
-                    client->id(), client->remoteIP().toString().c_str(),
-                    ESP.getFreeHeap());
-      if (wsCb!=NULL) { wsCb("/ping","1"); }
-      break;
-    case WS_EVT_DISCONNECT:
-      if (wsClientCount.load() > 0) wsClientCount.fetch_sub(1);
-      LOG_WEB_PF("WebSocket client #%u disconnected  heap=%u\n",
-                    client->id(), ESP.getFreeHeap());
-      break;
-    case WS_EVT_DATA:
-      handleWebSocketMessage(arg, data, len);
-      break;
-    case WS_EVT_PONG:
-    case WS_EVT_ERROR:
-      break;
-  }
+static const char* TAG = "web";
+
+// ── LittleFS mount ───────────────────────────────────────────────────────────
+
+esp_err_t mountWebFs() {
+    if (s_lfsMounted) return ESP_OK;
+
+    esp_vfs_littlefs_conf_t conf = {};
+    conf.base_path              = "/littlefs";
+    conf.partition_label        = "littlefs";
+    conf.format_if_mount_failed = false;
+    conf.dont_mount             = false;
+
+    esp_err_t err = esp_vfs_littlefs_register(&conf);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "littlefs mount failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    size_t total = 0, used = 0;
+    esp_littlefs_info(conf.partition_label, &total, &used);
+    ESP_LOGI(TAG, "LittleFS mounted: %u / %u bytes used",
+             (unsigned)used, (unsigned)total);
+
+    s_lfsMounted = true;
+    return ESP_OK;
 }
 
-void initWebSocket() {
-  ws.onEvent(onEvent);
-  server.addHandler(&ws);
+// ── HTTP static file serving ─────────────────────────────────────────────────
+
+// MIME table.  Anything not listed falls back to application/octet-stream.
+struct MimeEntry { const char* ext; const char* type; };
+static const MimeEntry s_mime[] = {
+    {".html", "text/html; charset=utf-8"},
+    {".htm",  "text/html; charset=utf-8"},
+    {".css",  "text/css; charset=utf-8"},
+    {".js",   "application/javascript; charset=utf-8"},
+    {".json", "application/json"},
+    {".png",  "image/png"},
+    {".jpg",  "image/jpeg"},
+    {".jpeg", "image/jpeg"},
+    {".gif",  "image/gif"},
+    {".svg",  "image/svg+xml"},
+    {".ico",  "image/x-icon"},
+    {".woff", "font/woff"},
+    {".woff2","font/woff2"},
+    {".ttf",  "font/ttf"},
+    {".txt",  "text/plain; charset=utf-8"},
+};
+
+static const char* mimeOf(const char* path) {
+    const char* dot = strrchr(path, '.');
+    if (!dot) return "application/octet-stream";
+    for (const auto& m : s_mime) {
+        if (strcasecmp(dot, m.ext) == 0) return m.type;
+    }
+    return "application/octet-stream";
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// Thread-safe WS queue (Core 0 -> Core 1)
-// ═════════════════════════════════════════════════════════════════════════════
+// Serve a file from /littlefs/<rel>, streaming in 1 KB chunks to keep peak
+// heap usage flat regardless of asset size.  Adds Cache-Control: immutable
+// to match the cache_bust.py querystring strategy.  If the asset is gzipped
+// on disk (a sibling .gz exists), the gzipped variant is preferred and
+// Content-Encoding is set automatically.
+static esp_err_t serveFile(httpd_req_t* req, const char* relpath) {
+    char fs_path[160];
+    snprintf(fs_path, sizeof(fs_path), "/littlefs/%s", relpath);
 
-// Inter-task queue between async_tcp publishers and loopTask drain.
-// 32 slots: wsConnected() bursts ~25-30 messages (setpoints + frame
-// publishers + master frames + solar/batt) in a single async_tcp run
-// before loopTask gets to drain. With queue=4 the tail of that burst
-// was silently dropped, leaving the page missing room_temp / water_temp
-// / heartbeat etc. until the next value change. ~4.5 KB cost is fine
-// now that LVGL pool sits in PSRAM.
-static constexpr uint8_t  WS_QUEUE_LEN  = 32;
-static constexpr uint16_t WS_QUEUE_SIZE = 150;
+    // Prefer pre-gzipped variant if present (e.g. script.js.gz).
+    char gz_path[170];
+    snprintf(gz_path, sizeof(gz_path), "%s.gz", fs_path);
 
-bool wsQueueSend(const char* msg)
-{
+    bool   gzipped = false;
+    FILE*  f       = fopen(gz_path, "rb");
+    if (f) {
+        gzipped = true;
+    } else {
+        f = fopen(fs_path, "rb");
+    }
+    if (!f) {
+        ESP_LOGW(TAG, "404: %s", fs_path);
+        httpd_resp_set_status(req, "404 Not Found");
+        httpd_resp_send(req, "Not Found", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    httpd_resp_set_type(req, mimeOf(relpath));
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=31536000, immutable");
+    if (gzipped) {
+        httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    }
+
+    // Stream in fixed-size chunks (smaller than IDF default 16 KB scratch).
+    static constexpr size_t CHUNK = 1024;
+    char buf[CHUNK];
+    size_t n;
+    esp_err_t err = ESP_OK;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        if (httpd_resp_send_chunk(req, buf, n) != ESP_OK) {
+            err = ESP_FAIL;
+            break;
+        }
+    }
+    fclose(f);
+    httpd_resp_send_chunk(req, nullptr, 0);     // end of stream
+    return err;
+}
+
+static esp_err_t rootGetHandler(httpd_req_t* req) {
+    return serveFile(req, "index.html");
+}
+
+// Catch-all: serve /<path> from LittleFS.  Skips paths that contain ".." so
+// callers cannot escape the partition root.
+static esp_err_t staticGetHandler(httpd_req_t* req) {
+    const char* uri = req->uri;
+    if (!uri || uri[0] != '/') {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_send(req, "Bad URI", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+    // Strip query string.
+    char rel[128];
+    const char* q = strchr(uri, '?');
+    size_t len = q ? (size_t)(q - uri - 1) : strlen(uri + 1);
+    if (len >= sizeof(rel)) len = sizeof(rel) - 1;
+    memcpy(rel, uri + 1, len);
+    rel[len] = '\0';
+
+    if (rel[0] == '\0') return rootGetHandler(req);
+    if (strstr(rel, "..")) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_send(req, "Bad URI", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+    return serveFile(req, rel);
+}
+
+// ── WebSocket ────────────────────────────────────────────────────────────────
+
+// Handle a single incoming WS frame.  esp_http_server invokes this same URI
+// handler for the upgrade handshake (req->method == HTTP_GET) and for every
+// subsequent frame (req->method == HTTP_GET still, but is_websocket already
+// negotiated); we differentiate by examining ws_pkt.type.
+static esp_err_t wsHandler(httpd_req_t* req) {
+    // Handshake leg: no frame to read yet.
+    if (req->method == HTTP_GET) {
+        int prev = wsClientCount.fetch_add(1, std::memory_order_acq_rel);
+        if (prev >= WS_MAX_CLIENTS) {
+            wsClientCount.fetch_sub(1, std::memory_order_release);
+            ESP_LOGW(TAG, "WS reject: %u clients already connected", (unsigned)prev);
+            httpd_resp_set_status(req, "503 Service Unavailable");
+            httpd_resp_send(req, "busy", HTTPD_RESP_USE_STRLEN);
+            return ESP_FAIL;
+        }
+        ESP_LOGI(TAG, "WS handshake (clients=%d)", wsClientCount.load());
+        return ESP_OK;
+    }
+
+    httpd_ws_frame_t frame = {};
+    frame.type = HTTPD_WS_TYPE_TEXT;
+
+    // First call with payload=null + len=0 returns the incoming length.
+    esp_err_t err = httpd_ws_recv_frame(req, &frame, 0);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "ws_recv_frame len: %s", esp_err_to_name(err));
+        return err;
+    }
+    if (frame.len == 0) return ESP_OK;
+    if (frame.len >= WS_QUEUE_MSG) {
+        ESP_LOGW(TAG, "ws frame too long (%u)", (unsigned)frame.len);
+        return ESP_OK;
+    }
+
+    uint8_t buf[WS_QUEUE_MSG];
+    frame.payload = buf;
+    err = httpd_ws_recv_frame(req, &frame, frame.len);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "ws_recv_frame data: %s", esp_err_to_name(err));
+        return err;
+    }
+    buf[frame.len] = '\0';
+
+    if (frame.type != HTTPD_WS_TYPE_TEXT) return ESP_OK;
+
+    const char* msg = (const char*)buf;
+    if (strcmp(msg, "ping") == 0) {
+        if (s_cmdCb) s_cmdCb("/ping", "1");
+        return ESP_OK;
+    }
+    if (strcmp(msg, "settings") == 0) {
+        // Drain any queued frames first so we don't fight with them for the
+        // per-client send window.
+        wsQueueDrain();
+        if (s_connCb) s_connCb();
+        return ESP_OK;
+    }
+
+    cJSON* root = cJSON_Parse(msg);
+    if (!root) {
+        ESP_LOGW(TAG, "ws json parse failed: %s", msg);
+        return ESP_OK;
+    }
+    const cJSON* jid = cJSON_GetObjectItemCaseSensitive(root, "id");
+    const cJSON* jvl = cJSON_GetObjectItemCaseSensitive(root, "value");
+    if (cJSON_IsString(jid) && cJSON_IsString(jvl) && s_cmdCb) {
+        s_cmdCb(jid->valuestring, jvl->valuestring);
+    } else {
+        ESP_LOGW(TAG, "ws missing id/value: %s", msg);
+    }
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+// Track disconnects via the httpd close_fn hook so wsClientCount stays
+// accurate.  esp_http_server invokes this for every socket close — both
+// plain HTTP and WebSocket — so we discriminate by querying the session
+// type.  Signature: void(*)(httpd_handle_t, int).
+static void onHttpdClose(httpd_handle_t hd, int sockfd) {
+    if (httpd_ws_get_fd_info(hd, sockfd) == HTTPD_WS_CLIENT_WEBSOCKET) {
+        if (wsClientCount.load() > 0) {
+            wsClientCount.fetch_sub(1, std::memory_order_release);
+        }
+        ESP_LOGI(TAG, "WS close (clients=%d)", wsClientCount.load());
+    }
+    // Default close behaviour: shutdown + close the fd.
+    shutdown(sockfd, SHUT_RDWR);
+    close(sockfd);
+}
+
+// ── Broadcast queue ──────────────────────────────────────────────────────────
+
+bool wsQueueSend(const char* msg) {
     if (!wsQueue || !msg) return false;
     size_t len = strlen(msg);
-    if (len >= WS_QUEUE_SIZE) len = WS_QUEUE_SIZE - 1;
-    char buf[WS_QUEUE_SIZE];
+    if (len >= WS_QUEUE_MSG) len = WS_QUEUE_MSG - 1;
+    char buf[WS_QUEUE_MSG];
     memcpy(buf, msg, len);
     buf[len] = '\0';
     return xQueueSend(wsQueue, buf, 0) == pdTRUE;
 }
 
-void wsQueueDrain()
-{
-    if (!wsQueue) return;
-    char buf[WS_QUEUE_SIZE];
+void wsQueueDrain() {
+    if (!wsQueue || !httpServer) return;
+    if (wsClientCount.load() == 0) {
+        // Fast path: discard pending messages — no client to receive them.
+        char tmp[WS_QUEUE_MSG];
+        while (xQueueReceive(wsQueue, tmp, 0) == pdTRUE) { /* drop */ }
+        return;
+    }
+
+    char buf[WS_QUEUE_MSG];
     while (xQueueReceive(wsQueue, buf, 0) == pdTRUE) {
-        ws.textAll(buf);
+        size_t fds_count = WS_MAX_CLIENTS;
+        int fds[WS_MAX_CLIENTS];
+        if (httpd_get_client_list(httpServer, &fds_count, fds) != ESP_OK) continue;
+
+        httpd_ws_frame_t frame = {};
+        frame.type    = HTTPD_WS_TYPE_TEXT;
+        frame.payload = (uint8_t*)buf;
+        frame.len     = strlen(buf);
+        for (size_t i = 0; i < fds_count; i++) {
+            // Skip non-WebSocket sessions (plain HTTP sockets are also listed).
+            if (httpd_ws_get_fd_info(httpServer, fds[i]) != HTTPD_WS_CLIENT_WEBSOCKET) {
+                continue;
+            }
+            esp_err_t e = httpd_ws_send_frame_async(httpServer, fds[i], &frame);
+            if (e != ESP_OK) {
+                ESP_LOGD(TAG, "ws_send fd=%d err=%s", fds[i], esp_err_to_name(e));
+            }
+        }
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// StartServer
-// ═════════════════════════════════════════════════════════════════════════════
-void StartServer(WebsocketCallback cb, WebsocketConnected conn) {
-  Serial.println("[web] StartServer: entering");
-  wsCb   = cb;
-  wsConn = conn;
+// ── Lifecycle ────────────────────────────────────────────────────────────────
 
-  // Create the cross-core WS message queue once.
-  if (!wsQueue) {
-    wsQueue = xQueueCreate(WS_QUEUE_LEN, WS_QUEUE_SIZE);
-    Serial.printf("[web] wsQueue created (%d slots x %d bytes)\n", WS_QUEUE_LEN, WS_QUEUE_SIZE);
-  }
+esp_err_t startWebServer(WsCommandCb cb, WsConnectedCb conn) {
+    if (httpServer) return ESP_OK;
 
-  initWebSocket();
-  Serial.println("[web] initWebSocket done");
+    s_cmdCb  = cb;
+    s_connCb = conn;
 
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendMemFile(r, wf_index_html, wf_index_html_size, "text/html", wf_index_html_gzipped);
-  });
-  server.on("/index.html", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendMemFile(r, wf_index_html, wf_index_html_size, "text/html", wf_index_html_gzipped);
-  });
-  server.on("/styles.css", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendMemFile(r, wf_styles_css, wf_styles_css_size, "text/css", wf_styles_css_gzipped);
-  });
-  server.on("/script.js", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendMemFile(r, wf_script_js, wf_script_js_size, "application/javascript", wf_script_js_gzipped);
-  });
-  server.on("/errors.js", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendMemFile(r, wf_errors_js, wf_errors_js_size, "application/javascript", wf_errors_js_gzipped);
-  });
-  server.on("/i18n.js", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendMemFile(r, wf_i18n_js, wf_i18n_js_size, "application/javascript", wf_i18n_js_gzipped);
-  });
-  server.on("/reconnecting-websocket.min.js", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendMemFile(r, wf_reconnecting_websocket_min_js,
-                   wf_reconnecting_websocket_min_js_size, "application/javascript",
-                   wf_reconnecting_websocket_min_js_gzipped);
-  });
-  server.on("/fa-subset.woff", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendMemFile(r, wf_fa_subset_woff, wf_fa_subset_woff_size, "font/woff", wf_fa_subset_woff_gzipped);
-  });
-  server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendMemFile(r, wf_favicon_ico, wf_favicon_ico_size, "image/x-icon", wf_favicon_ico_gzipped);
-  });
-  server.on("/truminus-logo.png", HTTP_GET, [](AsyncWebServerRequest* r) {
-    sendMemFile(r, wf_truminus_logo_png, wf_truminus_logo_png_size, "image/png", wf_truminus_logo_png_gzipped);
-  });
+    if (!wsQueue) {
+        wsQueue = xQueueCreate(WS_QUEUE_LEN, WS_QUEUE_MSG);
+        if (!wsQueue) {
+            ESP_LOGE(TAG, "wsQueue alloc failed");
+            return ESP_ERR_NO_MEM;
+        }
+    }
 
-  server.on("/fscheck", HTTP_GET, [](AsyncWebServerRequest* req) {
-    String body = "Heap libre: " + String(ESP.getFreeHeap()) + " B\n";
-    #ifdef CYD_C5
-    body += "PSRAM libre: " + String(ESP.getFreePsram()) + " B\n";
-    #endif
-    body += "Web files served from flash (embedded).\n";
-    req->send(200, "text/plain", body);
-  });
+    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    cfg.server_port      = 80;
+    cfg.max_open_sockets = 7;       // WS clients (4) + parallel asset GETs.
+    cfg.max_uri_handlers = 8;
+    cfg.stack_size       = 8192;
+    cfg.lru_purge_enable = true;
+    cfg.uri_match_fn     = httpd_uri_match_wildcard;
+    cfg.close_fn         = onHttpdClose;
 
-  server.onNotFound([](AsyncWebServerRequest* req) {
-    LOG_WEB_PF("[404] %s\n", req->url().c_str());
-    req->send(404, "text/plain", "Not found");
-  });
+    esp_err_t err = httpd_start(&httpServer, &cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "httpd_start failed: %s", esp_err_to_name(err));
+        httpServer = nullptr;
+        return err;
+    }
 
-  // DEBUG: log every incoming request before routing (helps diagnose
-  // "no response at all" situations).
-  server.on("/_alive", HTTP_GET, [](AsyncWebServerRequest* req) {
-    LOG_WEB_PL("[web] /_alive hit");
-    req->send(200, "text/plain", "alive");
-  });
+    // WebSocket endpoint first so it matches before the wildcard static
+    // handler (LIFO would also work, but explicit order is clearer).
+    httpd_uri_t ws_uri = {};
+    ws_uri.uri               = "/ws";
+    ws_uri.method            = HTTP_GET;
+    ws_uri.handler           = wsHandler;
+    ws_uri.is_websocket      = true;
+    ws_uri.handle_ws_control_frames = false;
+    httpd_register_uri_handler(httpServer, &ws_uri);
 
-  server.begin();
-  Serial.print("[web] server.begin() done — listening on http://");
-  Serial.print(WiFi.localIP().toString().c_str());
-  Serial.println("/");
+    httpd_uri_t root_uri = {};
+    root_uri.uri     = "/";
+    root_uri.method  = HTTP_GET;
+    root_uri.handler = rootGetHandler;
+    httpd_register_uri_handler(httpServer, &root_uri);
+
+    httpd_uri_t any_uri = {};
+    any_uri.uri     = "/*";
+    any_uri.method  = HTTP_GET;
+    any_uri.handler = staticGetHandler;
+    httpd_register_uri_handler(httpServer, &any_uri);
+
+    ESP_LOGI(TAG, "web server up on :80 (LittleFS-backed)");
+    return ESP_OK;
 }
 
-#endif
+void stopWebServer() {
+    if (!httpServer) return;
+    httpd_stop(httpServer);
+    httpServer = nullptr;
+    s_cmdCb  = nullptr;
+    s_connCb = nullptr;
+}
+
+#endif // WEBSERVER
