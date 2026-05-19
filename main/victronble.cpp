@@ -3,51 +3,65 @@
 #include "logs.hpp"
 #include <math.h>
 #if defined(ENABLE_BLE)
-#include <Preferences.h>
 #include <NimBLEDevice.h>
-#include <mbedtls/aes.h>
+#include "aes/esp_aes.h"
 #include <esp_heap_caps.h>
+#include "nvs.h"
+#include "esp_timer.h"
+#include <string.h>
+#include <algorithm>
+
+static inline uint32_t millis() { return (uint32_t)(esp_timer_get_time() / 1000ULL); }
 
 // ── NVS ───────────────────────────────────────────────────────────────────
 static const char* NVS_NS   = "solar";
-static const char* NVS_ADDR = "addr";   // 12 uppercase hex chars, no separators
-static const char* NVS_KEY  = "key";    // 32 uppercase hex chars
+static const char* NVS_ADDR = "addr";
+static const char* NVS_KEY  = "key";
 
-bool victronLoadConfig(String& addr, String& key) {
-    Preferences p;
-    p.begin(NVS_NS, true);
-    if (!p.isKey(NVS_ADDR)) { p.end(); return false; }
-    addr = p.getString(NVS_ADDR, "");
-    key  = p.getString(NVS_KEY,  "");
-    p.end();
-    return addr.length() == 12 && key.length() == 32;
+bool victronLoadConfig(std::string& addr, std::string& key) {
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
+    char buf[64] = {};
+    size_t len = sizeof(buf);
+    esp_err_t err = nvs_get_str(h, NVS_ADDR, buf, &len);
+    if (err != ESP_OK) { nvs_close(h); return false; }
+    addr = buf;
+    len = sizeof(buf); buf[0] = '\0';
+    nvs_get_str(h, NVS_KEY, buf, &len);
+    key = buf;
+    nvs_close(h);
+    return addr.size() == 12 && key.size() == 32;
 }
 
-void victronSaveConfig(const String& addr, const String& key) {
-    Preferences p;
-    p.begin(NVS_NS, false);
-    p.putString(NVS_ADDR, addr);
-    p.putString(NVS_KEY,  key);
-    p.end();
+void victronSaveConfig(const std::string& addr, const std::string& key) {
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_str(h, NVS_ADDR, addr.c_str());
+    nvs_set_str(h, NVS_KEY,  key.c_str());
+    nvs_commit(h);
+    nvs_close(h);
 }
 
 // ── Module state ──────────────────────────────────────────────────────────
-static bool          s_configured = false;
-static uint8_t       s_aesKey[16] = {};   // decoded from 32-char hex
-static String        s_targetAddr;        // 12 uppercase hex chars (no colons)
+static bool          s_configured      = false;
+static uint8_t       s_aesKey[16]      = {};
+static std::string   s_targetAddr;
 
-static SemaphoreHandle_t s_dataMux = nullptr;
-static VictronData       s_data    = {};
+static SemaphoreHandle_t s_dataMux      = nullptr;
+static VictronData       s_data         = {};
 
-static NimBLEScan*   s_bleScan      = nullptr;
-static TaskHandle_t  s_bleTaskHandle = nullptr;
-static volatile bool s_aggressive   = true;   // default: fast scan
-static volatile bool s_bleStopped   = false;  // true when stop() called
-static volatile bool s_bleSuspended = false;  // true when another task needs RF
+static NimBLEScan*   s_bleScan          = nullptr;
+static TaskHandle_t  s_bleTaskHandle    = nullptr;
+static volatile bool s_aggressive       = true;
+static volatile bool s_bleStopped       = false;
+static volatile bool s_bleSuspended     = false;
+static volatile bool s_supervisorInScan = false;
+static volatile bool s_nimbleUp         = false;
+static volatile bool s_discoveryRunning = false;
 
 // ── Hex helpers ───────────────────────────────────────────────────────────
-static bool hexToBytes(const String& hex, uint8_t* out, int len) {
-    if ((int)hex.length() < len * 2) return false;
+static bool hexToBytes(const std::string& hex, uint8_t* out, int len) {
+    if ((int)hex.size() < len * 2) return false;
     for (int i = 0; i < len; i++) {
         auto nibble = [](char c) -> int {
             if (c >= '0' && c <= '9') return c - '0';
@@ -63,86 +77,49 @@ static bool hexToBytes(const String& hex, uint8_t* out, int len) {
     return true;
 }
 
-// Strip colons and uppercase — "aa:bb:cc:dd:ee:ff" → "AABBCCDDEEFF"
-static String normaliseAddr(const std::string& raw) {
-    String s;
+static std::string normaliseAddr(const std::string& raw) {
+    std::string s;
     for (char c : raw) {
         if (c != ':') s += (char)toupper((unsigned char)c);
     }
     return s;
 }
 
-// ── AES-128-CTR decrypt via mbedtls ──────────────────────────────────────
+// ── AES-128-CTR decrypt ───────────────────────────────────────────────────
 static bool aesCtrDecrypt(const uint8_t* cipher, int len,
                           uint8_t iv0, uint8_t iv1, uint8_t* out) {
-    mbedtls_aes_context ctx;
-    mbedtls_aes_init(&ctx);
-    if (mbedtls_aes_setkey_enc(&ctx, s_aesKey, 128) != 0) {
-        mbedtls_aes_free(&ctx);
+    esp_aes_context ctx;
+    esp_aes_init(&ctx);
+    if (esp_aes_setkey(&ctx, s_aesKey, 128) != 0) {
+        esp_aes_free(&ctx);
         return false;
     }
     uint8_t nonce[16]        = {};
     uint8_t stream_block[16] = {};
     size_t  nc_off           = 0;
-    nonce[0] = iv0;
-    nonce[1] = iv1;
-    int ret = mbedtls_aes_crypt_ctr(&ctx, (size_t)len, &nc_off,
-                                    nonce, stream_block, cipher, out);
-    mbedtls_aes_free(&ctx);
+    nonce[0] = iv0; nonce[1] = iv1;
+    int ret = esp_aes_crypt_ctr(&ctx, (size_t)len, &nc_off,
+                                nonce, stream_block, cipher, out);
+    esp_aes_free(&ctx);
     return ret == 0;
 }
 
-// ── Parse manufacturer-specific advertisement data ────────────────────────
-// Victron "Instant Readout" format — only present in SCAN RESPONSE (active scan).
-// Bleak strips the company ID, so relative to raw NimBLE getManufacturerData():
-//   [0-1]  Company ID  0xE1 0x02  (stripped by bleak, kept by NimBLE)
-//   [2]    0x10  — Instant Readout marker  (= data[0] in Python library)
-//   [3]    prefix hi byte
-//   [4-5]  Model ID (LE)
-//   [6]    Readout type (0x01 = solar charger)
-//   [7-8]  IV (little-endian 16-bit counter)
-//   [9]    Key-check byte — must equal key[0]
-//   [10-N] AES-128-CTR ciphertext (first 16 bytes used)
-//
-// Decrypted output (LSB-first bit packing, same layout as Python solar_charger.py):
-//   [0]    Device state
-//   [1]    Error code
-//   [2-3]  Battery voltage  (int16 LE, ÷100 → V,  0x7FFF = invalid)
-//   [4-5]  Battery current  (int16 LE, ÷10 → A,   0x7FFF = invalid)
-//   [6-7]  Yield today      (uint16 LE, ×10 → Wh)
-//   [8-9]  PV power         (uint16 LE, W)
+// ── Parse Victron Instant Readout advertisement ───────────────────────────
 static void parseMfrData(const uint8_t* mfr, int len) {
-    if (len < 18) {
-        LOG_BLE_PF("[ble] adv too short len=%d (need >=18)\n", len);
-        return;
-    }
-    if (mfr[0] != 0xE1 || mfr[1] != 0x02) {
-        LOG_BLE_PF("[ble] adv bad company id %02X %02X (want E1 02)\n", mfr[0], mfr[1]);
-        return;
-    }
-    if (mfr[2] != 0x10) {
-        LOG_BLE_PF("[ble] adv not Instant Readout marker=%02X (want 10)\n", mfr[2]);
-        return;   // Instant Readout marker — only in SCAN_RSP
-    }
-
-    // Key-check byte: must match key[0] before attempting decryption
-    if (mfr[9] != s_aesKey[0]) {
-        LOG_BLE_PF("[ble] key mismatch adv=%02X cfg=%02X\n", mfr[9], s_aesKey[0]);
-        return;
-    }
+    if (len < 18) return;
+    if (mfr[0] != 0xE1 || mfr[1] != 0x02) return;
+    if (mfr[2] != 0x10) return;
+    if (mfr[9] != s_aesKey[0]) return;
 
     uint8_t out[16] = {};
-    if (!aesCtrDecrypt(mfr + 10, 16, mfr[7], mfr[8], out)) {
-        LOG_BLE_PL("[ble] AES decrypt failed");
-        return;
-    }
+    if (!aesCtrDecrypt(mfr + 10, 16, mfr[7], mfr[8], out)) return;
 
-    int16_t  rawV  = (int16_t)((uint16_t)out[2] | ((uint16_t)out[3] << 8));
-    int16_t  rawA  = (int16_t)((uint16_t)out[4] | ((uint16_t)out[5] << 8));
+    int16_t  rawV   = (int16_t)((uint16_t)out[2] | ((uint16_t)out[3] << 8));
+    int16_t  rawA   = (int16_t)((uint16_t)out[4] | ((uint16_t)out[5] << 8));
     uint16_t rawKwh = (uint16_t)out[6] | ((uint16_t)out[7] << 8);
     uint16_t rawPv  = (uint16_t)out[8] | ((uint16_t)out[9] << 8);
 
-    if (rawV == 0x7FFF) return;   // sentinel — no data yet
+    if (rawV == 0x7FFF) return;
 
     VictronData d;
     d.state    = out[0];
@@ -159,145 +136,206 @@ static void parseMfrData(const uint8_t* mfr, int len) {
     if (s_dataMux) xSemaphoreGive(s_dataMux);
 }
 
-// ── BLE callback ──────────────────────────────────────────────────────────
+// ── Victron scan callback (continuous monitoring) ─────────────────────────
 class VictronScanCb : public NimBLEScanCallbacks {
     void onResult(const NimBLEAdvertisedDevice* dev) override {
         if (!dev->haveManufacturerData()) return;
-
-        // Filter by MAC if configured
-        if (s_targetAddr.length() > 0) {
-            String devAddr = normaliseAddr(dev->getAddress().toString());
+        if (s_targetAddr.size() > 0) {
+            std::string devAddr = normaliseAddr(dev->getAddress().toString());
             if (devAddr != s_targetAddr) return;
         }
-
         std::string raw = dev->getManufacturerData();
-        const uint8_t* mfr = (const uint8_t*)raw.data();
-        int mlen = (int)raw.size();
-
-        LOG_BLE_PF("[ble] adv from %s len=%d head=%02X%02X%02X\n",
-                      dev->getAddress().toString().c_str(), mlen,
-                      mlen > 0 ? mfr[0] : 0,
-                      mlen > 1 ? mfr[1] : 0,
-                      mlen > 2 ? mfr[2] : 0);
-
-        parseMfrData(mfr, mlen);
+        parseMfrData((const uint8_t*)raw.data(), (int)raw.size());
     }
 };
 
+// ── Discovery scan callback (one-shot for settings UI) ────────────────────
+#define MAX_DISCOVERED 24
+static BleDevice s_disc[MAX_DISCOVERED];
+static int       s_discCount = 0;
+
+class DiscoveryScanCb : public NimBLEScanCallbacks {
+    bool _victronOnly;
+public:
+    explicit DiscoveryScanCb(bool victronOnly) : _victronOnly(victronOnly) {}
+    void onResult(const NimBLEAdvertisedDevice* dev) override {
+        if (s_discCount >= MAX_DISCOVERED) return;
+        std::string mac = normaliseAddr(dev->getAddress().toString());
+        // Deduplicate
+        for (int i = 0; i < s_discCount; i++) {
+            if (mac == s_disc[i].mac) return;
+        }
+        bool isVictron = false;
+        if (dev->haveManufacturerData()) {
+            const std::string& mfr = dev->getManufacturerData();
+            if (mfr.size() >= 2 &&
+                (uint8_t)mfr[0] == 0xE1 && (uint8_t)mfr[1] == 0x02) {
+                isVictron = true;
+            }
+        }
+        if (isVictron != _victronOnly) return;
+
+        BleDevice& d = s_disc[s_discCount++];
+        if (dev->haveName() && dev->getName().size() > 0) {
+            strncpy(d.name, dev->getName().c_str(), sizeof(d.name) - 1);
+        } else {
+            strncpy(d.name, dev->getAddress().toString().c_str(), sizeof(d.name) - 1);
+        }
+        d.name[sizeof(d.name) - 1] = '\0';
+        strncpy(d.mac, mac.c_str(), sizeof(d.mac) - 1);
+        d.mac[sizeof(d.mac) - 1] = '\0';
+        d.is_victron = isVictron;
+    }
+};
+
+struct DiscoveryScanArgs {
+    BleDiscoveryCb cb;
+    void*          user;
+    uint32_t       duration_ms;
+    bool           victron_only;
+};
+
+static void discovery_scan_task(void* arg) {
+    auto* a = (DiscoveryScanArgs*)arg;
+    BleDiscoveryCb cb          = a->cb;
+    void*          user        = a->user;
+    uint32_t       duration_ms = a->duration_ms;
+    bool           vo          = a->victron_only;
+    free(a);
+
+    // Wait for any in-progress supervisor scan to finish (max 6 s).
+    for (int i = 0; i < 60 && s_supervisorInScan; i++) vTaskDelay(pdMS_TO_TICKS(100));
+
+    // Init NimBLE if not already up.
+    if (!s_nimbleUp) {
+        NimBLEDevice::init("");
+        s_nimbleUp = true;
+    }
+
+    s_discCount = 0;
+    memset(s_disc, 0, sizeof(s_disc));
+
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    scan->setScanCallbacks(new DiscoveryScanCb(vo), true);
+    scan->setActiveScan(true);
+    scan->setInterval(160);
+    scan->setWindow(80);
+    scan->setMaxResults(0);
+    scan->clearResults();
+    scan->start(duration_ms, false);
+
+    // Restore supervisor's scan callback (if configured).
+    if (s_configured && s_bleScan) {
+        scan->setScanCallbacks(new VictronScanCb(), true);
+    } else {
+        scan->setScanCallbacks(nullptr, false);
+    }
+
+    cb(s_disc, s_discCount, user);
+    s_discoveryRunning = false;
+    vTaskDelete(nullptr);
+}
+
+void bleDiscoveryScan(bool victron_only, BleDiscoveryCb cb, void* user, uint32_t duration_ms) {
+    if (s_discoveryRunning) { cb(nullptr, 0, user); return; }
+    s_discoveryRunning = true;
+
+    auto* a           = (DiscoveryScanArgs*)malloc(sizeof(DiscoveryScanArgs));
+    a->cb             = cb;
+    a->user           = user;
+    a->duration_ms    = duration_ms;
+    a->victron_only   = victron_only;
+    xTaskCreate(discovery_scan_task, "ble_disc", 8192, a, 2, nullptr);
+}
+
 // ── BLE supervisor task ───────────────────────────────────────────────────
-// NimBLE is initialised once in setup() (controller buffers stay allocated
-// permanently — ~37 KB of internal SRAM is paid up-front). The supervisor
-// only orchestrates burst scan + Ultimatron poll cycles:
-//
-//   1. Active scan 5 s            → Victron Instant Readout
-//   2. ultimatronPollOnce()       → BMS GATT poll (~5–10 s)
-//   3. Sleep ~20 s                → RF freed for WiFi
-//
-// Lazy init/deinit was attempted but the C5 BLE controller's HCI bring-up
-// fails when called from a non-setup task context after WiFi/AsyncTCP have
-// fragmented internal SRAM (largest free block < ~20 KB). Permanent init
-// is the pragmatic choice; memory headroom is recovered by trimming LVGL
-// pool, task stacks, and WebSocket queue size.
 static void bleSupervisorTask(void* /*arg*/) {
-    vTaskDelay(pdMS_TO_TICKS(15000));   // let WiFi/MQTT/web settle first
-    LOG_BLE_PL("[ble-sup] supervisor task started");
+    vTaskDelay(pdMS_TO_TICKS(15000));
+    LOG_BLE_PL("[ble-sup] started");
 
     int      failCount  = 0;
     uint32_t cycleCount = 0;
-
-    // Victron Instant Readout is published at ~1 Hz; the display marks
-    // data stale at age >120 s. Run a Victron scan every cycle so a
-    // single missed advertisement does not blow the staleness budget.
-    // The BMS (SOC, pack voltage, current) changes slowly — poll once
-    // every N cycles to amortise its ~5-10 s GATT round-trip.
-    constexpr uint32_t ULTIMATRON_EVERY_N_CYCLES = 6;   // ~60 s with 10 s cycle
+    constexpr uint32_t ULTIMATRON_EVERY_N = 6;
 
     for (;;) {
-        if (s_bleStopped || s_bleSuspended) {
+        if (s_bleStopped || s_bleSuspended || s_discoveryRunning) {
             vTaskDelay(pdMS_TO_TICKS(500));
             continue;
         }
 
-        // ── 1. Burst scan for Victron ─────────────────────────────────────
         if (s_configured && s_bleScan) {
             s_bleScan->clearResults();
-            // NimBLE 2.x: start(duration_ms, isContinue) returns bool.
+            s_supervisorInScan = true;
             bool ok = s_bleScan->start(5000, false);
-            if (!ok) {
-                failCount++;
-                LOG_BLE_PF("[ble-sup] scan start failed (#%d)\n", failCount);
-            } else {
-                failCount = 0;
-            }
+            s_supervisorInScan = false;
+            if (!ok) failCount++;
+            else     failCount = 0;
         }
 
-        // ── 2. Ultimatron BMS poll (NimBLE already up) ────────────────────
-        // Throttled: only every N cycles. SOC drift is slow, no need to
-        // pay the GATT cost every Victron tick.
-        if (ultimatronIsConfigured() && (cycleCount % ULTIMATRON_EVERY_N_CYCLES) == 0) {
+        if (ultimatronIsConfigured() && (cycleCount % ULTIMATRON_EVERY_N) == 0) {
             ultimatronPollOnce();
         }
         cycleCount++;
 
-        // ── 3. Idle window — RF released to WiFi ──────────────────────────
-        // Aggressive: 5 s idle → ~10 s cycle (Victron updates ~10 s)
-        // Save     : 30 s idle → ~35 s cycle
-        // Cap backoff at 30 s even on repeated scan failures, so a string
-        // of misses cannot push data past the 120 s staleness threshold.
         uint32_t idleMs = s_aggressive ? 5000 : 30000;
         if (failCount > 3) idleMs = 30000;
         vTaskDelay(pdMS_TO_TICKS(idleMs));
     }
 }
 
-void victronBleSetAggressive(bool aggressive) {
-    s_aggressive = aggressive;
-}
-
-void victronBleStop() {
-    s_bleStopped = true;
-    // Do NOT call s_bleScan->stop() here — bleTask may be inside start()
-    // and calling stop() from another task corrupts the NimBLE controller.
-    // The bleTask checks s_bleStopped and exits its loop gracefully.
-}
-
-void victronBleStart() {
-    s_bleStopped = false;
-}
-
-void victronBleSuspend() {
-    s_bleSuspended = true;
-    // Do NOT use vTaskSuspend() on bleTask — if it is inside NimBLE APIs
-    // the controller ends up in a corrupted state (rc=519 forever).
-}
-
-void victronBleResume() {
-    s_bleSuspended = false;
-}
-
 // ── Public API ────────────────────────────────────────────────────────────
+void victronBleSetAggressive(bool aggressive) { s_aggressive = aggressive; }
+void victronBleStop()    { s_bleStopped    = true;  }
+void victronBleStart()   { s_bleStopped    = false; }
+void victronBleSuspend() { s_bleSuspended  = true;  }
+void victronBleResume()  { s_bleSuspended  = false; }
+
 bool victronIsConfigured() {
 #ifdef ENABLE_SOLAR_DUMMY
-    return true;   // pretend configured so UI shows the dummy values
+    return true;
 #else
     return s_configured;
 #endif
 }
 
+static void load_config_internal() {
+    std::string addr, keyHex;
+    if (!victronLoadConfig(addr, keyHex)) {
+        s_configured = false;
+        return;
+    }
+    if (!hexToBytes(keyHex, s_aesKey, 16)) {
+        s_configured = false;
+        return;
+    }
+    s_targetAddr  = addr;
+    s_configured  = true;
+    if (!s_dataMux) s_dataMux = xSemaphoreCreateMutex();
+}
+
+void victronBleInit() {
+    load_config_internal();
+    if (s_configured)
+        LOG_BLE_PF("[ble] Victron cfg loaded, target=%s\n", s_targetAddr.c_str());
+    else
+        LOG_BLE_PL("[ble] Victron not configured");
+}
+
+void victronBleReloadConfig() {
+    load_config_internal();
+    if (s_configured)
+        LOG_BLE_PF("[ble] Victron cfg reloaded, target=%s\n", s_targetAddr.c_str());
+}
+
 VictronData victronGetData() {
 #ifdef ENABLE_SOLAR_DUMMY
-    // Dev-mode override: ignore real BLE data and synthesise oscillating
-    // values so the UI can be tested without panels/battery nearby.
     float t = millis() / 1000.0f;
     VictronData d = {};
-    d.pvW      = 80.0f + 40.0f * sinf(t * 0.8f);
-    d.battA    = 3.0f + 2.5f * sinf(t * 0.5f);
-    d.battV    = 13.0f + 0.3f * sinf(t * 1.2f);
-    d.kWhToday = 1.25f + 0.01f * t;
-    d.state    = 3;
-    d.errCode  = 0;
-    d.valid    = true;
-    d.lastMs   = millis();
+    d.pvW      = 80.0f  + 40.0f * sinf(t * 0.8f);
+    d.battA    = 3.0f   + 2.5f  * sinf(t * 0.5f);
+    d.battV    = 13.0f  + 0.3f  * sinf(t * 1.2f);
+    d.kWhToday = 1.25f  + 0.01f * t;
+    d.state    = 3; d.errCode = 0; d.valid = true; d.lastMs = millis();
     return d;
 #else
     VictronData copy = {};
@@ -310,88 +348,59 @@ VictronData victronGetData() {
 #endif
 }
 
-void victronBleInit() {
-    // Loads NVS config only. NimBLE controller is brought up by bleSupervisorStart().
-    String addr, keyHex;
-    if (!victronLoadConfig(addr, keyHex)) {
-        LOG_BLE_PL("[ble] Victron not configured (no NVS entry)");
-        return;
-    }
-    if (!hexToBytes(keyHex, s_aesKey, 16)) {
-        LOG_BLE_PL("[ble] bad encryption key — not 32 valid hex chars");
-        return;
-    }
-    s_targetAddr = addr;
-    s_configured = true;
-    if (!s_dataMux) s_dataMux = xSemaphoreCreateMutex();
-    LOG_BLE_PF("[ble] Victron cfg loaded, target=%s\n", s_targetAddr.c_str());
-}
-
-// Bring NimBLE up and start the supervisor task. Call once after both
-// victronBleInit() and ultimatronBleInit() have loaded their NVS configs.
-// Must be invoked from setup() BEFORE LinBus/LVGL tasks are created — the
-// C5 BLE controller can only allocate its ~37 KB of internal SRAM cleanly
-// when the heap is not yet fragmented.
 void bleSupervisorStart() {
     if (s_bleTaskHandle) return;
     if (!s_configured && !ultimatronIsConfigured()) {
-        LOG_BLE_PL("[ble-sup] not started — nothing BLE configured");
-        return;
+        LOG_BLE_PL("[ble-sup] nothing configured — NimBLE still inited for discovery");
     }
 
-    LOG_BLE_PF("[ble] NimBLE init  int_free=%u int_largest=%u\n",
-        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    LOG_BLE_PF("[ble] NimBLE init  free=%u\n",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     NimBLEDevice::init("");
-    LOG_BLE_PF("[ble] NimBLE up    int_free=%u\n",
+    s_nimbleUp = true;
+    LOG_BLE_PF("[ble] NimBLE up    free=%u\n",
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
     if (s_configured) {
         s_bleScan = NimBLEDevice::getScan();
-        s_bleScan->setScanCallbacks(new VictronScanCb(), /*deleteCallbacks=*/true);
-        s_bleScan->setActiveScan(true);   // SCAN_RSP carries Instant Readout
-        s_bleScan->setInterval(160);      // 100 ms
-        s_bleScan->setWindow(80);         // 50 ms (50 % duty during the 5 s burst)
-        s_bleScan->setMaxResults(0);      // fire callback for every adv
+        s_bleScan->setScanCallbacks(new VictronScanCb(), true);
+        s_bleScan->setActiveScan(true);
+        s_bleScan->setInterval(160);
+        s_bleScan->setWindow(80);
+        s_bleScan->setMaxResults(0);
     }
 
     xTaskCreate(bleSupervisorTask, "ble_sup", 4096, nullptr, 1, &s_bleTaskHandle);
-    LOG_BLE_PL("[ble-sup] supervisor task created");
+    LOG_BLE_PL("[ble-sup] task created");
 }
 
-#else // !ENABLE_BLE — stubs (dummy data only when ENABLE_SOLAR_DUMMY is set)
-
-#ifdef ENABLE_SOLAR_DUMMY
-static VictronData s_fakeVictron = {
-    13.2f,  5.5f, 120.0f, 1.25f,
-    3, 0, true, 0
-};
-#endif
+#else // !ENABLE_BLE
 
 void victronBleInit() {}
 void bleSupervisorStart() {}
+void victronBleReloadConfig() {}
 
 VictronData victronGetData() {
 #ifdef ENABLE_SOLAR_DUMMY
-    float t = millis() / 1000.0f;
-    s_fakeVictron.pvW      = 80.0f + 40.0f * sinf(t * 0.8f);
-    s_fakeVictron.battA    = 3.0f + 2.5f * sinf(t * 0.5f);
-    s_fakeVictron.battV    = 13.0f + 0.3f * sinf(t * 1.2f);
-    s_fakeVictron.kWhToday = 1.25f + 0.01f * t;
-    s_fakeVictron.lastMs   = millis();
-    return s_fakeVictron;
+    static VictronData d = { 13.2f, 5.5f, 120.0f, 1.25f, 3, 0, true, 0 };
+    float t = (float)(esp_timer_get_time() / 1000000ULL);
+    d.pvW   = 80.0f + 40.0f * sinf(t * 0.8f);
+    d.battA = 3.0f  + 2.5f  * sinf(t * 0.5f);
+    d.battV = 13.0f + 0.3f  * sinf(t * 1.2f);
+    return d;
 #else
-    return VictronData{};   // valid=false → shows "--"
+    return VictronData{};
 #endif
 }
 
-bool victronIsConfigured() { return true; }   // true so UI shows "--" instead of "not configured"
-void victronBleSuspend() {}
-void victronBleResume() {}
+bool victronIsConfigured() { return false; }
+void victronBleSuspend()   {}
+void victronBleResume()    {}
 void victronBleSetAggressive(bool) {}
-void victronBleStop() {}
-void victronBleStart() {}
-bool victronLoadConfig(String& addr, String& key) { (void)addr; (void)key; return false; }
-void victronSaveConfig(const String& addr, const String& key) { (void)addr; (void)key; }
+void victronBleStop()      {}
+void victronBleStart()     {}
+bool victronLoadConfig(std::string& addr, std::string& key) { (void)addr; (void)key; return false; }
+void victronSaveConfig(const std::string& addr, const std::string& key) { (void)addr; (void)key; }
+void bleDiscoveryScan(bool, BleDiscoveryCb cb, void* user, uint32_t) { cb(nullptr, 0, user); }
 
 #endif // ENABLE_BLE

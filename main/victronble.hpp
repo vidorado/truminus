@@ -1,40 +1,51 @@
 #pragma once
-#include <Arduino.h>
+#include <stdint.h>
+#include <string>
 
 struct VictronData {
-    float    battV;      // battery voltage [V]  (0xFFFF raw = invalid)
-    float    battA;      // battery current [A]  (positive = charging)
+    float    battV;      // battery voltage [V]   (0 = invalid)
+    float    battA;      // battery current [A]   (positive = charging)
     float    pvW;        // PV power [W]
     float    kWhToday;   // yield today [kWh]
     uint8_t  state;      // device state (0=off, 3=bulk, 4=absorption, 5=float …)
     uint8_t  errCode;    // Victron error code
     bool     valid;      // true after at least one successful decryption
-    uint32_t lastMs;     // millis() of last valid reception
+    uint32_t lastMs;     // esp_timer_get_time()/1000 at last valid reception
 };
 
-// Call once from setup(). Loads NVS config only — does NOT bring NimBLE up.
-// The lazy supervisor handles controller lifecycle.
+// Discovered BLE device (used by one-shot settings scan).
+struct BleDevice {
+    char name[64];
+    char mac[13];        // "AABBCCDDEEFF\0"
+    bool is_victron;     // manufacturer ID matches Victron (0x02E1)
+};
+
+typedef void (*BleDiscoveryCb)(const BleDevice* devs, int count, void* user);
+
+// Call once from app_main. Loads NVS config only — does NOT bring NimBLE up.
 void victronBleInit();
 
-// Start the lazy BLE supervisor task. Call AFTER both victronBleInit() and
-// ultimatronBleInit() have loaded their respective NVS configs. The task
-// cycles: NimBLE init → scan Victron → poll Ultimatron → NimBLE deinit →
-// sleep ~20 s. During the sleep window, internal SRAM is fully available
-// so AsyncTCP/LWIP can service web traffic.
+// Bring NimBLE up and start the supervisor task. Call AFTER victronBleInit()
+// and ultimatronBleInit() have loaded their configs.
 void bleSupervisorStart();
 
-VictronData        victronGetData();   // returns a mutex-protected copy
-bool               victronIsConfigured();
-void               victronBleSuspend(); // pause scan task (e.g. before GATT connection)
-void               victronBleResume();  // resume scan task after suspension
-// true  = scan every 3 s  (normal, default)
-// false = scan every 20 s (power-save when screen is off and no web clients)
-void               victronBleSetAggressive(bool aggressive);
-// Stop scan completely (release RF for WiFi).  Safe to call multiple times.
-void               victronBleStop();
-// Resume after victronBleStop().  Safe to call multiple times.
-void               victronBleStart();
+// One-shot discovery scan for settings UI. Runs 8 s scan in a background
+// task; cb is invoked from that task (NOT LVGL thread) with results.
+// Use lv_async_call inside cb to update LVGL safely.
+// victron_only=true → only devices with manufacturer ID 0x02E1.
+// victron_only=false → all devices NOT matching Victron (i.e. battery candidates).
+void bleDiscoveryScan(bool victron_only, BleDiscoveryCb cb, void* user, uint32_t duration_ms = 8000);
 
-// NVS helpers (used by wifisetup / solar config screen).
-bool victronLoadConfig(String& addr, String& key);
-void victronSaveConfig(const String& addr, const String& key);
+// Reload NVS config and apply immediately (after settings save).
+void victronBleReloadConfig();
+
+VictronData victronGetData();
+bool        victronIsConfigured();
+void        victronBleSuspend();
+void        victronBleResume();
+void        victronBleSetAggressive(bool aggressive);
+void        victronBleStop();
+void        victronBleStart();
+
+bool victronLoadConfig(std::string& addr, std::string& key);
+void victronSaveConfig(const std::string& addr, const std::string& key);

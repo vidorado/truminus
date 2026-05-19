@@ -13,3 +13,10 @@ dependencies:
     git: "https://github.com/csvke/esp32_p4_jc4880p433c_bsp.git"
     version: "932af3aaee532af144087b6126aaa48eb9124be4"
     path: "."
+
+  # WiFi via ESP32-C6 co-processor over SDIO (ESP-Hosted architecture).
+  # Standard esp_wifi_* APIs work transparently through esp_wifi_remote.
+  espressif/esp_hosted:
+    version: ">=1.0.0"
+  espressif/esp_wifi_remote:
+    version: ">=0.9.0"

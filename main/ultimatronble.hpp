@@ -1,5 +1,6 @@
 #pragma once
-#include <Arduino.h>
+#include <stdint.h>
+#include <string>
 
 struct UltimatronData {
     uint8_t  soc;       // state of charge [%] 0-100
@@ -7,27 +8,23 @@ struct UltimatronData {
     float    battA;     // current [A] (negative = charging in BMS convention)
     float    tempC;     // first NTC temperature [°C]
     bool     valid;
-    uint32_t lastMs;
+    uint32_t lastMs;    // esp_timer_get_time()/1000 at last valid reception
 };
 
-// Call once from setup(). Loads NVS config only — does NOT initialise NimBLE.
-// The BLE supervisor in victronble.cpp owns the controller lifecycle.
+// Call once from app_main. Loads NVS config only.
 void ultimatronBleInit();
 
-UltimatronData ultimatronGetData();
-bool          ultimatronIsConfigured();
+// Reload NVS config and apply immediately (after settings save).
+void ultimatronBleReloadConfig();
 
-// Internal API used by the BLE supervisor (victronble.cpp).
-// Assumes NimBLEDevice::init() has already been called and the controller
-// is up. Connects, queries, parses, and disconnects. Returns true on success.
+UltimatronData ultimatronGetData();
+bool           ultimatronIsConfigured();
+
+// Internal: called by bleSupervisorTask in victronble.cpp.
 bool ultimatronPollOnce();
 
-// Legacy API — kept as no-ops so wifisetup.cpp keeps compiling. The lazy
-// supervisor handles serialisation internally.
 void ultimatronBleSuspend();
 void ultimatronBleResume();
 
-// NVS helpers used by wifisetup.
-// `pass`: 6 ASCII digits (e.g. "999000"). Empty string = no authentication step.
-bool ultimatronLoadConfig(String& addr, String& pass);
-void ultimatronSaveConfig(const String& addr, const String& pass);
+bool ultimatronLoadConfig(std::string& addr, std::string& pass);
+void ultimatronSaveConfig(const std::string& addr, const std::string& pass);
