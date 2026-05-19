@@ -12,6 +12,22 @@
   line-height: 1;
 }
 
+/* ── Montserrat (same TTF the LCD uses for body / logo) ───────────────── */
+@font-face {
+  font-family: 'Montserrat';
+  src: url('font_regular.ttf?v=65a98832') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Montserrat';
+  src: url('font_bold.ttf?v=84158976') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ── Variables de color (paleta CYD) ──────────────────────────────────── */
 :root {
   --bg:      #1a1a2e;
@@ -40,7 +56,7 @@
 body {
   background: var(--bg);
   color: var(--txt);
-  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-family: 'Montserrat', 'Segoe UI', system-ui, sans-serif;
   font-size: 16px;
   padding-top: var(--bar-h);
   padding-bottom: var(--foot-h);
@@ -91,6 +107,27 @@ body {
 #ind-tint.ind-active { color: #55aaff; }
 
 .topbar-icons { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+
+/* Top-bar Config button — mirrors the LCD's "⚙ Config" button at the
+   right end of the title bar. */
+.btn-conf {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  background: var(--off);
+  border: 1px solid var(--sep);
+  border-radius: var(--radius);
+  color: var(--txt);
+  font: inherit;
+  font-size: 0.95em;
+  cursor: pointer;
+  margin-right: 6px;
+}
+.btn-conf:hover  { background: #353560; }
+.btn-conf:active { background: var(--on); }
+.btn-conf .fi    { font-size: 1.05em; }
 
 /* Estado WiFi / LIN */
 .sdot {
@@ -297,10 +334,18 @@ body {
 .sb-msg { font-size: 1em; }
 .sb-ip  { font-size: 0.9em; color: #88aaff; }
 
+/* Typographic logo — same Montserrat Bold the LCD uses, lowercased with
+   tight letter-spacing to match the wordmark on the device. */
 .footer-logo {
-  height: 32px;
-  opacity: 0.75;
+  font-family: 'Montserrat', sans-serif;
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: 0.02em;
+  color: var(--txt);
+  opacity: 0.85;
   flex-shrink: 0;
+  text-transform: lowercase;
+  line-height: 1;
 }
 
 /* ── Modal de error ──────────────────────────────────────────────────── */

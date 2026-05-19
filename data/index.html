@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=43818ed1">
+<link rel="stylesheet" href="styles.css?v=04ad32c9">
 </head>
 <body>
 
@@ -17,6 +17,10 @@
     <span class="tbadge tbadge-ext"><i class="fi">&#xF2C9;</i><i class="fi fi-sm">&#xF054;</i> <span id="outdoor_temp">--</span>&nbsp;°C</span>
   </div>
   <div class="topbar-icons">
+    <button id="btn-conf" class="btn-conf" type="button" title="Configuración">
+      <i class="fi">&#xF013;</i><span>Config</span>
+    </button>
+    <span id="dot-bt"   class="sdot sdot-dis" title="Bluetooth"><i class="fi">&#xF294;</i></span>
     <span id="dot-wifi" class="sdot sdot-err" title="WiFi"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M1 9l2 2c5-5 13-5 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3a4.24 4.24 0 0 0-6 0zm-4-4l2 2a7 7 0 0 1 10 0l2-2C15.14 9.14 8.87 9.14 5 13z" fill="currentColor"/></svg></span>
     <span id="dot-lin"  class="sdot sdot-err" title="LIN"><i class="fi">&#xF074;</i></span>
   </div>
@@ -149,7 +153,7 @@
     <span id="statusMsg" class="sb-msg"></span>
     <span id="deviceIp"  class="sb-ip"></span>
   </div>
-  <img src="truminus-logo.png?v=7dd71438" alt="TruMinus" class="footer-logo">
+  <span class="footer-logo" aria-label="TruMinus">truminus</span>
 </footer>
 
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
