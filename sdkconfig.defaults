@@ -97,3 +97,7 @@ CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y
 
 # Web server: enable native WebSocket support in esp_http_server.
 CONFIG_HTTPD_WS_SUPPORT=y
+# Post-handshake callback fires once per new WS client → bump wsClientCount
+# accurately (the URI handler is invoked only for frames, never for the
+# upgrade leg, so we cannot count clients from inside it).
+CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y

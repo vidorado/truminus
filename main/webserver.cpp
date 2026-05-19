@@ -41,6 +41,11 @@ static constexpr UBaseType_t WS_QUEUE_MSG = 256;
 // machine that already has BLE + WiFi-via-C6 + LVGL running.
 static constexpr uint8_t WS_MAX_CLIENTS = 4;
 
+// Maximum total sockets configured below in startWebServer().  Must match
+// httpd_config_t::max_open_sockets exactly — httpd_get_client_list() rejects
+// any smaller buffer with ESP_ERR_INVALID_ARG (silently breaks broadcast).
+static constexpr size_t MAX_OPEN_SOCKETS = 7;
+
 static const char* TAG = "web";
 
 // ── LittleFS mount ───────────────────────────────────────────────────────────
@@ -181,25 +186,27 @@ static esp_err_t staticGetHandler(httpd_req_t* req) {
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 
-// Handle a single incoming WS frame.  esp_http_server invokes this same URI
-// handler for the upgrade handshake (req->method == HTTP_GET) and for every
-// subsequent frame (req->method == HTTP_GET still, but is_websocket already
-// negotiated); we differentiate by examining ws_pkt.type.
-static esp_err_t wsHandler(httpd_req_t* req) {
-    // Handshake leg: no frame to read yet.
-    if (req->method == HTTP_GET) {
-        int prev = wsClientCount.fetch_add(1, std::memory_order_acq_rel);
-        if (prev >= WS_MAX_CLIENTS) {
-            wsClientCount.fetch_sub(1, std::memory_order_release);
-            ESP_LOGW(TAG, "WS reject: %u clients already connected", (unsigned)prev);
-            httpd_resp_set_status(req, "503 Service Unavailable");
-            httpd_resp_send(req, "busy", HTTPD_RESP_USE_STRLEN);
-            return ESP_FAIL;
-        }
-        ESP_LOGI(TAG, "WS handshake (clients=%d)", wsClientCount.load());
-        return ESP_OK;
+// Post-handshake callback: invoked once when esp_http_server has finished
+// the WebSocket upgrade.  This is the right place to count clients — the
+// URI handler below is invoked only for frame data, never for the upgrade
+// leg (see httpd_uri.c:362 in IDF: "If the request is websocket handshake,
+// then do not call the uri->handler").
+static esp_err_t wsPostHandshake(httpd_req_t* req) {
+    int prev = wsClientCount.fetch_add(1, std::memory_order_acq_rel);
+    if (prev >= WS_MAX_CLIENTS) {
+        wsClientCount.fetch_sub(1, std::memory_order_release);
+        ESP_LOGW(TAG, "WS reject: %u clients already connected", (unsigned)prev);
+        return ESP_FAIL;
     }
+    ESP_LOGI(TAG, "WS open  (clients=%d, fd=%d)",
+             wsClientCount.load(), httpd_req_to_sockfd(req));
+    return ESP_OK;
+}
 
+// Handle a single incoming WS frame.  esp_http_server only invokes this
+// for frame data (the upgrade handshake is handled internally before the
+// post-handshake callback fires).
+static esp_err_t wsHandler(httpd_req_t* req) {
     httpd_ws_frame_t frame = {};
     frame.type = HTTPD_WS_TYPE_TEXT;
 
@@ -232,10 +239,10 @@ static esp_err_t wsHandler(httpd_req_t* req) {
         return ESP_OK;
     }
     if (strcmp(msg, "settings") == 0) {
-        // Drain any queued frames first so we don't fight with them for the
-        // per-client send window.
-        wsQueueDrain();
+        // Let the app push its snapshot into the queue, then drain so the
+        // browser sees the initial state before the next main-loop tick.
         if (s_connCb) s_connCb();
+        wsQueueDrain();
         return ESP_OK;
     }
 
@@ -294,8 +301,8 @@ void wsQueueDrain() {
 
     char buf[WS_QUEUE_MSG];
     while (xQueueReceive(wsQueue, buf, 0) == pdTRUE) {
-        size_t fds_count = WS_MAX_CLIENTS;
-        int fds[WS_MAX_CLIENTS];
+        size_t fds_count = MAX_OPEN_SOCKETS;
+        int fds[MAX_OPEN_SOCKETS];
         if (httpd_get_client_list(httpServer, &fds_count, fds) != ESP_OK) continue;
 
         httpd_ws_frame_t frame = {};
@@ -333,7 +340,7 @@ esp_err_t startWebServer(WsCommandCb cb, WsConnectedCb conn) {
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port      = 80;
-    cfg.max_open_sockets = 7;       // WS clients (4) + parallel asset GETs.
+    cfg.max_open_sockets = MAX_OPEN_SOCKETS;  // WS clients (4) + parallel asset GETs.
     cfg.max_uri_handlers = 8;
     cfg.stack_size       = 8192;
     cfg.lru_purge_enable = true;
@@ -350,11 +357,12 @@ esp_err_t startWebServer(WsCommandCb cb, WsConnectedCb conn) {
     // WebSocket endpoint first so it matches before the wildcard static
     // handler (LIFO would also work, but explicit order is clearer).
     httpd_uri_t ws_uri = {};
-    ws_uri.uri               = "/ws";
-    ws_uri.method            = HTTP_GET;
-    ws_uri.handler           = wsHandler;
-    ws_uri.is_websocket      = true;
+    ws_uri.uri                      = "/ws";
+    ws_uri.method                   = HTTP_GET;
+    ws_uri.handler                  = wsHandler;
+    ws_uri.is_websocket             = true;
     ws_uri.handle_ws_control_frames = false;
+    ws_uri.ws_post_handshake_cb     = wsPostHandshake;
     httpd_register_uri_handler(httpServer, &ws_uri);
 
     httpd_uri_t root_uri = {};
