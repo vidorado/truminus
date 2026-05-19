@@ -173,7 +173,7 @@ public:
                 isVictron = true;
             }
         }
-        if (isVictron != _victronOnly) return;
+        if (_victronOnly && !isVictron) return;
 
         BleDevice& d = s_disc[s_discCount++];
         if (dev->haveName() && dev->getName().size() > 0) {
