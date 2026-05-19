@@ -17,6 +17,10 @@
 
 PORT ?= /dev/ttyACM0
 
+# --skip-flashed is baked into FLASH_SUB_ARGS in the top-level CMakeLists.txt
+# so every esptool write-flash invocation gets it — not just `make flash` but
+# also `idf.py flash` directly.
+
 build:
 	idf.py build
 

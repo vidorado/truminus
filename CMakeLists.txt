@@ -38,6 +38,25 @@ idf_build_set_property(COMPILE_DEFINITIONS "JC4880_P4"         APPEND)
 
 project(truminus)
 
+# Append --skip-flashed to every esptool write-flash invocation.  esptool
+# computes the MD5 of each image and compares against on-flash content;
+# unchanged images are skipped.  This is mainly worth it for the LittleFS
+# partition: joltwallet/littlefs's helper regenerates littlefs.bin on
+# every cmake configure (it has no way to track data/ contents), so
+# without this flag a 25 s rewrite happens on every `idf.py flash`.
+# littlefs-python is deterministic — same data/ → identical bin → skipped.
+#
+# We mutate the SUB_ARGS property on each existing flash target rather than
+# the component-level FLASH_SUB_ARGS, because by the time project() returns
+# esptool_py has already called esptool_py_flash_target() for each target
+# and frozen FLASH_SUB_ARGS into the target's SUB_ARGS property.
+foreach(t flash app-flash partition-table-flash bootloader-flash littlefs-flash)
+    if(TARGET ${t})
+        get_target_property(_subargs ${t} SUB_ARGS)
+        set_target_properties(${t} PROPERTIES SUB_ARGS "${_subargs} --skip-flashed")
+    endif()
+endforeach()
+
 # Patch managed_components AFTER project() has resolved + downloaded them.
 # Each entry in apply_patches.py is idempotent (no-op on second run), so
 # re-running on every configure is safe.
