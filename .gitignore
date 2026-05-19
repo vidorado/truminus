@@ -9,7 +9,8 @@
 .vscode/ipch
 
 # Claude Code
-.claude/
+.claude/worktrees
+.claude/settings.local.json
 
 # PlatformIO build cache (kept for local installs that still use it)
 .pio/

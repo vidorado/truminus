@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(idf.py *)",
+      "Bash(make build)",
+      "Bash(make flash)",
+      "Bash(make flash-monitor)",
+      "Bash(make monitor)",
+      "Bash(make clean)",
+      "Bash(python3 scripts/gen_icon_font.py)"
+    ]
+  }
+}
