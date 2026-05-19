@@ -34,6 +34,7 @@ DST        = ROOT / "main" / "font_icons.ttf"
 # and p4settings.cpp.
 SOLID_GLYPHS = {
     # p4display.cpp
+    0xF002: "magnifying-glass  FA_SEARCH    (scan buttons)",
     0xE3AF: "house-chimney     FA_HOUSE_CHIM",
     0xF013: "cog               FA_COG",
     0xF043: "tint/water-drop   FA_TINT",

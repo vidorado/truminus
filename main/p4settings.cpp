@@ -13,11 +13,15 @@
 #include "p4settings.hpp"
 #include "p4display.hpp"
 #include "i18n.hpp"
+#include "wifi_manager.hpp"
+#include "victronble.hpp"
+#include "ultimatronble.hpp"
 #include "esp_log.h"
 #include "nvs.h"
 #include "lvgl.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static const char* TAG = "cfg";
 
@@ -44,6 +48,7 @@ static const char* TAG = "cfg";
 #define FA_GLOBE     "\xEF\x82\xAC"   // U+F0AC
 #define FA_EYE       "\xEF\x81\xAE"   // U+F06E
 #define FA_EYE_SLASH "\xEF\x81\xB0"   // U+F070
+#define FA_SEARCH    "\xEF\x80\x82"   // U+F002
 
 // Screen geometry.
 static constexpr int SCR_W   = 800;
@@ -175,6 +180,17 @@ static lv_obj_t* build_title_bar(const char* title, lv_event_cb_t back_cb) {
     lv_obj_clear_flag(sep, LV_OBJ_FLAG_SCROLLABLE);
 
     return scr;
+}
+
+// Keyboard with enlarged key labels. LV_PART_ITEMS targets each button cell.
+static lv_obj_t* build_keyboard(lv_obj_t* scr) {
+    const P4Fonts* f = p4GetFonts();
+    lv_obj_t* kb = lv_keyboard_create(scr);
+    lv_obj_set_size(kb, SCR_W, KB_H);
+    lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_text_font(kb, f->f24, LV_PART_ITEMS);
+    lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
+    return kb;
 }
 
 // Scrollable content panel below the title bar.
@@ -437,6 +453,108 @@ static void add_scan_row(lv_obj_t* list, const char* name, const char* detail,
     }
 }
 
+// Forward declarations needed by async callbacks defined before their callers.
+static void wifi_ap_select_cb(lv_event_t* e);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ASYNC SCAN HELPERS
+// Callbacks run on FreeRTOS tasks; they post to LVGL via lv_async_call.
+// Static string storage avoids dangling pointers in add_scan_row (which stores
+// value pointer raw — no copy).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#define MAX_SCAN_ROWS 20
+static char s_wifi_ssids[MAX_SCAN_ROWS][33];
+static char s_ble_macs [MAX_SCAN_ROWS][13];
+static char s_ble_names[MAX_SCAN_ROWS][64];
+
+struct WifiScanResult {
+    lv_obj_t* list;
+    WifiAP*   aps;
+    int       count;
+};
+
+static void wifi_populate_cb(void* arg) {
+    auto* r = (WifiScanResult*)arg;
+    if (lv_obj_is_valid(r->list)) {
+        const P4Fonts* f = p4GetFonts();
+        lv_obj_clean(r->list);
+        if (r->count == 0) {
+            lv_obj_t* lbl = lv_label_create(r->list);
+            lv_label_set_text(lbl, t(TK::WIFI_NO_NETS));
+            lv_obj_set_style_text_font(lbl, f->f20, 0);
+            lv_obj_set_style_text_color(lbl, C_LABEL, 0);
+        } else {
+            int n = r->count < MAX_SCAN_ROWS ? r->count : MAX_SCAN_ROWS;
+            for (int i = 0; i < n; i++) {
+                snprintf(s_wifi_ssids[i], sizeof(s_wifi_ssids[0]), "%s", r->aps[i].ssid);
+                char rssi[12];
+                snprintf(rssi, sizeof(rssi), "%d dBm", (int)r->aps[i].rssi);
+                add_scan_row(r->list, s_wifi_ssids[i], rssi, s_wifi_ssids[i], wifi_ap_select_cb);
+            }
+        }
+    }
+    free(r->aps);
+    free(r);
+}
+
+static void wifi_scan_done(const WifiAP* aps, int count, void* user) {
+    auto* r  = (WifiScanResult*)malloc(sizeof(WifiScanResult));
+    r->list  = (lv_obj_t*)user;
+    r->count = count;
+    r->aps   = count > 0 ? (WifiAP*)malloc(count * sizeof(WifiAP)) : nullptr;
+    if (r->aps) memcpy(r->aps, aps, count * sizeof(WifiAP));
+    lv_async_call(wifi_populate_cb, r);
+}
+
+struct BleScanResult {
+    lv_obj_t*     list;
+    BleDevice*    devs;
+    int           count;
+    lv_event_cb_t select_cb;
+};
+
+static void ble_populate_cb(void* arg) {
+    auto* r = (BleScanResult*)arg;
+    if (lv_obj_is_valid(r->list)) {
+        const P4Fonts* f = p4GetFonts();
+        lv_obj_clean(r->list);
+        if (r->count == 0) {
+            lv_obj_t* lbl = lv_label_create(r->list);
+            lv_label_set_text(lbl, t(TK::NO_BLE_DEVS));
+            lv_obj_set_style_text_font(lbl, f->f20, 0);
+            lv_obj_set_style_text_color(lbl, C_LABEL, 0);
+        } else {
+            int n = r->count < MAX_SCAN_ROWS ? r->count : MAX_SCAN_ROWS;
+            for (int i = 0; i < n; i++) {
+                snprintf(s_ble_macs[i],  sizeof(s_ble_macs[0]),  "%s", r->devs[i].mac);
+                snprintf(s_ble_names[i], sizeof(s_ble_names[0]), "%s", r->devs[i].name);
+                add_scan_row(r->list, s_ble_names[i], s_ble_macs[i],
+                             s_ble_macs[i], r->select_cb);
+            }
+        }
+    }
+    free(r->devs);
+    free(r);
+}
+
+struct BleScanCtx {
+    lv_obj_t*     list;
+    lv_event_cb_t select_cb;
+};
+
+static void ble_scan_done(const BleDevice* devs, int count, void* user) {
+    auto* ctx = (BleScanCtx*)user;
+    auto* r   = (BleScanResult*)malloc(sizeof(BleScanResult));
+    r->list      = ctx->list;
+    r->count     = count;
+    r->select_cb = ctx->select_cb;
+    r->devs      = count > 0 ? (BleDevice*)malloc(count * sizeof(BleDevice)) : nullptr;
+    if (r->devs) memcpy(r->devs, devs, count * sizeof(BleDevice));
+    free(ctx);
+    lv_async_call(ble_populate_cb, r);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // WIFI SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -493,26 +611,12 @@ static void wifi_ap_select_cb(lv_event_t* e) {
 }
 
 static void wifi_scan_btn_cb(lv_event_t*) {
-    const P4Fonts* f = p4GetFonts();
-    lv_obj_t* list  = nullptr;
+    lv_obj_t* list = nullptr;
     make_scan_overlay(wf.scr, t(TK::WIFI_SCANNING), &list);
-
-#ifdef ENABLE_WIFI_DUMMY
-    static const struct { const char* ssid; const char* rssi; } aps[] = {
-        {"MiRed_Casa",    "-45 dBm"},
-        {"Vecino_5G",     "-62 dBm"},
-        {"MOVISTAR_A12F", "-71 dBm"},
-        {"iPhone de Ana", "-78 dBm"},
-        {"OpenWRT",       "-83 dBm"},
-    };
-    for (const auto& ap : aps)
-        add_scan_row(list, ap.ssid, ap.rssi, ap.ssid, wifi_ap_select_cb);
-#else
-    lv_obj_t* lbl = lv_label_create(list);
-    lv_label_set_text(lbl, t(TK::WIFI_NO_NETS));
-    lv_obj_set_style_text_font(lbl, f->f20, 0);
-    lv_obj_set_style_text_color(lbl, C_LABEL, 0);
-#endif
+    lv_obj_t* sp = lv_spinner_create(list);
+    lv_obj_set_size(sp, 80, 80);
+    lv_obj_center(sp);
+    wifi_manager_scan_async(wifi_scan_done, list);
 }
 
 static void wifi_save_cb(lv_event_t*) {
@@ -522,8 +626,7 @@ static void wifi_save_cb(lv_event_t*) {
         lv_label_set_text(wf.lbl_status, "Introduce el nombre de la red (SSID)");
         return;
     }
-    nvs_write("wifi", "ssid", ssid);
-    nvs_write("wifi", "pass", pass);
+    wifi_manager_connect(ssid, pass);   // saves to NVS and (re)connects
     lv_label_set_text(wf.lbl_status, t(TK::CFG_SAVED));
     schedule_back(wf.prev);
 }
@@ -559,10 +662,7 @@ static void show_wifi(lv_obj_t* from) {
         lv_obj_set_size(scan_btn, 56, 54);
         style_btn(scan_btn);
         lv_obj_add_event_cb(scan_btn, wifi_scan_btn_cb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t* sl = make_label(scan_btn, t(TK::SEARCH), f->f18, C_TEXT);
-        lv_obj_set_style_text_align(sl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_label_set_long_mode(sl, LV_LABEL_LONG_CLIP);
-        lv_obj_set_width(sl, 56);
+        lv_obj_t* sl = make_label(scan_btn, FA_SEARCH, f->icons22, C_TEXT);
         lv_obj_center(sl);
     }
 
@@ -603,10 +703,7 @@ static void show_wifi(lv_obj_t* from) {
     lv_label_set_long_mode(wf.lbl_status, LV_LABEL_LONG_WRAP);
 
     // Keyboard (child of screen, not panel — stays fixed at bottom)
-    wf.kb = lv_keyboard_create(wf.scr);
-    lv_obj_set_size(wf.kb, SCR_W, KB_H);
-    lv_obj_align(wf.kb, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_add_flag(wf.kb, LV_OBJ_FLAG_HIDDEN);
+    wf.kb = build_keyboard(wf.scr);
     lv_obj_add_event_cb(wf.kb, wifi_kb_hide_cb, LV_EVENT_READY,  nullptr);
     lv_obj_add_event_cb(wf.kb, wifi_kb_hide_cb, LV_EVENT_CANCEL, nullptr);
 
@@ -775,10 +872,7 @@ static void show_mqtt(lv_obj_t* from) {
     lv_label_set_long_mode(mq.lbl_status, LV_LABEL_LONG_WRAP);
 
     // Keyboard
-    mq.kb = lv_keyboard_create(mq.scr);
-    lv_obj_set_size(mq.kb, SCR_W, KB_H);
-    lv_obj_align(mq.kb, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_add_flag(mq.kb, LV_OBJ_FLAG_HIDDEN);
+    mq.kb = build_keyboard(mq.scr);
     lv_obj_add_event_cb(mq.kb, mqtt_kb_hide_cb, LV_EVENT_READY,  nullptr);
     lv_obj_add_event_cb(mq.kb, mqtt_kb_hide_cb, LV_EVENT_CANCEL, nullptr);
 
@@ -838,40 +932,35 @@ static void ble_batt_select_cb(lv_event_t* e) {
 }
 
 static void ble_scan_victron_cb(lv_event_t*) {
-    const P4Fonts* f = p4GetFonts();
     lv_obj_t* list = nullptr;
     make_scan_overlay(bl_ctx.scr, t(TK::SCAN_VICTRON), &list);
-
-#ifdef ENABLE_SOLAR_DUMMY
-    add_scan_row(list, "SmartSolar 75/15",  "C4:29:61:AA:BB:CC", "C42961AABBCC", ble_victron_select_cb);
-    add_scan_row(list, "SmartSolar 100/30", "C4:29:61:DD:EE:FF", "C42961DDEEFF", ble_victron_select_cb);
-#else
-    lv_obj_t* lbl = lv_label_create(list);
-    lv_label_set_text(lbl, t(TK::NO_BLE_DEVS));
-    lv_obj_set_style_text_font(lbl, f->f20, 0);
-    lv_obj_set_style_text_color(lbl, C_LABEL, 0);
-#endif
+    lv_obj_t* sp = lv_spinner_create(list);
+    lv_obj_set_size(sp, 80, 80);
+    lv_obj_center(sp);
+    auto* ctx      = (BleScanCtx*)malloc(sizeof(BleScanCtx));
+    ctx->list      = list;
+    ctx->select_cb = ble_victron_select_cb;
+    bleDiscoveryScan(true, ble_scan_done, ctx);
 }
 
 static void ble_scan_batt_cb(lv_event_t*) {
-    const P4Fonts* f = p4GetFonts();
     lv_obj_t* list = nullptr;
     make_scan_overlay(bl_ctx.scr, t(TK::SCAN_BATT), &list);
-
-#ifdef ENABLE_SOLAR_DUMMY
-    add_scan_row(list, "Ultimatron LiFePO4 12V", "DC:A9:04:11:22:33", "DCA904112233", ble_batt_select_cb);
-#else
-    lv_obj_t* lbl = lv_label_create(list);
-    lv_label_set_text(lbl, t(TK::NO_BLE_DEVS));
-    lv_obj_set_style_text_font(lbl, f->f20, 0);
-    lv_obj_set_style_text_color(lbl, C_LABEL, 0);
-#endif
+    lv_obj_t* sp = lv_spinner_create(list);
+    lv_obj_set_size(sp, 80, 80);
+    lv_obj_center(sp);
+    auto* ctx      = (BleScanCtx*)malloc(sizeof(BleScanCtx));
+    ctx->list      = list;
+    ctx->select_cb = ble_batt_select_cb;
+    bleDiscoveryScan(false, ble_scan_done, ctx);
 }
 
 static void ble_save_cb(lv_event_t*) {
     nvs_write("solar", "addr", lv_textarea_get_text(bl_ctx.ta_solar_mac));
     nvs_write("solar", "key",  lv_textarea_get_text(bl_ctx.ta_solar_key));
     nvs_write("batt",  "addr", lv_textarea_get_text(bl_ctx.ta_batt_mac));
+    victronBleReloadConfig();
+    ultimatronBleReloadConfig();
     lv_label_set_text(bl_ctx.lbl_status, t(TK::CFG_SAVED));
     schedule_back(bl_ctx.prev);
 }
@@ -930,9 +1019,7 @@ static void show_ble(lv_obj_t* from) {
         lv_obj_set_size(sb, 46, 52);
         style_btn(sb);
         lv_obj_add_event_cb(sb, ble_scan_victron_cb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t* sl = make_label(sb, t(TK::SEARCH), f->f18, C_TEXT);
-        lv_label_set_long_mode(sl, LV_LABEL_LONG_CLIP);
-        lv_obj_set_width(sl, 46);
+        lv_obj_t* sl = make_label(sb, FA_SEARCH, f->icons22, C_TEXT);
         lv_obj_center(sl);
     }
 
@@ -970,9 +1057,7 @@ static void show_ble(lv_obj_t* from) {
         lv_obj_set_size(sb, 46, 52);
         style_btn(sb);
         lv_obj_add_event_cb(sb, ble_scan_batt_cb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t* sl = make_label(sb, t(TK::SEARCH), f->f18, C_TEXT);
-        lv_label_set_long_mode(sl, LV_LABEL_LONG_CLIP);
-        lv_obj_set_width(sl, 46);
+        lv_obj_t* sl = make_label(sb, FA_SEARCH, f->icons22, C_TEXT);
         lv_obj_center(sl);
     }
 
@@ -995,10 +1080,7 @@ static void show_ble(lv_obj_t* from) {
     lv_obj_center(svl);
 
     // Keyboard — child of screen (fixed at bottom, not scrollable).
-    bl_ctx.kb = lv_keyboard_create(bl_ctx.scr);
-    lv_obj_set_size(bl_ctx.kb, SCR_W, KB_H);
-    lv_obj_align(bl_ctx.kb, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_add_flag(bl_ctx.kb, LV_OBJ_FLAG_HIDDEN);
+    bl_ctx.kb = build_keyboard(bl_ctx.scr);
     lv_obj_add_event_cb(bl_ctx.kb, ble_kb_hide_cb, LV_EVENT_READY,  nullptr);
     lv_obj_add_event_cb(bl_ctx.kb, ble_kb_hide_cb, LV_EVENT_CANCEL, nullptr);
 
