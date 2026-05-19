@@ -1059,7 +1059,7 @@ void p4DisplayUpdate(const P4DisplayData& d)
     }
 
     if (d.wifiOk && d.ssid && d.ip) {
-        lv_label_set_text_fmt(ui.lbl_conn, "%s  %s", d.ssid, d.ip);
+        lv_label_set_text_fmt(ui.lbl_conn, "%s / %s", d.ssid, d.ip);
         lv_obj_set_style_text_color(ui.lbl_conn, C_TEXT, 0);
     } else {
         lv_label_set_text(ui.lbl_conn, "Sin WiFi");
