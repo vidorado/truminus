@@ -182,13 +182,49 @@ static lv_obj_t* build_title_bar(const char* title, lv_event_cb_t back_cb) {
     return scr;
 }
 
+// Custom special map: row 0 = numbers, row 1 = symbols for passwords,
+// row 2 = Spanish accented chars, row 3 = nav/ok.
+// Replaces the default "!@#$…" special mode with a Latin-friendly layout.
+// Button count (40) matches the default spec map so the same ctrl array works.
+static const char* const s_kb_map_spec[] = {
+    "1","2","3","4","5","6","7","8","9","0", LV_SYMBOL_BACKSPACE, "\n",
+    "abc","!","@","#","$","%","&","*","(",")","_","+", "\n",
+    "\xC3\xA1","\xC3\xA9","\xC3\xAD","\xC3\xB3","\xC3\xBA","\xC3\xB1","\xC3\xBC","\xC2\xA1","\xC2\xBF","\"","'","=", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+};
+
+// Cast helper: C++ won't implicitly convert int to lv_buttonmatrix_ctrl_t.
+#define BMC(x) static_cast<lv_buttonmatrix_ctrl_t>(x)
+#define KB_BTN(w)  BMC(LV_BUTTONMATRIX_CTRL_POPOVER | (w))
+#define KB_CTRL(w) BMC(LV_BUTTONMATRIX_CTRL_NO_REPEAT | LV_BUTTONMATRIX_CTRL_CLICK_TRIG | LV_BUTTONMATRIX_CTRL_CHECKED | (w))
+#define KB_CHK(w)  BMC(LV_BUTTONMATRIX_CTRL_CHECKED | (w))
+
+// Ctrl array mirroring default_kb_ctrl_spec_map (40 entries, no Arabic).
+static const lv_buttonmatrix_ctrl_t s_kb_ctrl_spec[] = {
+    // Row 0: 10 × w1 + backspace w2
+    KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1),
+    KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_CHK(2),
+    // Row 1: "abc" ctrl-btn (w2) + 11 × w1
+    KB_CTRL(2), KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1),
+    KB_BTN(1),  KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1),
+    // Row 2: 12 × w1 (accented chars)
+    KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1),
+    KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1), KB_BTN(1),
+    // Row 3: [KB] ctrl-btn(w2), [LEFT] checked(w2), [space] w6, [RIGHT] checked(w2), [OK] ctrl-btn(w2)
+    KB_CTRL(2), KB_CHK(2), BMC(6), KB_CHK(2), KB_CTRL(2),
+};
+
 // Keyboard with enlarged key labels. LV_PART_ITEMS targets each button cell.
+// In Spanish mode the special layout is replaced with a Latin accented-char map.
 static lv_obj_t* build_keyboard(lv_obj_t* scr) {
     const P4Fonts* f = p4GetFonts();
     lv_obj_t* kb = lv_keyboard_create(scr);
     lv_obj_set_size(kb, SCR_W, KB_H);
     lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_text_font(kb, f->f24, LV_PART_ITEMS);
+    if (currentLanguage() == Language::ES) {
+        lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_SPECIAL, s_kb_map_spec, s_kb_ctrl_spec);
+    }
     lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
     return kb;
 }
@@ -349,25 +385,28 @@ static void show_menu(lv_obj_t* /*from*/) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 static void scan_cancel_cb(lv_event_t* e) {
-    lv_obj_t* ov = (lv_obj_t*)lv_event_get_user_data(e);
+    lv_obj_t* ov   = (lv_obj_t*)lv_event_get_user_data(e);
+    lv_obj_t* prev = (lv_obj_t*)lv_obj_get_user_data(ov);
+    lv_screen_load(prev);
     lv_obj_delete(ov);
 }
 
-// Creates a full-screen overlay on `parent`.  Returns the overlay root.
-// *list_out receives the flex-column scrollable list to add item rows into.
-static lv_obj_t* make_scan_overlay(lv_obj_t* parent, const char* title, lv_obj_t** list_out)
+// Creates a full-screen scan overlay loaded as the active LVGL screen.
+// prev_screen: the screen to restore when the overlay is closed (stored as user_data).
+// *list_out receives the flex-column scrollable results list.
+// *spinner_out (optional) receives the animated spinner placed in the title bar.
+static lv_obj_t* make_scan_overlay(lv_obj_t* prev_screen, const char* title,
+                                    lv_obj_t** list_out, lv_obj_t** spinner_out = nullptr)
 {
     const P4Fonts* f = p4GetFonts();
 
-    lv_obj_t* ov = lv_obj_create(parent);
-    lv_obj_set_pos(ov, 0, 0);
-    lv_obj_set_size(ov, SCR_W, SCR_H);
+    lv_obj_t* ov = lv_obj_create(nullptr);   // full LVGL screen, not a child widget
     lv_obj_set_style_bg_color(ov, C_BG, 0);
     lv_obj_set_style_bg_opa(ov, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(ov, 0, 0);
-    lv_obj_set_style_radius(ov, 0, 0);
     lv_obj_set_style_pad_all(ov, 0, 0);
     lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_user_data(ov, prev_screen);   // remember where to return on close
 
     // Title bar
     lv_obj_t* bar = lv_obj_create(ov);
@@ -385,6 +424,14 @@ static lv_obj_t* make_scan_overlay(lv_obj_t* parent, const char* title, lv_obj_t
     lv_obj_set_style_text_font(lbl_t, f->title, 0);
     lv_obj_set_style_text_color(lbl_t, C_TEXT, 0);
     lv_obj_align(lbl_t, LV_ALIGN_LEFT_MID, 20, 0);
+
+    // Spinner between title and cancel button — animated while scan runs.
+    lv_obj_t* sp = lv_spinner_create(bar);
+    lv_obj_set_size(sp, 36, 36);
+    // Cancel btn: RIGHT_MID x=-10, w=130.  Spinner goes 10px left of that.
+    lv_obj_align(sp, LV_ALIGN_RIGHT_MID, -(10 + 130 + 10 + 18), 0);
+    lv_obj_set_style_arc_color(sp, C_DIM, LV_PART_INDICATOR);
+    if (spinner_out) *spinner_out = sp;
 
     lv_obj_t* cancel_btn = lv_button_create(bar);
     lv_obj_set_size(cancel_btn, 130, 40);
@@ -418,6 +465,7 @@ static lv_obj_t* make_scan_overlay(lv_obj_t* parent, const char* title, lv_obj_t
     lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
 
     if (list_out) *list_out = list;
+    lv_screen_load(ov);
     return ov;
 }
 
@@ -468,14 +516,21 @@ static char s_wifi_ssids[MAX_SCAN_ROWS][33];
 static char s_ble_macs [MAX_SCAN_ROWS][13];
 static char s_ble_names[MAX_SCAN_ROWS][64];
 
+struct WifiScanCtx {
+    lv_obj_t* list;
+    lv_obj_t* spinner;
+};
+
 struct WifiScanResult {
     lv_obj_t* list;
+    lv_obj_t* spinner;
     WifiAP*   aps;
     int       count;
 };
 
 static void wifi_populate_cb(void* arg) {
     auto* r = (WifiScanResult*)arg;
+    if (r->spinner && lv_obj_is_valid(r->spinner)) lv_obj_delete(r->spinner);
     if (lv_obj_is_valid(r->list)) {
         const P4Fonts* f = p4GetFonts();
         lv_obj_clean(r->list);
@@ -499,16 +554,20 @@ static void wifi_populate_cb(void* arg) {
 }
 
 static void wifi_scan_done(const WifiAP* aps, int count, void* user) {
-    auto* r  = (WifiScanResult*)malloc(sizeof(WifiScanResult));
-    r->list  = (lv_obj_t*)user;
-    r->count = count;
-    r->aps   = count > 0 ? (WifiAP*)malloc(count * sizeof(WifiAP)) : nullptr;
+    auto* ctx = (WifiScanCtx*)user;
+    auto* r   = (WifiScanResult*)malloc(sizeof(WifiScanResult));
+    r->list    = ctx->list;
+    r->spinner = ctx->spinner;
+    r->count   = count;
+    r->aps     = count > 0 ? (WifiAP*)malloc(count * sizeof(WifiAP)) : nullptr;
     if (r->aps) memcpy(r->aps, aps, count * sizeof(WifiAP));
+    free(ctx);
     lv_async_call(wifi_populate_cb, r);
 }
 
 struct BleScanResult {
     lv_obj_t*     list;
+    lv_obj_t*     spinner;
     BleDevice*    devs;
     int           count;
     lv_event_cb_t select_cb;
@@ -516,6 +575,7 @@ struct BleScanResult {
 
 static void ble_populate_cb(void* arg) {
     auto* r = (BleScanResult*)arg;
+    if (r->spinner && lv_obj_is_valid(r->spinner)) lv_obj_delete(r->spinner);
     if (lv_obj_is_valid(r->list)) {
         const P4Fonts* f = p4GetFonts();
         lv_obj_clean(r->list);
@@ -540,6 +600,7 @@ static void ble_populate_cb(void* arg) {
 
 struct BleScanCtx {
     lv_obj_t*     list;
+    lv_obj_t*     spinner;
     lv_event_cb_t select_cb;
 };
 
@@ -547,6 +608,7 @@ static void ble_scan_done(const BleDevice* devs, int count, void* user) {
     auto* ctx = (BleScanCtx*)user;
     auto* r   = (BleScanResult*)malloc(sizeof(BleScanResult));
     r->list      = ctx->list;
+    r->spinner   = ctx->spinner;
     r->count     = count;
     r->select_cb = ctx->select_cb;
     r->devs      = count > 0 ? (BleDevice*)malloc(count * sizeof(BleDevice)) : nullptr;
@@ -603,20 +665,23 @@ static void wifi_focus_ssid_cb(lv_event_t*) { wifi_kb_show(wf.ta_ssid); }
 static void wifi_focus_pass_cb(lv_event_t*) { wifi_kb_show(wf.ta_pass); }
 
 static void wifi_ap_select_cb(lv_event_t* e) {
-    lv_obj_t* btn  = lv_event_get_target_obj(e);
+    lv_obj_t* btn    = lv_event_get_target_obj(e);
     const char* ssid = (const char*)lv_obj_get_user_data(btn);
     lv_textarea_set_text(wf.ta_ssid, ssid ? ssid : "");
-    // btn → list → overlay
-    lv_obj_delete(lv_obj_get_parent(lv_obj_get_parent(btn)));
+    lv_obj_t* ov   = lv_obj_get_parent(lv_obj_get_parent(btn));  // btn → list → scan scr
+    lv_obj_t* prev = (lv_obj_t*)lv_obj_get_user_data(ov);
+    lv_screen_load(prev);
+    lv_obj_delete(ov);
 }
 
 static void wifi_scan_btn_cb(lv_event_t*) {
     lv_obj_t* list = nullptr;
-    make_scan_overlay(wf.scr, t(TK::WIFI_SCANNING), &list);
-    lv_obj_t* sp = lv_spinner_create(list);
-    lv_obj_set_size(sp, 80, 80);
-    lv_obj_center(sp);
-    wifi_manager_scan_async(wifi_scan_done, list);
+    lv_obj_t* sp   = nullptr;
+    make_scan_overlay(wf.scr, t(TK::WIFI_SCANNING), &list, &sp);
+    auto* ctx    = (WifiScanCtx*)malloc(sizeof(WifiScanCtx));
+    ctx->list    = list;
+    ctx->spinner = sp;
+    wifi_manager_scan_async(wifi_scan_done, ctx);
 }
 
 static void wifi_save_cb(lv_event_t*) {
@@ -918,39 +983,43 @@ static void ble_alpha_focus_cb(lv_event_t* e) {
 }
 
 static void ble_victron_select_cb(lv_event_t* e) {
-    lv_obj_t* btn = lv_event_get_target_obj(e);
+    lv_obj_t* btn   = lv_event_get_target_obj(e);
     const char* mac = (const char*)lv_obj_get_user_data(btn);
     lv_textarea_set_text(bl_ctx.ta_solar_mac, mac ? mac : "");
-    lv_obj_delete(lv_obj_get_parent(lv_obj_get_parent(btn)));
+    lv_obj_t* ov   = lv_obj_get_parent(lv_obj_get_parent(btn));
+    lv_obj_t* prev = (lv_obj_t*)lv_obj_get_user_data(ov);
+    lv_screen_load(prev);
+    lv_obj_delete(ov);
 }
 
 static void ble_batt_select_cb(lv_event_t* e) {
-    lv_obj_t* btn = lv_event_get_target_obj(e);
+    lv_obj_t* btn   = lv_event_get_target_obj(e);
     const char* mac = (const char*)lv_obj_get_user_data(btn);
     lv_textarea_set_text(bl_ctx.ta_batt_mac, mac ? mac : "");
-    lv_obj_delete(lv_obj_get_parent(lv_obj_get_parent(btn)));
+    lv_obj_t* ov   = lv_obj_get_parent(lv_obj_get_parent(btn));
+    lv_obj_t* prev = (lv_obj_t*)lv_obj_get_user_data(ov);
+    lv_screen_load(prev);
+    lv_obj_delete(ov);
 }
 
 static void ble_scan_victron_cb(lv_event_t*) {
     lv_obj_t* list = nullptr;
-    make_scan_overlay(bl_ctx.scr, t(TK::SCAN_VICTRON), &list);
-    lv_obj_t* sp = lv_spinner_create(list);
-    lv_obj_set_size(sp, 80, 80);
-    lv_obj_center(sp);
+    lv_obj_t* sp   = nullptr;
+    make_scan_overlay(bl_ctx.scr, t(TK::SCAN_VICTRON), &list, &sp);
     auto* ctx      = (BleScanCtx*)malloc(sizeof(BleScanCtx));
     ctx->list      = list;
+    ctx->spinner   = sp;
     ctx->select_cb = ble_victron_select_cb;
     bleDiscoveryScan(true, ble_scan_done, ctx);
 }
 
 static void ble_scan_batt_cb(lv_event_t*) {
     lv_obj_t* list = nullptr;
-    make_scan_overlay(bl_ctx.scr, t(TK::SCAN_BATT), &list);
-    lv_obj_t* sp = lv_spinner_create(list);
-    lv_obj_set_size(sp, 80, 80);
-    lv_obj_center(sp);
+    lv_obj_t* sp   = nullptr;
+    make_scan_overlay(bl_ctx.scr, t(TK::SCAN_BATT), &list, &sp);
     auto* ctx      = (BleScanCtx*)malloc(sizeof(BleScanCtx));
     ctx->list      = list;
+    ctx->spinner   = sp;
     ctx->select_cb = ble_batt_select_cb;
     bleDiscoveryScan(false, ble_scan_done, ctx);
 }
