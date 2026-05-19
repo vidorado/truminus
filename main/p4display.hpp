@@ -100,6 +100,15 @@ void p4DisplayUpdate(const P4DisplayData& d);
 // (e.g. when reporting an error code or a hard failure).
 void p4DisplaySetStatus(const char* msg, bool isError = false);
 
+// Show a dedicated full-screen OTA progress display.
+// from_ver / to_ver: version strings shown as "vX.Y.Z -> vX.Y.Z".
+// Call once before starting the OTA transfer.
+void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver);
+
+// Update the progress bar on the OTA screen (0–100).
+// Thread-safe; can be called from the main task while LVGL runs on its own task.
+void p4DisplaySetOtaProgress(int percent);
+
 // LVGL mutex — thin wrappers around bsp_display_lock/unlock.
 // timeout_ms = portMAX_DELAY (0xFFFFFFFF) to block forever.
 bool lvglLock(uint32_t timeout_ms = portMAX_DELAY);

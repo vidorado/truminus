@@ -1083,5 +1083,88 @@ void p4DisplaySetStatus(const char* msg, bool isError)
     bsp_display_unlock();
 }
 
+// ── OTA progress screen ───────────────────────────────────────────────────────
+
+static lv_obj_t* s_ota_bar     = nullptr;
+static lv_obj_t* s_ota_pct_lbl = nullptr;
+
+void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver)
+{
+    if (!bsp_display_lock(500)) return;
+
+    lv_obj_t* scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, C_BG, 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Gear icon
+    lv_obj_t* icon = lv_label_create(scr);
+    lv_label_set_text(icon, FA_COG);
+    lv_obj_set_style_text_font(icon, s_font_icons36 ? s_font_icons36 : s_font_28, 0);
+    lv_obj_set_style_text_color(icon, C_BTN_ACTIVE, 0);
+    lv_obj_align(icon, LV_ALIGN_CENTER, 0, -130);
+
+    // Title
+    lv_obj_t* title = lv_label_create(scr);
+    lv_label_set_text(title, "Updating co-processor firmware");
+    lv_obj_set_style_text_font(title, s_font_title ? s_font_title : s_font_24, 0);
+    lv_obj_set_style_text_color(title, C_TEXT, 0);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, -75);
+
+    // Version line: "v2.3.0 -> v2.12.7"
+    char ver_buf[48];
+    snprintf(ver_buf, sizeof(ver_buf), "v%s  ->  v%s",
+             from_ver ? from_ver : "?", to_ver ? to_ver : "?");
+    lv_obj_t* ver_lbl = lv_label_create(scr);
+    lv_label_set_text(ver_lbl, ver_buf);
+    lv_obj_set_style_text_font(ver_lbl, s_font_18, 0);
+    lv_obj_set_style_text_color(ver_lbl, C_LABEL, 0);
+    lv_obj_align(ver_lbl, LV_ALIGN_CENTER, 0, -28);
+
+    // Progress bar track
+    lv_obj_t* bar = lv_bar_create(scr);
+    lv_obj_set_size(bar, 600, 26);
+    lv_obj_align(bar, LV_ALIGN_CENTER, 0, 22);
+    lv_bar_set_range(bar, 0, 100);
+    lv_bar_set_value(bar, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(bar, C_BTN, 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(bar, 6, 0);
+    lv_obj_set_style_border_width(bar, 0, 0);
+    lv_obj_set_style_bg_color(bar, C_BTN_ACTIVE, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(bar, 6, LV_PART_INDICATOR);
+    s_ota_bar = bar;
+
+    // Percentage label
+    lv_obj_t* pct_lbl = lv_label_create(scr);
+    lv_label_set_text(pct_lbl, "0%");
+    lv_obj_set_style_text_font(pct_lbl, s_font_20, 0);
+    lv_obj_set_style_text_color(pct_lbl, C_TEXT, 0);
+    lv_obj_align(pct_lbl, LV_ALIGN_CENTER, 0, 65);
+    s_ota_pct_lbl = pct_lbl;
+
+    // Warning
+    lv_obj_t* warn = lv_label_create(scr);
+    lv_label_set_text(warn, "Do not power off");
+    lv_obj_set_style_text_font(warn, s_font_18, 0);
+    lv_obj_set_style_text_color(warn, C_YELLOW, 0);
+    lv_obj_align(warn, LV_ALIGN_CENTER, 0, 120);
+
+    lv_screen_load(scr);
+    bsp_display_unlock();
+}
+
+void p4DisplaySetOtaProgress(int percent)
+{
+    if (percent < 0)   percent = 0;
+    if (percent > 100) percent = 100;
+    if (!s_ota_bar || !s_ota_pct_lbl) return;
+    if (!bsp_display_lock(100)) return;
+    lv_bar_set_value(s_ota_bar, percent, LV_ANIM_ON);
+    lv_label_set_text_fmt(s_ota_pct_lbl, "%d%%", percent);
+    bsp_display_unlock();
+}
+
 bool lvglLock(uint32_t timeout_ms) { return bsp_display_lock(timeout_ms); }
 void lvglUnlock()                  { bsp_display_unlock(); }
