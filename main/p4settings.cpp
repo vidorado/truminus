@@ -49,6 +49,7 @@ static const char* TAG = "cfg";
 #define FA_EYE       "\xEF\x81\xAE"   // U+F06E
 #define FA_EYE_SLASH "\xEF\x81\xB0"   // U+F070
 #define FA_SEARCH    "\xEF\x80\x82"   // U+F002
+#define FA_CLOUD     "\xEF\x83\x82"   // U+F0C2
 
 // Screen geometry.
 static constexpr int SCR_W   = 800;
@@ -188,7 +189,7 @@ static lv_obj_t* build_title_bar(const char* title, lv_event_cb_t back_cb) {
 // Button count (40) matches the default spec map so the same ctrl array works.
 static const char* const s_kb_map_spec[] = {
     "1","2","3","4","5","6","7","8","9","0", LV_SYMBOL_BACKSPACE, "\n",
-    "abc","!","@","#","$","%","&","*","(",")","_","+", "\n",
+    "abc","!","@","#","$","%","/","*","(",")","_","+", "\n",
     "\xC3\xA1","\xC3\xA9","\xC3\xAD","\xC3\xB3","\xC3\xBA","\xC3\xB1","\xC3\xBC","\xC2\xA1","\xC2\xBF","\"","'","=", "\n",
     LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
@@ -258,6 +259,7 @@ static void show_mqtt(lv_obj_t* from);
 static void show_ble(lv_obj_t* from);
 static void show_display(lv_obj_t* from);
 static void show_language(lv_obj_t* from);
+static void show_tunnel(lv_obj_t* from);
 
 // ── "from" helpers — store prev screen pointer in the button user_data ────────
 // Each "Back" callback reads the pointer and calls show_xxx(prev).
@@ -291,6 +293,7 @@ static void menu_mqtt_cb(lv_event_t* e)     { show_mqtt(lv_screen_active()); }
 static void menu_ble_cb(lv_event_t* e)      { show_ble(lv_screen_active()); }
 static void menu_display_cb(lv_event_t* e)  { show_display(lv_screen_active()); }
 static void menu_language_cb(lv_event_t* e) { show_language(lv_screen_active()); }
+static void menu_tunnel_cb(lv_event_t* e)   { show_tunnel(lv_screen_active()); }
 
 static void show_menu(lv_obj_t* /*from*/) {
     const P4Fonts* f = p4GetFonts();
@@ -303,66 +306,44 @@ static void show_menu(lv_obj_t* /*from*/) {
     // Icon: icons36 (36px FA glyph) centred in upper half of button.
     // Label: f24 centred in lower portion.
 
+    // Unified 3-column grid that handles 5 (NO_MQTT) or 6 (full build) buttons.
+    // Row 1 holds up to 3; the remainder spills into row 2 and is centred
+    // separately so 5-button layouts keep a clean 3+2 grouping.
 #ifdef NO_MQTT
     static const MenuBtn ITEMS[] = {
-        { FA_WIFI,    TK::WIFI_CFG,  menu_wifi_cb     },
-        { FA_SUN,     TK::SOLAR_CFG, menu_ble_cb      },
-        { FA_DISPLAY, TK::DISP_CFG,  menu_display_cb  },
-        { FA_GLOBE,   TK::LANGUAGE,  menu_language_cb },
+        { FA_WIFI,     TK::WIFI_CFG,    menu_wifi_cb     },
+        { FA_SUN,      TK::SOLAR_CFG,   menu_ble_cb      },
+        { FA_DISPLAY,  TK::DISP_CFG,    menu_display_cb  },
+        { FA_GLOBE,    TK::LANGUAGE,    menu_language_cb },
+        { FA_CLOUD,    TK::TUNNEL_CFG,  menu_tunnel_cb   },
     };
-    static constexpr int N      = 4;
-    static constexpr int COLS   = 2;
-    static constexpr int BTN_W  = 370;
-    static constexpr int BTN_H  = 185;
-    static constexpr int GAP    = 20;
-    // Centre the 2-column grid horizontally and vertically in the content area.
-    static constexpr int GRID_W = COLS * BTN_W + (COLS - 1) * GAP;
-    static constexpr int ROWS   = (N + COLS - 1) / COLS;  // 2
-    static constexpr int GRID_H = ROWS * BTN_H + (ROWS - 1) * GAP;
-    static constexpr int OX     = (SCR_W - GRID_W) / 2;
-    static constexpr int OY     = TITLE_H + 2 + (SCR_H - TITLE_H - 2 - GRID_H) / 2;
-
-    for (int i = 0; i < N; i++) {
-        int col = i % COLS;
-        int row = i / COLS;
-        int x   = OX + col * (BTN_W + GAP);
-        int y   = OY + row * (BTN_H + GAP);
-
-        lv_obj_t* btn = lv_button_create(scr);
-        lv_obj_set_pos(btn, x, y);
-        lv_obj_set_size(btn, BTN_W, BTN_H);
-        style_btn(btn);
-        lv_obj_add_event_cb(btn, ITEMS[i].cb, LV_EVENT_CLICKED, nullptr);
-
-        lv_obj_t* ico = make_label(btn, ITEMS[i].icon, f->icons36, C_DIM);
-        lv_obj_align(ico, LV_ALIGN_CENTER, 0, -26);
-        lv_obj_t* lbl = make_label(btn, t(ITEMS[i].label_key), f->f24, C_TEXT);
-        lv_obj_align(lbl, LV_ALIGN_CENTER, 0, +30);
-    }
 #else
     static const MenuBtn ITEMS[] = {
-        { FA_WIFI,     TK::WIFI_CFG,  menu_wifi_cb     },
-        { FA_ENVELOPE, TK::MQTT_CFG,  menu_mqtt_cb     },
-        { FA_SUN,      TK::SOLAR_CFG, menu_ble_cb      },
-        { FA_DISPLAY,  TK::DISP_CFG,  menu_display_cb  },
-        { FA_GLOBE,    TK::LANGUAGE,  menu_language_cb },
+        { FA_WIFI,     TK::WIFI_CFG,    menu_wifi_cb     },
+        { FA_ENVELOPE, TK::MQTT_CFG,    menu_mqtt_cb     },
+        { FA_SUN,      TK::SOLAR_CFG,   menu_ble_cb      },
+        { FA_DISPLAY,  TK::DISP_CFG,    menu_display_cb  },
+        { FA_GLOBE,    TK::LANGUAGE,    menu_language_cb },
+        { FA_CLOUD,    TK::TUNNEL_CFG,  menu_tunnel_cb   },
     };
-    static constexpr int N      = 5;
-    static constexpr int BTN_W  = 240;
-    static constexpr int BTN_H  = 185;
-    static constexpr int GAP    = 20;
-    static constexpr int CONTENT_H = SCR_H - TITLE_H - 2;
-    // Row 1: 3 buttons centred; Row 2: 2 buttons centred.
-    static constexpr int ROW1_X = (SCR_W - 3 * BTN_W - 2 * GAP) / 2;
-    static constexpr int ROW2_X = (SCR_W - 2 * BTN_W - 1 * GAP) / 2;
-    static constexpr int ROW1_Y = TITLE_H + 2 + (CONTENT_H - 2 * BTN_H - GAP) / 2;
+#endif
+    const int N      = sizeof(ITEMS) / sizeof(ITEMS[0]);
+    const int BTN_W  = 240;
+    const int BTN_H  = 185;
+    const int GAP    = 20;
+    const int CONT_H = SCR_H - TITLE_H - 2;
+    const int row1   = (N >= 3) ? 3 : N;
+    const int row2   = N - row1;
+    const int ROW1_X = (SCR_W - row1 * BTN_W - (row1 - 1) * GAP) / 2;
+    const int ROW2_X = row2 > 0 ? (SCR_W - row2 * BTN_W - (row2 - 1) * GAP) / 2 : 0;
+    const int ROW1_Y = TITLE_H + 2 + (CONT_H - (row2 > 0 ? 2 : 1) * BTN_H - (row2 > 0 ? GAP : 0)) / 2;
 
     for (int i = 0; i < N; i++) {
-        int col     = i % 3;
-        int row     = i / 3;
-        int base_x  = (row == 0) ? ROW1_X : ROW2_X;
-        int x       = base_x + col * (BTN_W + GAP);
-        int y       = ROW1_Y + row * (BTN_H + GAP);
+        int row    = (i < row1) ? 0 : 1;
+        int col    = (row == 0) ? i : (i - row1);
+        int base_x = (row == 0) ? ROW1_X : ROW2_X;
+        int x      = base_x + col * (BTN_W + GAP);
+        int y      = ROW1_Y + row * (BTN_H + GAP);
 
         lv_obj_t* btn = lv_button_create(scr);
         lv_obj_set_pos(btn, x, y);
@@ -375,7 +356,6 @@ static void show_menu(lv_obj_t* /*from*/) {
         lv_obj_t* lbl = make_label(btn, t(ITEMS[i].label_key), f->f24, C_TEXT);
         lv_obj_align(lbl, LV_ALIGN_CENTER, 0, +30);
     }
-#endif
 
     lv_screen_load(scr);
 }
@@ -1318,6 +1298,149 @@ static void show_language(lv_obj_t* from) {
     lv_obj_center(en_l);
 
     lv_screen_load(scr);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TUNNEL SCREEN
+// ═══════════════════════════════════════════════════════════════════════════════
+// Configures the WebSocket reverse tunnel.  The companion Node.js bridge
+// runs on a Plesk-hosted Node.js app (see server/app.js).  User supplies
+// the full wss:// URL and a shared secret matching TUNNEL_TOKEN on the
+// server.
+
+#include "wstunnel.hpp"
+
+struct TunCtx {
+    lv_obj_t* scr;
+    lv_obj_t* panel;
+    lv_obj_t* sw_enable;
+    lv_obj_t* ta_server;
+    lv_obj_t* ta_token;
+    lv_obj_t* kb;
+    lv_obj_t* lbl_status;
+    lv_obj_t* prev;
+};
+static TunCtx tn;
+
+static void tun_back_cb(lv_event_t*) {
+    lv_obj_t* cur = lv_screen_active();
+    lv_screen_load(tn.prev);
+    lv_obj_delete(cur);
+}
+
+static void tun_kb_hide_cb(lv_event_t*) {
+    lv_obj_add_flag(tn.kb, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_height(tn.panel, SCR_H - TITLE_H - 2);
+}
+
+// Bound to LV_EVENT_FOCUSED and LV_EVENT_CLICKED so tapping a textarea that's
+// already focused (e.g. after the user dismissed the keyboard with OK) re-
+// opens it — FOCUSED alone does not refire on an already-focused widget.
+static void tun_show_kb_cb(lv_event_t* e) {
+    lv_obj_t* ta = lv_event_get_target_obj(e);
+    lv_keyboard_set_textarea(tn.kb, ta);
+    lv_keyboard_set_mode(tn.kb, LV_KEYBOARD_MODE_TEXT_LOWER);
+    lv_obj_remove_flag(tn.kb, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_height(tn.panel, SCR_H - TITLE_H - 2 - KB_H);
+    lv_obj_scroll_to_view(ta, LV_ANIM_OFF);
+}
+
+static void tun_save_cb(lv_event_t*) {
+    TunnelConfig cfg = {};
+    cfg.enabled = lv_obj_has_state(tn.sw_enable, LV_STATE_CHECKED);
+    const char* sv = lv_textarea_get_text(tn.ta_server);
+    const char* tk = lv_textarea_get_text(tn.ta_token);
+    strncpy(cfg.server, sv ? sv : "", sizeof(cfg.server) - 1);
+    strncpy(cfg.token,  tk ? tk : "", sizeof(cfg.token)  - 1);
+    wstunnelSaveConfig(cfg);
+    wstunnelApply();
+    lv_label_set_text(tn.lbl_status, t(TK::CFG_SAVED));
+    schedule_back(tn.prev);
+}
+
+static void show_tunnel(lv_obj_t* from) {
+    const P4Fonts* f = p4GetFonts();
+    tn.prev = from;
+
+    tn.scr   = build_title_bar(t(TK::TUNNEL_TITLE), tun_back_cb);
+    tn.panel = build_content_panel(tn.scr);
+
+    TunnelConfig cur = {};
+    wstunnelLoadConfig(cur);
+
+    const int FULL_W = SCR_W - 40;
+    int y = 6;
+
+    // Enable switch
+    lv_obj_t* lbl_en = make_label(tn.panel, t(TK::TUNNEL_ENABLE), f->f22, C_LABEL);
+    lv_obj_set_pos(lbl_en, 0, y + 8);
+    tn.sw_enable = lv_switch_create(tn.panel);
+    lv_obj_set_pos(tn.sw_enable, FULL_W - 80, y);
+    lv_obj_set_size(tn.sw_enable, 80, 40);
+    if (cur.enabled) lv_obj_add_state(tn.sw_enable, LV_STATE_CHECKED);
+    y += 60;
+
+    // Server URL
+    lv_obj_t* lbl_s = make_label(tn.panel, t(TK::TUNNEL_SERVER), f->f22, C_LABEL);
+    lv_obj_set_pos(lbl_s, 0, y);
+    y += 30;
+    tn.ta_server = lv_textarea_create(tn.panel);
+    lv_obj_set_pos(tn.ta_server, 0, y);
+    lv_obj_set_size(tn.ta_server, FULL_W, 52);
+    lv_obj_set_style_text_font(tn.ta_server, f->f22, 0);
+    lv_textarea_set_one_line(tn.ta_server, true);
+    lv_textarea_set_placeholder_text(tn.ta_server, t(TK::TUNNEL_SERVER_PH));
+    if (cur.server[0]) lv_textarea_set_text(tn.ta_server, cur.server);
+    lv_obj_add_event_cb(tn.ta_server, tun_show_kb_cb, LV_EVENT_FOCUSED, nullptr);
+    lv_obj_add_event_cb(tn.ta_server, tun_show_kb_cb, LV_EVENT_CLICKED, nullptr);
+    y += 62;
+
+    // Token
+    lv_obj_t* lbl_t = make_label(tn.panel, t(TK::TUNNEL_TOKEN), f->f22, C_LABEL);
+    lv_obj_set_pos(lbl_t, 0, y);
+    y += 30;
+    tn.ta_token = lv_textarea_create(tn.panel);
+    lv_obj_set_pos(tn.ta_token, 0, y);
+    lv_obj_set_size(tn.ta_token, FULL_W, 52);
+    lv_obj_set_style_text_font(tn.ta_token, f->f22, 0);
+    lv_textarea_set_one_line(tn.ta_token, true);
+    lv_textarea_set_placeholder_text(tn.ta_token, t(TK::TUNNEL_TOKEN_PH));
+    if (cur.token[0]) lv_textarea_set_text(tn.ta_token, cur.token);
+    lv_obj_add_event_cb(tn.ta_token, tun_show_kb_cb, LV_EVENT_FOCUSED, nullptr);
+    lv_obj_add_event_cb(tn.ta_token, tun_show_kb_cb, LV_EVENT_CLICKED, nullptr);
+    y += 62;
+
+    // Instructions
+    lv_obj_t* instr = make_label(tn.panel, t(TK::TUNNEL_INSTR), f->f18, C_DIM);
+    lv_obj_set_pos(instr, 0, y);
+    lv_obj_set_width(instr, FULL_W);
+    lv_label_set_long_mode(instr, LV_LABEL_LONG_WRAP);
+    y += 80;
+
+    // Save button
+    lv_obj_t* save_btn = lv_button_create(tn.panel);
+    lv_obj_set_pos(save_btn, (FULL_W - 280) / 2, y);
+    lv_obj_set_size(save_btn, 280, 52);
+    style_btn(save_btn, C_BTN_ACT);
+    lv_obj_add_event_cb(save_btn, tun_save_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* slbl = make_label(save_btn, t(TK::SAVE), f->f22, C_TEXT);
+    lv_obj_center(slbl);
+    y += 62;
+
+    // Status line
+    tn.lbl_status = make_label(tn.panel,
+        wstunnelIsConnected() ? t(TK::TUNNEL_STATUS_ON) : t(TK::TUNNEL_STATUS_OFF),
+        f->f20, wstunnelIsConnected() ? C_GREEN : C_LABEL);
+    lv_obj_set_pos(tn.lbl_status, 0, y);
+    lv_obj_set_width(tn.lbl_status, FULL_W);
+    lv_label_set_long_mode(tn.lbl_status, LV_LABEL_LONG_WRAP);
+
+    // Keyboard
+    tn.kb = build_keyboard(tn.scr);
+    lv_obj_add_event_cb(tn.kb, tun_kb_hide_cb, LV_EVENT_READY,  nullptr);
+    lv_obj_add_event_cb(tn.kb, tun_kb_hide_cb, LV_EVENT_CANCEL, nullptr);
+
+    lv_screen_load(tn.scr);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

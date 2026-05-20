@@ -100,6 +100,18 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Carga",
     "Absorci\xC3\xB3n",
     "Flotaci\xC3\xB3n",
+    // Tunnel WSS
+    "T\xC3\xBAnel",                                                  // TUNNEL_CFG
+    "TruMinus - T\xC3\xBAnel WS",                                    // TUNNEL_TITLE
+    "Habilitar t\xC3\xBAnel",                                        // TUNNEL_ENABLE
+    "Dominio",                                                       // TUNNEL_SERVER
+    "tunel.tudominio.com",                                           // TUNNEL_SERVER_PH
+    "Token",                                                         // TUNNEL_TOKEN
+    "secreto compartido",                                            // TUNNEL_TOKEN_PH
+    "Configura tu servidor Plesk (Node.js) en la URL de arriba "
+    "y pega el mismo token que TUNNEL_TOKEN.",                       // TUNNEL_INSTR
+    "Conectado",                                                     // TUNNEL_STATUS_ON
+    "Desconectado",                                                  // TUNNEL_STATUS_OFF
 };
 
 static const char* EN_STRINGS[(int)TK::_COUNT] = {
@@ -195,6 +207,18 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Bulk",
     "Absorption",
     "Float",
+    // Tunnel WSS
+    "Tunnel",                                                        // TUNNEL_CFG
+    "TruMinus - WS Tunnel",                                          // TUNNEL_TITLE
+    "Enable tunnel",                                                 // TUNNEL_ENABLE
+    "Domain",                                                        // TUNNEL_SERVER
+    "tunnel.yourdomain.com",                                         // TUNNEL_SERVER_PH
+    "Token",                                                         // TUNNEL_TOKEN
+    "shared secret",                                                 // TUNNEL_TOKEN_PH
+    "Set up the Plesk (Node.js) bridge at the URL above and paste "
+    "the same value as its TUNNEL_TOKEN env var.",                   // TUNNEL_INSTR
+    "Connected",                                                     // TUNNEL_STATUS_ON
+    "Disconnected",                                                  // TUNNEL_STATUS_OFF
 };
 
 const char* t(TK key) {

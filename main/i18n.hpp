@@ -103,6 +103,17 @@ enum class TK : uint8_t {
     SOL_STATUS_BULK,       // "Carga"             / "Bulk"
     SOL_STATUS_ABSORB,     // "Absorci\xC3\xB3n"  / "Absorption"
     SOL_STATUS_FLOAT,      // "Flotaci\xC3\xB3n"  / "Float"
+    // ── WebSocket reverse tunnel ───────────────────────────────────────────
+    TUNNEL_CFG,            // settings menu: "T\xC3\xBAnel" / "Tunnel"
+    TUNNEL_TITLE,
+    TUNNEL_ENABLE,
+    TUNNEL_SERVER,
+    TUNNEL_SERVER_PH,
+    TUNNEL_TOKEN,
+    TUNNEL_TOKEN_PH,
+    TUNNEL_INSTR,
+    TUNNEL_STATUS_ON,
+    TUNNEL_STATUS_OFF,
     _COUNT
 };
 

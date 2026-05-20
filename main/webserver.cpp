@@ -39,12 +39,12 @@ static constexpr UBaseType_t WS_QUEUE_MSG = 256;
 // slot per concurrent request; each open WS uses ~6 KB of internal SRAM
 // (control block + recv buffer).  4 leaves room for one reload overlap on a
 // machine that already has BLE + WiFi-via-C6 + LVGL running.
-static constexpr uint8_t WS_MAX_CLIENTS = 4;
+static constexpr uint8_t WS_MAX_CLIENTS = 8;
 
 // Maximum total sockets configured below in startWebServer().  Must match
 // httpd_config_t::max_open_sockets exactly — httpd_get_client_list() rejects
 // any smaller buffer with ESP_ERR_INVALID_ARG (silently breaks broadcast).
-static constexpr size_t MAX_OPEN_SOCKETS = 7;
+static constexpr size_t MAX_OPEN_SOCKETS = 12;
 
 static const char* TAG = "web";
 

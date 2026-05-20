@@ -13,6 +13,7 @@
 #include "ultimatronble.hpp"
 #include "c6_ota.hpp"
 #include "webserver.hpp"
+#include "wstunnel.hpp"
 #include "esp_hosted_host_fw_ver.h"
 extern "C" {
 #include "esp_hosted_misc.h"
@@ -253,6 +254,11 @@ static void bootTask(void* /*arg*/) {
     }
     startWebServer(onWsCommand, onWsConnected);
 
+    // WebSocket reverse tunnel — exposes the local HTTP server through CGNAT
+    // via a Plesk-hosted Node.js bridge.  Spawns its own task; respects the
+    // "tunnel/enabled" NVS flag.
+    wstunnelInit();
+
     // WS pump runs at 100 ms cadence so touch inputs on the LCD reach
     // connected browsers in ≤100 ms.  Lower than the main loop's 1 s tick.
     xTaskCreate(wsPumpTask, "ws_pump", 4096, nullptr, 3, nullptr);
@@ -349,6 +355,9 @@ extern "C" void app_main(void)
         } else {
             d.batt.valid = false;
         }
+
+        // Tunnel state → topbar cloud icon (grey/blinking/blue/red).
+        p4SetTunnelState(static_cast<uint8_t>(wstunnelUiState()));
 
         d.bleState = (vd.valid || ud.valid) ? 2
                    : (victronIsConfigured() || ultimatronIsConfigured()) ? 1

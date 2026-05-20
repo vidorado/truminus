@@ -101,3 +101,26 @@ CONFIG_HTTPD_WS_SUPPORT=y
 # accurately (the URI handler is invoked only for frames, never for the
 # upgrade leg, so we cannot count clients from inside it).
 CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y
+
+# LWIP global socket pool.  Each tunneled browser request uses 2 LWIP fds
+# (our client side + the httpd-accepted side), plus the httpd listener,
+# the WSS control client, and a handful for WiFi/DHCP/DNS.  Default of 10
+# is exhausted as soon as a browser fetches a multi-asset page through
+# the tunnel; raise to comfortably hold ~8 concurrent streams.
+CONFIG_LWIP_MAX_SOCKETS=40
+
+# LWIP TCP PCB pool — every loopback tunnel stream consumes two PCBs
+# (our client end + the httpd-accepted end on the same stack) plus a
+# 60 s TIME_WAIT lingering after close.  Default 16 was getting blown
+# the moment a browser loaded a multi-asset page through the tunnel,
+# manifesting as `accept (errno 113 / EHOSTUNREACH / ERR_RTE)` because
+# lwip couldn't allocate a PCB for the next connection.
+CONFIG_LWIP_MAX_ACTIVE_TCP=64
+
+# Modern browsers send 1.5–2 KB of headers per request (cookies, sec-ch-ua,
+# accept-encoding…).  esp_http_server's default 512 / our previous 1024 are
+# both too tight: requests through the tunnel get rejected with "Header
+# fields are too long" (HTTP 431).  Each accepted connection allocates
+# this buffer once, so the cost is bounded by max_open_sockets.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=4096
+CONFIG_HTTPD_MAX_URI_LEN=1024

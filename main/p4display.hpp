@@ -90,6 +90,15 @@ void p4SetBoilerMode(int mode);
 void p4SetEnergyIdx(int idx);
 void p4SetRoomSetpoint(float celsius);
 
+// Topbar cloud icon driver.  Pass a TunnelUiState (cast to uint8_t).  On
+// CONNECTING the colour toggles each call, so the caller's update cadence
+// (≈1 s) becomes the blink rate.
+//   0 DISABLED   → dark grey
+//   1 CONNECTING → blinking blue/grey
+//   2 CONNECTED  → solid blue rgb(70,131,210)
+//   3 FAILED     → solid red
+void p4SetTunnelState(uint8_t state);
+
 // ── Public API ────────────────────────────────────────────────────────────
 
 // Call once from app_main (before any task uses LVGL).

@@ -22,6 +22,7 @@ idf_component_register(
         "ultimatronble.cpp"
         "c6_ota.cpp"
         "webserver.cpp"
+        "wstunnel.cpp"
     INCLUDE_DIRS
         "."
     EMBED_FILES
@@ -42,9 +43,12 @@ idf_component_register(
         mbedtls
         freertos
         espressif__cjson
+        espressif__esp_websocket_client
+        esp-tls
         h2zero__esp-nimble-cpp
         espressif__esp_hosted
         joltwallet__littlefs
+        lwip
 )
 
 # Build a LittleFS image from <project>/data/ and flash it to the `littlefs`

@@ -50,6 +50,7 @@ SOLID_GLYPHS = {
     0xF185: "sun               FA_SUN       (Solar/BLE)",
     0xF108: "display/desktop   FA_DISPLAY   (Display settings)",
     0xF0AC: "globe             FA_GLOBE     (Language)",
+    0xF0C2: "cloud             FA_CLOUD     (WSS reverse-tunnel status)",
     # p4settings.cpp — password toggle / navigation
     0xF06E: "eye               FA_EYE",
     0xF070: "eye-slash         FA_EYE_SLASH",

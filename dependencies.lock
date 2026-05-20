@@ -108,6 +108,16 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 1.1.2
+  espressif/esp_websocket_client:
+    component_hash: 3fb288702517ef4d75bf933a115f1056ee0c2540d964f9e1d856e0bb67e1dfeb
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.0
   espressif/esp_wifi_remote:
     component_hash: 5cdfb7b59d312d91c9dd6e8365be6b7b8a16eeef2a2b40d235c4a12f6d0ff769
     dependencies:
@@ -208,11 +218,12 @@ dependencies:
 direct_dependencies:
 - espressif/cjson
 - espressif/esp_hosted
+- espressif/esp_websocket_client
 - espressif/esp_wifi_remote
 - h2zero/esp-nimble-cpp
 - idf
 - jc4880_bsp
 - joltwallet/littlefs
-manifest_hash: 1f393fc00f21671642c20c69f03f2615ac383372b0e51b628adc0c5fbe36b5ef
+manifest_hash: 6b7e274a9ac83d001f7e1ffa6aebdd7f767530d553f60d2f6885c62efcb5375f
 target: esp32p4
 version: 3.0.0

@@ -35,3 +35,8 @@ dependencies:
   h2zero/esp-nimble-cpp:
     version: '>=2.0.0'
   espressif/cjson: '*'
+
+  # WSS reverse-tunnel transport — connects to the Plesk-hosted Node.js
+  # bridge (server/app.js) so the local HTTP server is reachable through
+  # CGNAT.  See main/wstunnel.cpp.
+  espressif/esp_websocket_client: '*'

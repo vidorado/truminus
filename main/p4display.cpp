@@ -50,6 +50,7 @@ const P4Fonts* p4GetFonts() { return &s_fonts; }
 #define FA_BOLT        "\xEF\x83\xA7"   // U+F0E7 (lightning, for boost)
 #define FA_SIGN_IN    "\xEF\x8B\xB6"   // U+F2F6 (right-to-bracket, outdoor temp arrow)
 #define FA_BLUETOOTH  "\xEF\x8A\x93"   // U+F293 (bluetooth brand icon, BLE status)
+#define FA_CLOUD      "\xEF\x83\x82"   // U+F0C2 (cloud, Serveo SSH tunnel status)
 
 // ── Layout (800×480 landscape) ────────────────────────────────────────────────
 static constexpr int W         = 800;
@@ -117,6 +118,7 @@ static struct {
     lv_obj_t* lbl_outdoor;
     lv_obj_t* icon_wifi;
     lv_obj_t* icon_bt;
+    lv_obj_t* icon_cloud;
     lv_obj_t* icon_lin;
     lv_obj_t* btn_conf;
 
@@ -399,9 +401,15 @@ static void build_main_screen()
     lv_obj_set_style_text_color(ui.icon_bt, lv_color_hex(0x444466), 0);  // dark grey = not configured
     lv_obj_align_to(ui.icon_bt, ui.icon_wifi, LV_ALIGN_OUT_LEFT_MID, -16, 0);
 
+    ui.icon_cloud = lv_label_create(topbar);
+    lv_label_set_text(ui.icon_cloud, FA_CLOUD);
+    lv_obj_set_style_text_font(ui.icon_cloud, s_font_icons24, 0);
+    lv_obj_set_style_text_color(ui.icon_cloud, lv_color_hex(0x444466), 0);  // dark grey = disconnected
+    lv_obj_align_to(ui.icon_cloud, ui.icon_bt, LV_ALIGN_OUT_LEFT_MID, -16, 0);
+
     ui.btn_conf = lv_button_create(topbar);
     lv_obj_set_size(ui.btn_conf, 158, 40);
-    lv_obj_align_to(ui.btn_conf, ui.icon_bt, LV_ALIGN_OUT_LEFT_MID, -20, 0);
+    lv_obj_align_to(ui.btn_conf, ui.icon_cloud, LV_ALIGN_OUT_LEFT_MID, -20, 0);
     style_button(ui.btn_conf);
     lv_obj_t* lbl_conf = lv_label_create(ui.btn_conf);
     lv_label_set_text(lbl_conf, FA_COG "  Config");
@@ -824,6 +832,8 @@ static uint32_t      s_wake_tick         = 0;
 // Dim level = 20 % of normal brightness, floor 8.
 static int dim_level() { int d = s_brightness_normal / 5; return d < 8 ? 8 : d; }
 
+static void tunnel_icon_timer_cb(lv_timer_t*);   // defined below
+
 static void screen_timeout_cb(lv_timer_t*) {
     if (!s_disp) return;
 
@@ -918,6 +928,9 @@ void p4DisplayInit()
         // Timer runs always (handles brightness animation); only idle logic
         // is gated on s_timeout_ms > 0.
         lv_timer_create(screen_timeout_cb, 50, nullptr);
+        // 500 ms repaint cadence for the topbar cloud icon — provides the
+        // CONNECTING blink without coupling to main.cpp's loop frequency.
+        lv_timer_create(tunnel_icon_timer_cb, 500, nullptr);
         if (s_timeout_ms > 0)
             ESP_LOGI(TAG, "screen timeout: %lu ms, normal brightness: %d%%",
                      (unsigned long)s_timeout_ms, (int)brite);
@@ -1033,6 +1046,37 @@ void p4SetRoomSetpoint(float celsius)
     st.roomSetpoint = celsius;
     refresh_controls();
     bsp_display_unlock();
+}
+
+// Latest tunnel UI state, written by main loop, read by the LVGL blink
+// timer.  uint8 reads/writes are atomic on RISC-V, no lock needed.
+static volatile uint8_t s_tunnel_state = 0;
+
+void p4SetTunnelState(uint8_t state) { s_tunnel_state = state; }
+
+// LVGL timer (500 ms period) that repaints the cloud icon based on
+// s_tunnel_state.  Decoupling from p4SetTunnelState() lets us blink at a
+// fixed cadence regardless of how often main.cpp polls wstunnelUiState().
+static void tunnel_icon_timer_cb(lv_timer_t*)
+{
+    static bool blink_phase = false;
+    blink_phase = !blink_phase;
+    if (!ui.icon_cloud) return;
+    lv_color_t c;
+    switch (s_tunnel_state) {
+    case 2: // CONNECTED
+        c = lv_color_make(70, 131, 210); break;
+    case 1: // CONNECTING
+        c = blink_phase ? lv_color_make(70, 131, 210)
+                        : lv_color_hex(0x444466);
+        break;
+    case 3: // FAILED
+        c = lv_color_hex(0xC03030); break;       // red
+    case 0: // DISABLED
+    default:
+        c = lv_color_hex(0x444466); break;       // dark grey
+    }
+    lv_obj_set_style_text_color(ui.icon_cloud, c, 0);
 }
 
 void p4DisplayRebuild()
