@@ -107,7 +107,10 @@ static void onWsCommand(const char* id, const char* value) {
 static void onWsConnected() {
     P4ControlState cs;
     p4GetControlState(cs);
-    char buf[256];
+    WifiStatus ws = wifi_manager_get_status();
+    const char* ssid = (ws.connected && ws.ssid[0]) ? ws.ssid : "";
+
+    char buf[320];
     snprintf(buf, sizeof(buf),
              "{\"command\":\"snapshot\","
              "\"settings\":{"
@@ -117,12 +120,14 @@ static void onWsConnected() {
                  "\"/temp\":\"%.1f\""
              "},"
              "\"status\":{},"
+             "\"ssid\":\"%s\","
              "\"energy_idx\":%d"
              "}",
              cs.heatingOn ? 1 : 0,
              fanIntToStr(cs.fanMode),
              boilerIntToStr(cs.boilerMode),
              cs.roomSetpoint,
+             ssid,
              cs.energyIdx);
     wsQueueSend(buf);
 }
@@ -170,12 +175,30 @@ static void broadcastControlChanges(const P4ControlState& cs) {
 // is fine for display refresh and BLE/WiFi status polling but felt
 // sluggish over the WS — keep that loop coarse and let this one carry the
 // WS latency budget.
+// Broadcast SSID changes to connected browsers (footer shows "ssid / ip").
+// Same diff-based scheme as broadcastControlChanges: emit once on change.
+static void broadcastSsidChange() {
+    static char  prev[33] = "";
+    static bool  inited   = false;
+    WifiStatus ws = wifi_manager_get_status();
+    const char* cur = (ws.connected && ws.ssid[0]) ? ws.ssid : "";
+    if (inited && strcmp(cur, prev) == 0) return;
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"status\",\"id\":\"/ssid\",\"value\":\"%s\"}", cur);
+    wsQueueSend(buf);
+    strncpy(prev, cur, sizeof(prev) - 1);
+    prev[sizeof(prev) - 1] = '\0';
+    inited = true;
+}
+
 static void wsPumpTask(void* /*arg*/) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(100));
         P4ControlState cs;
         p4GetControlState(cs);
         broadcastControlChanges(cs);
+        broadcastSsidChange();
         wsQueueDrain();
     }
 }
