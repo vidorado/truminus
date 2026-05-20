@@ -229,26 +229,49 @@ both         {"type":"close","id":<n>}                                text
 Binary data frames save ~33 % bandwidth and a parse/format roundtrip
 vs. the JSON+base64 phase-1 protocol; both sides must match.
 
+### Local httpd is split into two instances
+`pick_local_port()` in `wstunnel.cpp` sniffs the first request bytes and
+routes `GET /ws` to the WS-dedicated httpd at `127.0.0.1:81`,
+everything else to the asset httpd at `127.0.0.1:80`.  The split exists
+to isolate WebSocket sessions from `lru_purge_enable` eviction during
+asset stampedes — see `.claude/skills/wss-tunnel/SKILL.md` for the full
+rationale.
+
 ### Gating, retries, pending queue
 - Tunnel only starts on `IP_EVENT_STA_GOT_IP`; `WIFI_EVENT_STA_DISCONNECTED`
   tears the WS down.  Icon stays grey until WiFi is up.
 - `esp_websocket_client` auto-reconnects (5 s).  We count consecutive
   `WEBSOCKET_EVENT_DISCONNECTED` and flip the icon red after 3.
 - Each tunneled stream consumes 1 local LWIP fd (our client to
-  `127.0.0.1:80`) + 1 httpd-accepted fd, and 2 TCP PCBs.  When all 12
-  stream slots are busy, new `open` frames go to a pending queue with
-  per-id buffer for any `data` bytes that arrive before the open
+  `127.0.0.1:80` or `:81`) + 1 httpd-accepted fd, and 2 TCP PCBs.  When
+  all 12 stream slots are busy, new `open` frames go to a pending queue
+  with per-id buffer for any `data` bytes that arrive before the open
   materialises (the server pushes the GET line right after the open, so
   we must not drop those bytes).  5 s timeout per pending entry.
+- `evict_idle_locked()` reclaims the least-recently-active non-WS stream
+  when the table is full, so browser keep-alive zombies cannot starve
+  new opens.  WS streams are exempt (`Stream::is_ws`).
 - `send_text` / `send_bin` wait up to 10 s on the ws-client internal
   lock — long enough that TLS write backpressure flows back into the
   pump task rather than dropping bytes.  On real failure (peer gone) the
   stream is closed cleanly and the server synthesises a 502 to the
   browser.
+- Loopback sockets carry `TCP_NODELAY=1` — Nagle adds multi-second
+  latency for the small WS frames that flow ESP→browser through the
+  tunnel.  See the skill for the failure mode.
+- The wsReaper task in `webserver.cpp` sends a real WS PING (opcode
+  0x9) every 20 s to every WS fd across both httpd instances, so
+  Plesk's 60 s `proxy_read_timeout` never kills an idle WS.
 
 ### Capacity dials
-- `MAX_STREAMS=12`, `PENDING_QUEUE_SIZE=16` (`main/wstunnel.cpp`).
-- `httpd cfg.max_open_sockets=12`, `WS_MAX_CLIENTS=8` (`main/webserver.cpp`).
+- `MAX_STREAMS=12`, `PENDING_QUEUE_SIZE=16`, `IO_CHUNK=4096`
+  (`main/wstunnel.cpp`).
+- `httpServer:80 max_open_sockets=12`, `wsServer:81 max_open_sockets=4`,
+  `WS_MAX_CLIENTS=8`, `wsCfg.ctrl_port` must differ from `cfg.ctrl_port`
+  (`main/webserver.cpp`).
+- `esp_websocket_client cfg.buffer_size=8192` — ≥ IO_CHUNK + 4.
+- `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=2048` so mbedtls / PSA contexts
+  land in PSRAM at boot, leaving internal DRAM for AES-GCM DMA buffers.
 - `CONFIG_LWIP_MAX_SOCKETS=40`, `CONFIG_LWIP_MAX_ACTIVE_TCP=64` —
   loopback streams + their 60 s TIME_WAIT lingering blow through the
   default 16 PCBs immediately.
@@ -283,3 +306,4 @@ doesn't surface "Incomplete response received from application".
 - **`.claude/skills/victronble/SKILL.md`** — Victron Instant Readout BLE protocol.
 - **`.claude/skills/ultimatronble/SKILL.md`** — Ultimatron BMS GATT protocol.
 - **`.claude/skills/ui-interfaces/SKILL.md`** — coordination between LCD touch UI and the WebSocket web UI (single source of truth in `settings.cpp`).
+- **`.claude/skills/wss-tunnel/SKILL.md`** — WSS reverse-tunnel operational design, sizing dials, and a troubleshooting quick-reference for tunnel-only failures (Nagle on loopback, LRU eviction of WS, mbedtls/PSA heap, …).
