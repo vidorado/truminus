@@ -199,14 +199,20 @@ body {
   /* On narrow screens the controls stack vertically and the proportional
      layout used at desktop sizes would clip content.  Revert every
      flex-based growth rule so each element sizes to its natural content
-     instead. */
-  .lcd      { min-height: 0; }
+     instead.  .lcd still spans the full viewport between top + foot
+     bars (kept from the default rule) so the page bg fills the screen
+     even when content is short. */
   .row      { flex: 0 0 auto; min-height: 0; }
   .row .panel        { min-height: auto; }
-  .btn-heat, .sp-row, .btn-row, .water-row, .solar-row {
+  .btn-heat, .sp-row, .btn-row {
     flex: 0 0 auto;
     min-height: 0;
   }
+  /* Water / Solar panels: revert from 2-col grid to plain block flow so
+     tank/battery sit below the boiler/lines on narrow screens. */
+  .panel-water, .panel-solar { display: flex; flex-direction: column; gap: var(--gap); }
+  .panel-water > .water-temp-bar-wrap,
+  .panel-solar > .batt-col   { width: 100%; max-width: none; align-items: flex-start; }
   .btn-heat   { padding: 12px 10px; }
   .btn-fan    { padding: 12px 6px; }
   /* HOT WATER buttons 1.5× taller than the rest in this layout — they're
@@ -504,27 +510,24 @@ body {
   gap: 4px;
 }
 
-/* HOT WATER row: 2×2 boiler grid (left) + vertical water tank (right). */
-.water-row {
-  flex: 1;                        /* fills the hot-water panel's free area */
-  min-height: 0;
-  display: flex;
-  align-items: stretch;            /* children share full row height */
-  gap: 8px;
+/* HOT WATER panel — overrides the default flex-column .panel layout
+   with a 2×2 CSS grid so the water tank can span the full panel height
+   (title + boiler grid sit in column 1; tank fills column 2 across
+   both rows). */
+.panel-water {
+  display: grid;
+  grid-template-columns: 1fr 18%;   /* boiler area | tank — 18% mirrors
+                                       LCD ratio (64 px in 350 px panel) */
+  grid-template-rows: auto 1fr;     /* title height | rest fills */
+  column-gap: 8px;
+  row-gap: var(--gap);
 }
-
-.water-row .boiler-grid {
-  flex: 1;                        /* takes the remaining horizontal space */
-  min-width: 0;
-}
-
-/* Water temperature bar — width is a fraction of the row, height fills.
-   18% mirrors the LCD ratio (64 px tank in a 350 px-wide HOT WATER panel). */
-.water-temp-bar-wrap {
-  width: 18%;
+.panel-water > .p-title          { grid-column: 1; grid-row: 1; }
+.panel-water > .boiler-grid      { grid-column: 1; grid-row: 2; min-width: 0; }
+.panel-water > .water-temp-bar-wrap {
+  grid-column: 2; grid-row: 1 / span 2;
   min-width: 48px;
   max-width: 90px;
-  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -569,29 +572,28 @@ body {
 /* SOLAR layout — single-column lines left-aligned, with label and value on
    the SAME line in the colour the LCD uses (see make_label calls in
    main/p4display.cpp around the SOLAR panel). */
-.solar-row {
-  flex: 1;                        /* fills the solar panel's free area */
-  min-height: 0;
-  display: flex;
-  gap: 10px;
-  align-items: stretch;            /* children share full row height */
+/* SOLAR panel — same shape as HOT WATER: grid with title + lines in
+   column 1, battery column spans both rows so it stretches to the full
+   panel height (no gap under the title above the battery). */
+.panel-solar {
+  display: grid;
+  grid-template-columns: 1fr 21%;   /* 21% mirrors LCD ratio (64 px / 304) */
+  grid-template-rows: auto 1fr;
+  column-gap: 10px;
+  row-gap: var(--gap);
 }
-
-.solar-col {
-  flex: 1;
+.panel-solar > .p-title  { grid-column: 1; grid-row: 1; }
+.panel-solar > .solar-col {
+  grid-column: 1; grid-row: 2;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-
-/* Battery column — width is a fraction of the row, mirroring the ~21 %
-   the LCD allocates to it (64 px battery in a 304 px-wide SOLAR panel). */
-.batt-col {
-  width: 21%;
+.panel-solar > .batt-col {
+  grid-column: 2; grid-row: 1 / span 2;
   min-width: 48px;
   max-width: 90px;
-  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -668,28 +670,6 @@ body {
   transition: height 0.4s ease, background 0.3s ease;
 }
 
-/* ── Landscape overrides (must be LAST to win over defaults) ─────────── */
-@media (min-width: 481px) {
-  .panels {
-    min-height: calc(100vh - var(--bar-h) - var(--foot-h));
-  }
-  .btn-heat {
-    padding: 8px;
-    font-size: 0.9em;
-    letter-spacing: .05em;
-  }
-  .p-title {
-    padding-bottom: 3px;
-    font-size: 1.0em;
-  }
-  .sp-row { gap: 6px; }
-  .sp-val { font-size: 1.2em; min-width: 72px; }
-  .btn-step { width: 36px; height: 36px; font-size: 0.9em; }
-  .btn-row { gap: 4px; }
-  .btn-fan { padding: 8px 2px; font-size: 0.9em; }
-  .solar-col { gap: 1px; }
-  .batt-col { gap: 2px; }
-}
 
 /* ── Utilidades ──────────────────────────────────────────────────────── */
 .vis-hidden { display: none !important; }

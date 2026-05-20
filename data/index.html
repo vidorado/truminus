@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=3fca8e2f">
+<link rel="stylesheet" href="styles.css?v=9173f774">
 </head>
 <body>
 
@@ -45,23 +45,22 @@
       </div>
     </section>
 
-    <!-- HOT WATER panel (right/top) -->
+    <!-- HOT WATER panel (right/top) — grid: title over boiler buttons on
+         the left, water tank spans the full panel height on the right. -->
     <section class="panel panel-water">
       <div class="p-title" data-i18n="hot_water">AGUA CALIENTE</div>
 
-      <div class="water-row">
-        <div class="boiler-grid">
-          <button id="bOff"   class="btn-boiler" onclick="setBoiler('off')"   data-i18n="boiler_off">Apag.</button>
-          <button id="bEco"   class="btn-boiler" onclick="setBoiler('eco')">40&nbsp;°C</button>
-          <button id="bHigh"  class="btn-boiler" onclick="setBoiler('high')">60&nbsp;°C</button>
-          <button id="bBoost" class="btn-boiler" onclick="setBoiler('boost')">60&nbsp;°C&nbsp;<i class="fi">&#xF0E7;</i></button>
-        </div>
+      <div class="boiler-grid">
+        <button id="bOff"   class="btn-boiler" onclick="setBoiler('off')"   data-i18n="boiler_off">Apag.</button>
+        <button id="bEco"   class="btn-boiler" onclick="setBoiler('eco')">40&nbsp;°C</button>
+        <button id="bHigh"  class="btn-boiler" onclick="setBoiler('high')">60&nbsp;°C</button>
+        <button id="bBoost" class="btn-boiler" onclick="setBoiler('boost')">60&nbsp;°C&nbsp;<i class="fi">&#xF0E7;</i></button>
+      </div>
 
-        <div class="water-temp-bar-wrap">
-          <div class="water-temp-lbl"><span id="water_temp_val">--</span>&thinsp;°C</div>
-          <div class="water-temp-body">
-            <div id="water_temp_fill" class="water-temp-fill"></div>
-          </div>
+      <div class="water-temp-bar-wrap">
+        <div class="water-temp-lbl"><span id="water_temp_val">--</span>&thinsp;°C</div>
+        <div class="water-temp-body">
+          <div id="water_temp_fill" class="water-temp-fill"></div>
         </div>
       </div>
     </section>
@@ -94,32 +93,31 @@
       </div>
     </section>
 
-    <!-- SOLAR panel (right/bottom) — single-column lines like the LCD -->
+    <!-- SOLAR panel (right/bottom) — grid: title over solar lines on the
+         left, battery column spans the full panel height on the right. -->
     <section class="panel panel-solar">
       <div class="p-title" data-i18n="solar">SOLAR</div>
 
-      <div class="solar-row">
-        <div class="solar-col">
-          <div id="solar_state"    class="solar-line solar-status">--</div>
-          <div class="solar-line solar-volt">
-            <span data-i18n="solar_voltage">Volt.:</span>
-            <span id="solar_battV">--</span>&thinsp;V
-          </div>
-          <div class="solar-line solar-load">
-            <span data-i18n="solar_load">Carga:</span>
-            <span id="solar_battA">--</span>&thinsp;A&ensp;/&ensp;<span id="solar_pvW">--</span>&thinsp;W
-          </div>
-          <div class="solar-line solar-prod">
-            <span data-i18n="solar_yield">Prod.:</span>
-            <span id="solar_kWh">--</span>&thinsp;kWh
-          </div>
+      <div class="solar-col">
+        <div id="solar_state"    class="solar-line solar-status">--</div>
+        <div class="solar-line solar-volt">
+          <span data-i18n="solar_voltage">Volt.:</span>
+          <span id="solar_battV">--</span>&thinsp;V
         </div>
+        <div class="solar-line solar-load">
+          <span data-i18n="solar_load">Carga:</span>
+          <span id="solar_battA">--</span>&thinsp;A&ensp;/&ensp;<span id="solar_pvW">--</span>&thinsp;W
+        </div>
+        <div class="solar-line solar-prod">
+          <span data-i18n="solar_yield">Prod.:</span>
+          <span id="solar_kWh">--</span>&thinsp;kWh
+        </div>
+      </div>
 
-        <div id="batt-col" class="batt-col">
-          <div id="batt_soc" class="batt-soc-lbl">--%</div>
-          <div class="batt-body">
-            <div id="batt_fill" class="batt-fill"></div>
-          </div>
+      <div id="batt-col" class="batt-col">
+        <div id="batt_soc" class="batt-soc-lbl">--%</div>
+        <div class="batt-body">
+          <div id="batt_fill" class="batt-fill"></div>
         </div>
       </div>
     </section>
