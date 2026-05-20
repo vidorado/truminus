@@ -30,6 +30,11 @@
       "label": "$(rocket) Flash + Monitor",
       "task": "TruMinus: Flash + Monitor",
       "tooltip": "idf.py flash monitor"
+    },
+    {
+      "label": "$(terminal) Monitor",
+      "task": "TruMinus: Monitor",
+      "tooltip": "idf.py monitor — serial console only, no flash"
     }
   ]
 }

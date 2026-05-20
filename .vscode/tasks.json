@@ -34,6 +34,18 @@
       "problemMatcher": []
     },
     {
+      "label": "TruMinus: Monitor",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        ". \"${config:idf.currentSetup}/export.sh\" >/dev/null && idf.py -p \"${config:idf.port}\" monitor"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
       "label": "TruMinus: Flash + Monitor",
       "type": "shell",
       "command": "bash",
