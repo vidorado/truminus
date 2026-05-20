@@ -40,6 +40,8 @@ SOLID_GLYPHS = {
     0xF043: "tint/water-drop   FA_TINT",
     0xF053: "chevron-left      FA_CHEVRON_L",
     0xF054: "chevron-right     FA_CHEVRON_R",
+    0xF0D7: "caret-up          FA_CARET_U   (setpoint / fan-level)",
+    0xF0D8: "caret-down        FA_CARET_D   (setpoint / fan-level)",
     0xF074: "shuffle/random    FA_RANDOM",
     0xF0E7: "bolt/lightning    FA_BOLT",
     0xF1EB: "wifi              FA_WIFI",

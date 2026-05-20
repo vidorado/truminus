@@ -44,6 +44,8 @@ const P4Fonts* p4GetFonts() { return &s_fonts; }
 #define FA_THERM_HALF "\xEF\x8B\x89"   // U+F2C9 (thermometer-half / temperature-half)
 #define FA_CHEVRON_L  "\xEF\x81\x93"   // U+F053 (chevron-left)
 #define FA_CHEVRON_R  "\xEF\x81\x94"   // U+F054
+#define FA_CARET_U    "\xEF\x83\x97"   // U+F0D7 (caret-up — setpoint/fan up)
+#define FA_CARET_D    "\xEF\x83\x98"   // U+F0D8 (caret-down — setpoint/fan down)
 #define FA_WIFI       "\xEF\x87\xAB"   // U+F1EB
 #define FA_RANDOM     "\xEF\x81\xB4"   // U+F074 (random/shuffle in FA4)
 #define FA_COG        "\xEF\x80\x93"   // U+F013
@@ -120,6 +122,8 @@ static struct {
     lv_obj_t* icon_bt;
     lv_obj_t* icon_cloud;
     lv_obj_t* icon_lin;
+    lv_obj_t* icon_tint;   // water (boiler) status indicator
+    lv_obj_t* icon_flame;  // heating status indicator
     lv_obj_t* btn_conf;
 
     // HEATING panel
@@ -339,19 +343,19 @@ static void build_main_screen()
     lv_obj_set_style_pad_all(topbar, 0, 0);
     lv_obj_clear_flag(topbar, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* icon_tint = lv_label_create(topbar);
-    lv_label_set_text(icon_tint, FA_TINT);
-    lv_obj_set_style_text_font(icon_tint, s_font_icons24, 0);
-    lv_obj_set_style_text_color(icon_tint, C_CYAN, 0);
-    lv_obj_set_style_text_opa(icon_tint, LV_OPA_30, 0);
-    lv_obj_align(icon_tint, LV_ALIGN_LEFT_MID, 16, 0);
+    ui.icon_tint = lv_label_create(topbar);
+    lv_label_set_text(ui.icon_tint, FA_TINT);
+    lv_obj_set_style_text_font(ui.icon_tint, s_font_icons24, 0);
+    lv_obj_set_style_text_color(ui.icon_tint, C_CYAN, 0);
+    lv_obj_set_style_text_opa(ui.icon_tint, LV_OPA_30, 0);
+    lv_obj_align(ui.icon_tint, LV_ALIGN_LEFT_MID, 16, 0);
 
-    lv_obj_t* icon_flame = lv_label_create(topbar);
-    lv_label_set_text(icon_flame, FA_FIRE);
-    lv_obj_set_style_text_font(icon_flame, s_font_icons24, 0);
-    lv_obj_set_style_text_color(icon_flame, C_AMBER, 0);
-    lv_obj_set_style_text_opa(icon_flame, LV_OPA_30, 0);
-    lv_obj_align(icon_flame, LV_ALIGN_LEFT_MID, 50, 0);
+    ui.icon_flame = lv_label_create(topbar);
+    lv_label_set_text(ui.icon_flame, FA_FIRE);
+    lv_obj_set_style_text_font(ui.icon_flame, s_font_icons24, 0);
+    lv_obj_set_style_text_color(ui.icon_flame, C_AMBER, 0);
+    lv_obj_set_style_text_opa(ui.icon_flame, LV_OPA_30, 0);
+    lv_obj_align(ui.icon_flame, LV_ALIGN_LEFT_MID, 50, 0);
 
     lv_obj_t* icon_home = lv_label_create(topbar);
     lv_label_set_text(icon_home, FA_HOUSE_CHIM);
@@ -445,8 +449,8 @@ static void build_main_screen()
     lv_obj_set_pos(ui.btn_sp_dn, 0, 0);
     style_button(ui.btn_sp_dn);
     lv_obj_t* l_dn = lv_label_create(ui.btn_sp_dn);
-    lv_label_set_text(l_dn, "-");
-    lv_obj_set_style_text_font(l_dn, s_font_28, 0);
+    lv_label_set_text(l_dn, FA_CARET_D);
+    lv_obj_set_style_text_font(l_dn, s_font_icons24, 0);
     lv_obj_center(l_dn);
     lv_obj_add_event_cb(ui.btn_sp_dn, on_sp_dn, LV_EVENT_CLICKED, NULL);
 
@@ -461,8 +465,8 @@ static void build_main_screen()
     lv_obj_set_pos(ui.btn_sp_up, HEAT_W - 24 - 70, 0);
     style_button(ui.btn_sp_up);
     lv_obj_t* l_up = lv_label_create(ui.btn_sp_up);
-    lv_label_set_text(l_up, "+");
-    lv_obj_set_style_text_font(l_up, s_font_28, 0);
+    lv_label_set_text(l_up, FA_CARET_U);
+    lv_obj_set_style_text_font(l_up, s_font_icons24, 0);
     lv_obj_center(l_up);
     lv_obj_add_event_cb(ui.btn_sp_up, on_sp_up, LV_EVENT_CLICKED, NULL);
 
@@ -500,7 +504,7 @@ static void build_main_screen()
     lv_obj_set_pos(ui.btn_fan_dn, 14, 109);
     style_button(ui.btn_fan_dn);
     lv_obj_t* l_fdn = lv_label_create(ui.btn_fan_dn);
-    lv_label_set_text(l_fdn, FA_CHEVRON_L);
+    lv_label_set_text(l_fdn, FA_CARET_D);
     lv_obj_set_style_text_font(l_fdn, s_font_icons24, 0);
     lv_obj_center(l_fdn);
     lv_obj_add_event_cb(ui.btn_fan_dn, on_fan_dn, LV_EVENT_CLICKED, NULL);
@@ -514,7 +518,7 @@ static void build_main_screen()
     lv_obj_set_pos(ui.btn_fan_up, 145, 109);
     style_button(ui.btn_fan_up);
     lv_obj_t* l_fup = lv_label_create(ui.btn_fan_up);
-    lv_label_set_text(l_fup, FA_CHEVRON_R);
+    lv_label_set_text(l_fup, FA_CARET_U);
     lv_obj_set_style_text_font(l_fup, s_font_icons24, 0);
     lv_obj_center(l_fup);
     lv_obj_add_event_cb(ui.btn_fan_up, on_fan_up, LV_EVENT_CLICKED, NULL);
@@ -1127,6 +1131,16 @@ void p4DisplayUpdate(const P4DisplayData& d)
 
     lv_obj_set_style_text_color(ui.icon_wifi, d.wifiOk ? C_GREEN : C_RED, 0);
     lv_obj_set_style_text_color(ui.icon_lin,  d.linOk  ? C_GREEN : C_RED, 0);
+
+    // Tint (water) and flame (heat) topbar indicators: bright only when LIN
+    // is up AND the function is requested.  Without LIN the values reported
+    // by the rest of the UI are stale/wishful — keep the icons dim to avoid
+    // implying the appliance is actually doing something.  Matches the web
+    // refreshIndicators() gating.
+    lv_obj_set_style_text_opa(ui.icon_tint,
+        (d.linOk && d.boilerMode != 0) ? LV_OPA_COVER : LV_OPA_30, 0);
+    lv_obj_set_style_text_opa(ui.icon_flame,
+        (d.linOk && d.heatingOn) ? LV_OPA_COVER : LV_OPA_30, 0);
 
     // BT icon: dark-grey=not configured, red=configured but no data, blue=has data
     {
