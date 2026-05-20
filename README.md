@@ -3,9 +3,16 @@
 Firmware for the **JC4880P443C** board (ESP32-P4) that emulates a Truma CP Plus D
 control unit and manages a **Truma Combi D** heater over the LIN bus.
 
-Control surfaces: WebSocket web UI, serial CLI, and a physical 800×480 LCD with
-capacitive touch (in progress). Solar charge data (Victron BLE) and battery SOC
-(Ultimatron BLE) are surfaced on both the LCD and the web UI.
+Control surfaces: a physical 800×480 LCD with capacitive touch, a WebSocket web
+UI and a serial CLI.  Solar charge data (Victron BLE) and battery SOC
+(Ultimatron BLE) are surfaced on both the LCD and the web UI, along with the
+**actual boiler water temperature** — a reading the stock Truma CP Plus does
+not expose.
+
+For remote access through home/RV CGNAT, the firmware can dial out to a
+companion Node.js mini-app (`server/`, runs on any VPS or a Plesk-managed
+subdomain like `tunnel.yourdomain.com`) and tunnel browser traffic over WSS —
+no port forwarding, no DDNS, just a domain you control.
 
 > This software is not provided, endorsed, supported, or sponsored by Truma.
 > See [LICENSE](LICENSE) — no warranty of any kind.
