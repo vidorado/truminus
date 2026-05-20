@@ -12,7 +12,7 @@ TruMinus is firmware for the **JC4880P443C** board (ESP32-P4) that emulates a Tr
 
 Solar charge data (Victron BLE) and battery SOC (Ultimatron BLE) are surfaced both on the LCD and the web UI.
 
-> **Status (2026-05):** the project is mid-migration from the previous ESP32-C5 / NM-CYD-C5 board to the JC4880P443C / ESP32-P4 board. `main/main.cpp` is currently a display-only stub; the LIN/MQTT/WiFi/BLE subsystems exist as source files (`lin_driver.cpp`, `victronble.cpp`, `ultimatronble.cpp`, `webserver.cpp`, …) but are not all wired into `app_main` yet. Treat the codebase as porting-in-progress, not feature-complete.
+> **Status (2026-05):** the project is mid-migration from the previous ESP32-C5 / NM-CYD-C5 board to the JC4880P443C / ESP32-P4 board. `main/main.cpp` runs the LCD, WiFi (via C6 hosted), BLE supervisor (Victron + Ultimatron) and the HTTP/WebSocket server. **Not yet ported:** the Arduino-flavoured `settings.cpp` / `trumaframes.cpp` / `waterboost.cpp` / `commandreader.cpp` / `autodiscovery.cpp` — these still use `String`/`AsyncWebServer`/`ArduinoJson`/`mqttClient.publish(...)` and are not in `main/CMakeLists.txt::SRCS`. They are dormant, waiting for an IDF-native port.  Treat the codebase as porting-in-progress, not feature-complete.
 
 ## Build System
 
@@ -45,9 +45,18 @@ Before touching the build (sdkconfig, components, link errors, IRAM overflow), *
 - ESP32-P4 rev < v3 (`chip_variant: "esp32p4_es"`) has non-contiguous SRAM (179 KB `sram_low` + 256 KB `sram_high`); `--enable-non-contiguous-regions` silently drops sections that don't fit. The cause is always an IDF config inflating IRAM, never the linker.
 - ModemManager grabs `/dev/ttyACM0` on plug-in — `sudo systemctl stop ModemManager` if flash fails with "port is busy".
 
-### Web assets are embedded, not served from LittleFS
+### Web assets are served from LittleFS (8 MB partition)
 
-Files in `data/` are compressed by `scripts/compress_fs.py` into `main/webfiles.h` as `static const uint8_t` arrays. **A firmware reflash is required** after any change in `data/`. There is no LittleFS partition. The root `CMakeLists.txt` re-runs `apply_patches.py`, `cache_bust.py` and `compress_fs.py` at every cmake configure so `webfiles.h` is always fresh before build.
+Files in `data/` are baked into a LittleFS image by `littlefs_create_partition_image()` (`main/CMakeLists.txt`) and flashed to the `littlefs` partition at `0x810000` (`partitions_16MB.csv`).  A `web_assets_prep` `ALL` target in the root `CMakeLists.txt` runs on every build *before* the image is regenerated:
+
+- `scripts/cache_bust.py` — rewrites `?v=<sha1>` querystrings in `data/index.html` (and `url(...)` refs in CSS) so browsers refetch changed assets.
+- `scripts/gen_gz.py` — pre-gzips compressible files (`.html/.css/.js/.svg/.json/.txt/.ttf`) as adjacent `<file>.gz`.  Uses `mtime=0` for determinism so `--skip-flashed` (see §"Flash") still detects unchanged images.
+
+`main/webserver.cpp::serveFile()` prefers a sibling `.gz` and adds `Content-Encoding: gzip`.  `data/*.gz` is gitignored.
+
+Updating only the web image (no firmware reflash) is supported: `idf.py littlefs-flash-littlefs`.
+
+The previous `compress_fs.py` flash-embed pipeline (which baked everything into `main/webfiles.h`) is gone; the script file remains in `scripts/` but is unused.
 
 ## Architecture
 
@@ -72,7 +81,7 @@ The project follows the ESP-IDF native convention: there is no `src/`; all firmw
 - **`settings.cpp/.hpp`** — Setpoint abstraction. `TBoilerSetting`, `TTempSetting`, `TFanSetting`, `TOnOffSetting`, all derived from `TMqttSetting / TAutoDiscovery`. Single source of truth for values consumed by `main.cpp`'s LIN write loop and broadcast back to MQTT/WS/LCD.
 - **`globals.hpp`** — shared `mqttClient`, `ws`, MQTT base topics, Home Assistant autodiscovery identifiers.
 - **`autodiscovery.cpp/.hpp`** — Home Assistant MQTT discovery payloads. Enabled via `-DAUTODISCOVERY`.
-- **`webserver.cpp/.hpp`** — HTTP static serving (from embedded flash via `webfiles.h`) plus WebSocket JSON handler that dispatches to `settings.cpp`.
+- **`webserver.cpp/.hpp`** — IDF-native HTTP + WebSocket server on `esp_http_server`. Streams files from `/littlefs/` in 1 KB chunks (with `.gz` content-encoding fallback). WS handler parses JSON `{id,value}` frames via `cJSON` and dispatches to a `WsCommandCb`; outgoing frames go through a FreeRTOS queue (`wsQueue`, 48 × 256 B) drained by `wsQueueDrain()`. Native `httpd_ws_send_frame_async` to all `HTTPD_WS_CLIENT_WEBSOCKET` fds returned by `httpd_get_client_list`. Client count tracked via `ws_post_handshake_cb` + `close_fn` (the URI handler is **not** invoked for the handshake leg — see Gotchas).
 - **`waterboost.cpp/.hpp`** — 40-minute high-temperature water boost cycle when boiler mode is "boost".
 - **`commandreader.cpp/.hpp`** — Serial CLI line buffer for `main.cpp`.
 - **`victronble.cpp/.hpp`** — Victron Solar Charger BLE listener (Instant Readout). Uses NimBLE 2.x; stubbed when `-DENABLE_BLE` is absent. See `.claude/skills/victronble/SKILL.md`.
@@ -82,7 +91,18 @@ The project follows the ESP-IDF native convention: there is no `src/`; all firmw
 
 ### Web Interface (`data/`)
 
-Static assets compressed into `main/webfiles.h`. `script.js` communicates with the firmware over a WebSocket using JSON envelopes (`{"command": "...", "id": "...", "value": "..."}`). **Firmware reflash is required** for every change.
+Assets live in `data/` and are served from LittleFS (see §"Web assets are served from LittleFS"). `script.js` communicates with the firmware over a WebSocket at `/ws` using JSON envelopes (`{"command": "...", "id": "...", "value": "..."}`).
+
+**Layout mirrors the LCD** (see `main/p4display.cpp`): an 800-px canvas with two rows whose column widths reproduce the LCD's HEAT/HOT-WATER/empty (301/350/149 px) and FAN/SOLAR/empty (213/304/283 px) splits. Encoded as `grid-template-columns` percentages so the canvas can shrink (`--lcd-w: 640px`) while keeping LCD geometry. Container queries (`container-type: inline-size` + `clamp(…, Xcqi, …)`) scale title font sizes proportionally. The Montserrat TTFs the LCD uses live in `data/` too and are served as `@font-face` for the typographic `truminus` logo.
+
+## Cross-cutting gotchas (write these down once, save the next session)
+
+- **`littlefs_create_partition_image()` rebuilds the bin on every cmake run** — CMake can't watch directory contents, so the helper uses `add_custom_target ... ALL` with no input deps. The bin gets a fresh mtime each time even when `data/` is identical. Mitigated by `--skip-flashed` (esptool MD5-compare; baked into every flash target's `SUB_ARGS` in the root `CMakeLists.txt`). Inputs are deterministic (`littlefs-python` + `mtime=0` in our `gen_gz.py`) so the comparison succeeds.
+- **VSCode IDF extension's Flash button bypasses our CMake hooks.** It hardcodes the esptool args in TypeScript (`r.push("write_flash","--flash_mode",mode,…)`), ignores `write_flash_args` in `flasher_args.json`, and offers no setting for extra args. We work around by providing `.vscode/tasks.json` tasks ("TruMinus: Flash"/"Flash + Monitor") that invoke `idf.py flash` (which *does* honour our `--skip-flashed`) and `.vscode/settings.json` `VsCodeTaskButtons.tasks` puts status-bar buttons next to them. Recommend `spencerwmiles.vscode-task-buttons` in `extensions.json`. The tasks must source `$IDF_PATH/export.sh` first because `idf.py` is not on PATH in a fresh shell.
+- **NimBLE 2.x `scan->start(duration, false)` is non-blocking** — returns once the GAP procedure is queued. Calling `cb(results, count)` right after gives `count=0` every time. Poll `scan->isScanning()` (with `vTaskDelay`) until the duration window elapses, then report. See `main/victronble.cpp::discovery_scan_task`.
+- **`esp_http_server` does not invoke the URI handler for the WS upgrade leg.** The handshake is handled internally before any handler runs (`components/esp_http_server/src/httpd_uri.c:362`: *"If the request is websocket handshake, then do not call the uri->handler"*). `req->method` stays `HTTP_GET` for every subsequent frame, so a `if (req->method == HTTP_GET) handshake()` branch in the handler will eat every frame without reading it. Use `CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y` + `ws_post_handshake_cb` to detect new clients. Use `close_fn` for disconnects.
+- **`httpd_get_client_list(handle, &fds, fds_array)` requires `fds_array` ≥ `max_open_sockets`** — otherwise returns `ESP_ERR_INVALID_ARG` silently and the WS broadcast loop sees zero clients. Define a single `MAX_OPEN_SOCKETS` constant and use it for both `cfg.max_open_sockets` and the local `int fds[…]` (see `main/webserver.cpp`).
+- **`p4display.cpp::st` mutations need the LVGL lock.** The remote setters (`p4SetHeating`, `p4SetFanMode`, `p4SetBoilerMode`, `p4SetEnergyIdx`, `p4SetRoomSetpoint`, `p4SetScreenTimeoutIdx`) take `bsp_display_lock(50)`; the on-screen button callbacks already run on the LVGL task with the lock held. The diff-broadcast helper (`broadcastControlChanges` in `main.cpp`) reads `st` via `p4GetControlState` from the `wsPumpTask` *without* the lock — safe because each field is a plain int/bool/float, but don't introduce composite reads.
 
 ## Key Design Patterns
 
@@ -91,6 +111,8 @@ Static assets compressed into `main/webfiles.h`. `script.js` communicates with t
 - **LIN bus task:** the LIN UART task is pinned to **Core 0** so blocking serial reads don't fight with WiFi/MQTT/LVGL on Core 1. ESP32-P4 is dual-core (RV32IMAFC), so the pinning model from the prior C5 port still applies.
 - **MQTT publish throttling:** values are published on change or after a 10 s timeout to avoid flooding the broker.
 - **LVGL locking:** `lv_timer_handler()` runs on a dedicated FreeRTOS task. Any LVGL access from `app_main` / `loop` / `lin_task` must be wrapped in `lvglLock()` / `lvglUnlock()`. Prefer a short timeout (e.g. 10 ms) over `portMAX_DELAY` to avoid deadlocks if the LVGL task is busy.
+- **Splash boot ordering:** `app_main` only inits NVS + netif + `p4DisplayInit()` and then spawns `bootTask` (prio 5, 6 KB) for WiFi/C6-OTA/BLE/web. The splash becomes visible as soon as `bsp_display_start_with_config()` returns, and the 2 s minimum-splash in `p4DisplayUpdate()` acts as a *floor* — long inits don't get an extra 2 s artificial delay on top.
+- **LCD ↔ web sync (until `settings.cpp` is ported):** dedicated `wsPumpTask` (prio 3, 100 ms cadence) reads `p4GetControlState()`, diffs against the previous snapshot, queues a `{"command":"setting","id":"/x","value":"…"}` per changed field, and drains `wsQueue`. Browser → firmware uses `onWsCommand` in `main.cpp` to route to the `p4Set*()` setters; `onWsConnected` pushes a full snapshot (heating/fan/boiler/temp/energy_idx + ssid) when the browser sends the `"settings"` text frame.
 
 ## MQTT Topics
 
