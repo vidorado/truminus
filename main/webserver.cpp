@@ -17,7 +17,16 @@
 
 // ── Globals ──────────────────────────────────────────────────────────────────
 
+// Two separate httpd instances so a burst of parallel asset GETs through the
+// reverse tunnel (`wstunnel.cpp`) can never evict an existing /ws client via
+// the per-server LRU.  `httpServer` (port 80) serves every static asset.
+// `wsServer`   (port 81) is reachable only via loopback and is dedicated to
+// WebSocket sessions; `wstunnel.cpp::try_open_locked` peeks the first chunk
+// of each tunneled stream and routes `GET /ws` to :81, everything else to
+// :80.  The two LRU pools are independent, so a 12-asset stampede cannot
+// touch the WS pool.
 httpd_handle_t   httpServer    = nullptr;
+httpd_handle_t   wsServer      = nullptr;
 QueueHandle_t    wsQueue       = nullptr;
 std::atomic<int> wsClientCount{0};
 
@@ -41,10 +50,21 @@ static constexpr UBaseType_t WS_QUEUE_MSG = 256;
 // machine that already has BLE + WiFi-via-C6 + LVGL running.
 static constexpr uint8_t WS_MAX_CLIENTS = 8;
 
-// Maximum total sockets configured below in startWebServer().  Must match
-// httpd_config_t::max_open_sockets exactly — httpd_get_client_list() rejects
-// any smaller buffer with ESP_ERR_INVALID_ARG (silently breaks broadcast).
-static constexpr size_t MAX_OPEN_SOCKETS = 12;
+// Maximum sockets per httpd instance.  Must match `httpd_config_t::
+// max_open_sockets` exactly for each server — `httpd_get_client_list()`
+// rejects any smaller buffer with ESP_ERR_INVALID_ARG (silently breaks
+// broadcast).
+//
+// _HTTP : static-asset pool.  Sized for the worst-case page-load burst
+//         (HTML + CSS + JS + fonts + favicon + assorted images).
+// _WS   : WebSocket pool, isolated.  Each httpd socket pre-allocates
+//         CONFIG_HTTPD_MAX_REQ_HDR_LEN (4 KB) of scratch, so going as
+//         wide as WS_MAX_CLIENTS=8 costs 32 KB of DRAM that mbedtls/PSA
+//         then can't use to verify the WSS cert at boot.  4 slots cover
+//         the realistic "a couple of tabs over the tunnel" case; LAN-direct
+//         WS clients hit :80 anyway.
+static constexpr size_t MAX_OPEN_SOCKETS_HTTP = 12;
+static constexpr size_t MAX_OPEN_SOCKETS_WS   = 4;
 
 static const char* TAG = "web";
 
@@ -186,6 +206,35 @@ static esp_err_t staticGetHandler(httpd_req_t* req) {
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 
+// Authoritative count of WS clients straight from esp_http_server.  We use
+// this to reconcile wsClientCount whenever it appears to have drifted —
+// close_fn occasionally misses decrements (e.g. when httpd_ws self-closes
+// a socket whose FD has become invalid, it does not always invoke our
+// close_fn), and after long-idle tunnel WS reconnects the counter can
+// stay biased high and start rejecting legitimate browsers.  Returns -1
+// on error.
+// Iterate both servers (asset :80 carries LAN-direct WS clients; :81 carries
+// the tunneled WS) and count WebSocket fds.  Returns -1 only if neither
+// server is running.
+static int wsCountFromHttpd() {
+    if (!httpServer && !wsServer) return -1;
+    int n = 0;
+    struct { httpd_handle_t h; size_t max; } srv[] = {
+        { httpServer, MAX_OPEN_SOCKETS_HTTP },
+        { wsServer,   MAX_OPEN_SOCKETS_WS   },
+    };
+    int fds[MAX_OPEN_SOCKETS_HTTP];   // sized for the larger pool
+    for (auto& s : srv) {
+        if (!s.h) continue;
+        size_t fds_count = s.max;
+        if (httpd_get_client_list(s.h, &fds_count, fds) != ESP_OK) continue;
+        for (size_t i = 0; i < fds_count; i++) {
+            if (httpd_ws_get_fd_info(s.h, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET) n++;
+        }
+    }
+    return n;
+}
+
 // Post-handshake callback: invoked once when esp_http_server has finished
 // the WebSocket upgrade.  This is the right place to count clients — the
 // URI handler below is invoked only for frame data, never for the upgrade
@@ -194,9 +243,20 @@ static esp_err_t staticGetHandler(httpd_req_t* req) {
 static esp_err_t wsPostHandshake(httpd_req_t* req) {
     int prev = wsClientCount.fetch_add(1, std::memory_order_acq_rel);
     if (prev >= WS_MAX_CLIENTS) {
-        wsClientCount.fetch_sub(1, std::memory_order_release);
-        ESP_LOGW(TAG, "WS reject: %u clients already connected", (unsigned)prev);
-        return ESP_FAIL;
+        // Counter says cap hit — but it can drift upward when close_fn
+        // misses decrements (tunnel WS reconnects, abrupt socket death).
+        // Reconcile against httpd's real client list before rejecting.
+        int actual = wsCountFromHttpd();
+        if (actual >= 0 && actual <= WS_MAX_CLIENTS) {
+            wsClientCount.store(actual, std::memory_order_release);
+            ESP_LOGW(TAG, "wsClientCount drift corrected: %d → %d (allowing)",
+                     prev + 1, actual);
+        } else {
+            wsClientCount.fetch_sub(1, std::memory_order_release);
+            ESP_LOGW(TAG, "WS reject: %u clients already connected (actual=%d)",
+                     (unsigned)prev, actual);
+            return ESP_FAIL;
+        }
     }
     ESP_LOGI(TAG, "WS open  (clients=%d, fd=%d)",
              wsClientCount.load(), httpd_req_to_sockfd(req));
@@ -234,10 +294,6 @@ static esp_err_t wsHandler(httpd_req_t* req) {
     if (frame.type != HTTPD_WS_TYPE_TEXT) return ESP_OK;
 
     const char* msg = (const char*)buf;
-    if (strcmp(msg, "ping") == 0) {
-        if (s_cmdCb) s_cmdCb("/ping", "1");
-        return ESP_OK;
-    }
     if (strcmp(msg, "settings") == 0) {
         // Let the app push its snapshot into the queue, then drain so the
         // browser sees the initial state before the next main-loop tick.
@@ -291,7 +347,7 @@ bool wsQueueSend(const char* msg) {
 }
 
 void wsQueueDrain() {
-    if (!wsQueue || !httpServer) return;
+    if (!wsQueue || (!httpServer && !wsServer)) return;
     if (wsClientCount.load() == 0) {
         // Fast path: discard pending messages — no client to receive them.
         char tmp[WS_QUEUE_MSG];
@@ -299,24 +355,28 @@ void wsQueueDrain() {
         return;
     }
 
+    struct { httpd_handle_t h; size_t max; } srv[] = {
+        { httpServer, MAX_OPEN_SOCKETS_HTTP },
+        { wsServer,   MAX_OPEN_SOCKETS_WS   },
+    };
     char buf[WS_QUEUE_MSG];
     while (xQueueReceive(wsQueue, buf, 0) == pdTRUE) {
-        size_t fds_count = MAX_OPEN_SOCKETS;
-        int fds[MAX_OPEN_SOCKETS];
-        if (httpd_get_client_list(httpServer, &fds_count, fds) != ESP_OK) continue;
-
         httpd_ws_frame_t frame = {};
         frame.type    = HTTPD_WS_TYPE_TEXT;
         frame.payload = (uint8_t*)buf;
         frame.len     = strlen(buf);
-        for (size_t i = 0; i < fds_count; i++) {
-            // Skip non-WebSocket sessions (plain HTTP sockets are also listed).
-            if (httpd_ws_get_fd_info(httpServer, fds[i]) != HTTPD_WS_CLIENT_WEBSOCKET) {
-                continue;
-            }
-            esp_err_t e = httpd_ws_send_frame_async(httpServer, fds[i], &frame);
-            if (e != ESP_OK) {
-                ESP_LOGD(TAG, "ws_send fd=%d err=%s", fds[i], esp_err_to_name(e));
+
+        int fds[MAX_OPEN_SOCKETS_HTTP];   // sized for the larger pool
+        for (auto& s : srv) {
+            if (!s.h) continue;
+            size_t fds_count = s.max;
+            if (httpd_get_client_list(s.h, &fds_count, fds) != ESP_OK) continue;
+            for (size_t i = 0; i < fds_count; i++) {
+                if (httpd_ws_get_fd_info(s.h, fds[i]) != HTTPD_WS_CLIENT_WEBSOCKET) continue;
+                esp_err_t e = httpd_ws_send_frame_async(s.h, fds[i], &frame);
+                if (e != ESP_OK) {
+                    ESP_LOGD(TAG, "ws_send fd=%d err=%s", fds[i], esp_err_to_name(e));
+                }
             }
         }
     }
@@ -338,32 +398,36 @@ esp_err_t startWebServer(WsCommandCb cb, WsConnectedCb conn) {
         }
     }
 
+    // ── Asset server (port 80) ───────────────────────────────────────────
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port      = 80;
-    cfg.max_open_sockets = MAX_OPEN_SOCKETS;  // WS clients (4) + parallel asset GETs.
-    cfg.max_uri_handlers = 8;
+    cfg.max_open_sockets = MAX_OPEN_SOCKETS_HTTP;
+    cfg.max_uri_handlers = 4;
     cfg.stack_size       = 8192;
-    cfg.lru_purge_enable = true;
+    cfg.lru_purge_enable = true;   // safe here: there are no long-lived sockets to evict
     cfg.uri_match_fn     = httpd_uri_match_wildcard;
     cfg.close_fn         = onHttpdClose;
 
     esp_err_t err = httpd_start(&httpServer, &cfg);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "httpd_start failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "httpd_start(:80) failed: %s", esp_err_to_name(err));
         httpServer = nullptr;
         return err;
     }
 
-    // WebSocket endpoint first so it matches before the wildcard static
-    // handler (LIFO would also work, but explicit order is clearer).
-    httpd_uri_t ws_uri = {};
-    ws_uri.uri                      = "/ws";
-    ws_uri.method                   = HTTP_GET;
-    ws_uri.handler                  = wsHandler;
-    ws_uri.is_websocket             = true;
-    ws_uri.handle_ws_control_frames = false;
-    ws_uri.ws_post_handshake_cb     = wsPostHandshake;
-    httpd_register_uri_handler(httpServer, &ws_uri);
+    // /ws is also registered on :80 so LAN/direct browsers (which hit
+    // `ws://<esp>/ws`) keep working.  In LAN mode there is no tunnel-driven
+    // asset stampede, so the LRU risk on :80 is acceptable.  Must be
+    // registered BEFORE the "/*" wildcard, otherwise the wildcard match
+    // already covers "/ws" and httpd refuses the registration as a dup.
+    httpd_uri_t ws_uri_lan = {};
+    ws_uri_lan.uri                      = "/ws";
+    ws_uri_lan.method                   = HTTP_GET;
+    ws_uri_lan.handler                  = wsHandler;
+    ws_uri_lan.is_websocket             = true;
+    ws_uri_lan.handle_ws_control_frames = false;
+    ws_uri_lan.ws_post_handshake_cb     = wsPostHandshake;
+    httpd_register_uri_handler(httpServer, &ws_uri_lan);
 
     httpd_uri_t root_uri = {};
     root_uri.uri     = "/";
@@ -377,14 +441,108 @@ esp_err_t startWebServer(WsCommandCb cb, WsConnectedCb conn) {
     any_uri.handler = staticGetHandler;
     httpd_register_uri_handler(httpServer, &any_uri);
 
-    ESP_LOGI(TAG, "web server up on :80 (LittleFS-backed)");
+    // ── WS server (port 81, reachable only via wstunnel routing) ─────────
+    // Isolated socket pool so a burst of asset GETs through the reverse
+    // tunnel cannot LRU-evict an open /ws.
+    httpd_config_t wsCfg = HTTPD_DEFAULT_CONFIG();
+    wsCfg.server_port      = 81;
+    wsCfg.ctrl_port        = wsCfg.ctrl_port + 1;   // must differ from cfg.ctrl_port
+    wsCfg.max_open_sockets = MAX_OPEN_SOCKETS_WS;
+    wsCfg.max_uri_handlers = 2;
+    wsCfg.stack_size       = 4096;   // WS server only handles upgrades; default 4 KB is enough
+    wsCfg.lru_purge_enable = false;  // never evict a connected /ws; cap via wsPostHandshake
+    wsCfg.uri_match_fn     = httpd_uri_match_wildcard;
+    wsCfg.close_fn         = onHttpdClose;
+
+    err = httpd_start(&wsServer, &wsCfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "httpd_start(:81) failed: %s", esp_err_to_name(err));
+        httpd_stop(httpServer);
+        httpServer = nullptr;
+        wsServer   = nullptr;
+        return err;
+    }
+
+    httpd_uri_t ws_uri = {};
+    ws_uri.uri                      = "/ws";
+    ws_uri.method                   = HTTP_GET;
+    ws_uri.handler                  = wsHandler;
+    ws_uri.is_websocket             = true;
+    ws_uri.handle_ws_control_frames = false;
+    ws_uri.ws_post_handshake_cb     = wsPostHandshake;
+    httpd_register_uri_handler(wsServer, &ws_uri);
+
+    // Periodic background work for the WS pool:
+    //   • Every 20 s: send a WebSocket PING (opcode 0x9, zero payload) to
+    //     every connected WS fd.  Browsers reply with PONG automatically,
+    //     so this stays out of the JS message stream.  The bytes flowing
+    //     upstream keep nginx's `proxy_read_timeout` (default 60 s on Plesk)
+    //     from killing the proxied WS when nothing else has changed on the
+    //     firmware side for a while (e.g. heating off, BMS quiet).
+    //   • Every 60 s: reconcile wsClientCount against the actual httpd
+    //     client list.  close_fn occasionally misses decrements after
+    //     abrupt socket teardowns, and a drifted counter biases the
+    //     broadcast fast-path (which short-circuits on count==0).
+    xTaskCreate([](void*) {
+        int tick = 0;
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(20000));
+            tick++;
+
+            // Keepalive ping across both servers.  Each httpd serializes
+            // sends per-fd internally, so this is safe to call without
+            // extra locking; failures just log and let close_fn clean up.
+            struct { httpd_handle_t h; size_t max; } srv[] = {
+                { httpServer, MAX_OPEN_SOCKETS_HTTP },
+                { wsServer,   MAX_OPEN_SOCKETS_WS   },
+            };
+            int fds[MAX_OPEN_SOCKETS_HTTP];
+            httpd_ws_frame_t ping = {};
+            ping.type    = HTTPD_WS_TYPE_PING;
+            ping.payload = nullptr;
+            ping.len     = 0;
+            int sent = 0, failed = 0;
+            for (auto& s : srv) {
+                if (!s.h) continue;
+                size_t fds_count = s.max;
+                if (httpd_get_client_list(s.h, &fds_count, fds) != ESP_OK) continue;
+                for (size_t i = 0; i < fds_count; i++) {
+                    if (httpd_ws_get_fd_info(s.h, fds[i]) != HTTPD_WS_CLIENT_WEBSOCKET) continue;
+                    esp_err_t e = httpd_ws_send_frame_async(s.h, fds[i], &ping);
+                    if (e == ESP_OK) sent++;
+                    else {
+                        failed++;
+                        ESP_LOGD(TAG, "ws ping fd=%d err=%s", fds[i], esp_err_to_name(e));
+                    }
+                }
+            }
+            if (sent || failed) ESP_LOGI(TAG, "ws keepalive ping: sent=%d failed=%d", sent, failed);
+
+            // Counter sweep every third tick (~60 s).
+            if (tick % 3 == 0) {
+                int actual = wsCountFromHttpd();
+                if (actual < 0) continue;
+                int prev = wsClientCount.exchange(actual, std::memory_order_acq_rel);
+                if (prev != actual) {
+                    ESP_LOGW(TAG, "wsCount reaper: %d → %d", prev, actual);
+                }
+            }
+        }
+    }, "wsReaper", 3072, nullptr, 2, nullptr);
+
+    ESP_LOGI(TAG, "web server up: :80 assets+WS, :81 WS-only (tunnel-routed)");
     return ESP_OK;
 }
 
 void stopWebServer() {
-    if (!httpServer) return;
-    httpd_stop(httpServer);
-    httpServer = nullptr;
+    if (wsServer) {
+        httpd_stop(wsServer);
+        wsServer = nullptr;
+    }
+    if (httpServer) {
+        httpd_stop(httpServer);
+        httpServer = nullptr;
+    }
     s_cmdCb  = nullptr;
     s_connCb = nullptr;
 }

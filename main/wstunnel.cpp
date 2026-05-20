@@ -20,6 +20,7 @@
 #include "esp_netif.h"
 #include "esp_websocket_client.h"
 #include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
@@ -28,6 +29,7 @@
 #include "freertos/event_groups.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
+#include "lwip/tcp.h"   // TCP_NODELAY
 #include "cJSON.h"
 
 #include <cstring>
@@ -36,17 +38,38 @@
 
 static const char* TAG = "wstunnel";
 
+// Loopback ports of the two local httpd instances (see `webserver.cpp`).
+//   :80 — static-asset server, LRU evicts idle keep-alives under load.
+//   :81 — WS-only server, isolated pool so an asset stampede over the
+//         reverse tunnel cannot drop an open /ws.
+// `pick_local_port()` peeks the first request bytes to choose.
 static constexpr uint16_t LOCAL_HTTP_PORT = 80;
+static constexpr uint16_t LOCAL_WS_PORT   = 81;
 static constexpr int      MAX_STREAMS     = 12;
+// 4 KB per TLS record: halves the number of records for the typical
+// 50–100 KB font transfer, ~25-40 % throughput win over 2 KB.  Safe now
+// that PSRAM holds the mid-sized mbedtls allocations (sdkconfig threshold
+// lowered to 2 KB) and our own scratch (`s_send_frame`, `s_pump_buf`,
+// pending data, RX reassembly) is also out of internal heap, so the
+// AES-GCM DMA buffer the HW crypto driver still needs in SRAM has room
+// even with 4–5 simultaneous stream flushes during page-load bursts.
 static constexpr size_t   IO_CHUNK        = 4096;
 static constexpr size_t   RX_BUF_MAX      = 16 * 1024;   // cap on a single incoming frame
 static constexpr size_t   PENDING_BUF_MAX = 16 * 1024;   // cap on per-stream pre-open buffer
 
 struct Stream {
     bool     active;
+    bool     is_ws;             // true if routed to LOCAL_WS_PORT — never evict
     uint32_t id;
-    int      sock;        // non-blocking lwip socket to 127.0.0.1:80
+    int      sock;              // non-blocking lwip socket to 127.0.0.1:80 or :81
+    int64_t  last_active_us;    // last successful read/write, for idle eviction
 };
+
+// Idle keep-alive HTTP streams from previous page loads keep the browser's
+// TCPs alive for ~5 min and so hold our slot table hostage.  When a new
+// `open` would have nowhere to land, we evict the least-recently-active
+// HTTP stream older than this grace period.  WS streams are exempt.
+static constexpr int64_t IDLE_EVICT_US = 5000000;   // 5 s
 
 static SemaphoreHandle_t      s_lock     = nullptr;     // protects cfg + streams
 static EventGroupHandle_t     s_events   = nullptr;
@@ -155,10 +178,17 @@ static Stream* find_stream_locked(uint32_t id)
     return nullptr;
 }
 
-static Stream* alloc_stream_locked(uint32_t id, int sock)
+static Stream* alloc_stream_locked(uint32_t id, int sock, bool is_ws)
 {
     for (auto& s : s_streams) {
-        if (!s.active) { s.active = true; s.id = id; s.sock = sock; return &s; }
+        if (!s.active) {
+            s.active         = true;
+            s.is_ws          = is_ws;
+            s.id             = id;
+            s.sock           = sock;
+            s.last_active_us = esp_timer_get_time();
+            return &s;
+        }
     }
     return nullptr;
 }
@@ -167,9 +197,37 @@ static void free_stream_locked(Stream& s)
 {
     if (!s.active) return;
     if (s.sock >= 0) lwip_close(s.sock);
-    s.active = false;
-    s.id     = 0;
-    s.sock   = -1;
+    s.active         = false;
+    s.is_ws          = false;
+    s.id             = 0;
+    s.sock           = -1;
+    s.last_active_us = 0;
+}
+
+static bool send_ctrl(const char* type, uint32_t id);   // forward decl
+
+// When the slot table is full, reclaim one idle HTTP stream (NEVER a WS) so
+// a fresh open can land instead of timing out in the pending queue.  Picks
+// the least-recently-active HTTP stream older than IDLE_EVICT_US.  Returns
+// true if a slot was freed.  Sends a `close` to the server so the bridge
+// can synthesise a 502 to the browser, which will reopen on its next nav.
+static bool evict_idle_locked()
+{
+    int64_t now = esp_timer_get_time();
+    Stream* victim  = nullptr;
+    int64_t  oldest = now;
+    for (auto& s : s_streams) {
+        if (!s.active || s.is_ws) continue;
+        if (now - s.last_active_us < IDLE_EVICT_US) continue;
+        if (s.last_active_us < oldest) { oldest = s.last_active_us; victim = &s; }
+    }
+    if (!victim) return false;
+    uint32_t vid = victim->id;
+    ESP_LOGI(TAG, "evicting idle stream %u (idle %lld ms)",
+             (unsigned)vid, (now - victim->last_active_us) / 1000);
+    free_stream_locked(*victim);
+    send_ctrl("close", vid);
+    return true;
 }
 
 static void drop_all_streams_locked()
@@ -179,20 +237,45 @@ static void drop_all_streams_locked()
 
 // ── Local loopback socket ─────────────────────────────────────────────────────
 
-static int connect_local_http()
+static int connect_local(uint16_t port)
 {
     int s = lwip_socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) return -1;
     struct sockaddr_in sa = {};
     sa.sin_family      = AF_INET;
     sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    sa.sin_port        = htons(LOCAL_HTTP_PORT);
+    sa.sin_port        = htons(port);
     if (lwip_connect(s, (struct sockaddr*)&sa, sizeof(sa)) < 0) {
         lwip_close(s); return -1;
     }
     int flags = lwip_fcntl(s, F_GETFL, 0);
     lwip_fcntl(s, F_SETFL, flags | O_NONBLOCK);
+    // Loopback has zero RTT — Nagle's coalescing buys nothing and actively
+    // hurts:  a 50-byte LCD-originated `setting` frame from httpd:81 or a
+    // 2-byte PING/PONG sits in the kernel TX buffer for the delayed-ACK
+    // timer (up to 200 ms × N retries) waiting for "more data" before
+    // flushing.  Through the tunnel that propagates as multi-second
+    // perceived latency on web UI updates.  Disable on our side; the httpd
+    // side flushes per write anyway because chunks are emitted individually.
+    int yes = 1;
+    lwip_setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
     return s;
+}
+
+// Choose the local httpd port for a tunneled stream from its first bytes.
+// Returns 0 if the caller must wait for more data before deciding (we need
+// at least the request line, i.e. `GET /<path> `).  HTTP request methods
+// are always uppercase ASCII so a literal memcmp is fine.
+static uint16_t pick_local_port(const uint8_t* data, size_t len)
+{
+    // Smallest discriminator: "GET /ws " (8 bytes).  Anything shorter and
+    // we can't tell yet — caller defers.
+    if (!data || len < 8) return 0;
+    if (memcmp(data, "GET /ws", 7) == 0) {
+        char c = (char)data[7];
+        if (c == ' ' || c == '?' || c == '/') return LOCAL_WS_PORT;
+    }
+    return LOCAL_HTTP_PORT;
 }
 
 // ── Outbound: send a control / data frame to the server ───────────────────────
@@ -226,22 +309,27 @@ static bool send_ctrl(const char* type, uint32_t id)
 // (saves ~33% bandwidth) and JSON wrap (saves a parse/format).  hello /
 // open / close stay JSON over text frames; only the bulk data path
 // goes binary.
+// Scratch buffer for the outgoing binary frame.  Lives in PSRAM (allocated
+// once in wstunnelInit) so the ~2 KB do not eat into internal DRAM that
+// esp-aes / PSA need for their DMA-capable allocations during TLS.  Safe
+// because esp_websocket_client_send_bin copies into its TLS output buffer
+// before encrypting — input does not need to be DMA-capable.
+static uint8_t* s_send_frame = nullptr;
+
 static bool send_data(uint32_t id, const uint8_t* bytes, size_t len)
 {
     if (!s_client || !esp_websocket_client_is_connected(s_client)) return false;
-    size_t total = 4 + len;
-    uint8_t* frame = (uint8_t*)malloc(total);
-    if (!frame) return false;
-    frame[0] = (uint8_t)(id >> 24);
-    frame[1] = (uint8_t)(id >> 16);
-    frame[2] = (uint8_t)(id >>  8);
-    frame[3] = (uint8_t)(id      );
-    memcpy(frame + 4, bytes, len);
-    int n = esp_websocket_client_send_bin(s_client, (const char*)frame, total,
+    if (!s_send_frame) return false;
+    if (len > IO_CHUNK) return false;   // caller's contract: pump_task reads IO_CHUNK max
+    s_send_frame[0] = (uint8_t)(id >> 24);
+    s_send_frame[1] = (uint8_t)(id >> 16);
+    s_send_frame[2] = (uint8_t)(id >>  8);
+    s_send_frame[3] = (uint8_t)(id      );
+    memcpy(s_send_frame + 4, bytes, len);
+    int n = esp_websocket_client_send_bin(s_client, (const char*)s_send_frame, 4 + len,
                                           pdMS_TO_TICKS(10000));
-    free(frame);
     if (n < 0) {
-        ESP_LOGW(TAG, "ws send_bin dropped (n=%d, len=%u)", n, (unsigned)total);
+        ESP_LOGW(TAG, "ws send_bin dropped (n=%d, len=%u)", n, (unsigned)(4 + len));
         return false;
     }
     return true;
@@ -259,43 +347,56 @@ static bool try_open_locked(uint32_t id,
                             const uint8_t* prebuf = nullptr,
                             size_t prebuf_len = 0)
 {
+    // Need enough of the request line to pick :80 vs :81.  Bail without
+    // touching slots so the caller keeps the pending entry and retries on
+    // the next pump tick once more bytes arrive (or the 5 s timeout fires).
+    uint16_t port = pick_local_port(prebuf, prebuf_len);
+    if (port == 0) return false;
+    // Debug: log the request-line prefix so we can verify the sniff sees
+    // what we expect (e.g. relative vs absolute-form, methods other than
+    // GET).  Remove once the routing is confirmed correct.
+    if (prebuf_len > 0) {
+        size_t n = prebuf_len > 40 ? 40 : prebuf_len;
+        ESP_LOGI(TAG, "stream %u sniff (port=%u): \"%.*s\"",
+                 (unsigned)id, port, (int)n, (const char*)prebuf);
+    }
+
     bool any_free = false;
     for (auto& sl : s_streams) if (!sl.active) { any_free = true; break; }
-    if (!any_free) return false;
+    if (!any_free) {
+        // Slot table full of zombie keep-alive HTTPs.  Reclaim one before
+        // refusing.  If no candidate is idle enough, the pending entry
+        // sticks around (and the page-load grace expires it after 5 s).
+        if (!evict_idle_locked()) return false;
+    }
 
-    int sock = connect_local_http();
+    int sock = connect_local(port);
     if (sock < 0) return false;        // LWIP exhausted / httpd refused
 
-    Stream* s = alloc_stream_locked(id, sock);
+    Stream* s = alloc_stream_locked(id, sock, port == LOCAL_WS_PORT);
     if (!s) {                          // raced with another open; bail
         lwip_close(sock);
         return false;
     }
 
-    // Flush any bytes that arrived on the WS while the open was queued.
-    // The loopback socket is non-blocking but the kernel buffer is large
-    // enough that a few KB land in one shot; on the rare EAGAIN we yield
-    // briefly without dropping the lock for long.
-    if (prebuf && prebuf_len > 0) {
-        size_t off = 0;
-        int    spins = 0;
-        while (off < prebuf_len) {
-            ssize_t w = lwip_write(sock, prebuf + off, prebuf_len - off);
-            if (w > 0) { off += w; continue; }
-            if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && spins++ < 50) {
-                vTaskDelay(pdMS_TO_TICKS(2));
-                continue;
-            }
-            ESP_LOGW(TAG, "stream %u: flush of %u prebuf bytes failed at %u (errno=%d)",
-                     (unsigned)id, (unsigned)prebuf_len, (unsigned)off, errno);
-            free_stream_locked(*s);
-            return false;
+    // Flush the buffered request bytes — at this point `prebuf` is always
+    // non-empty because pick_local_port() refused to choose otherwise.
+    size_t off = 0;
+    int    spins = 0;
+    while (off < prebuf_len) {
+        ssize_t w = lwip_write(sock, prebuf + off, prebuf_len - off);
+        if (w > 0) { off += w; continue; }
+        if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && spins++ < 50) {
+            vTaskDelay(pdMS_TO_TICKS(2));
+            continue;
         }
-        ESP_LOGI(TAG, "stream %u opened, flushed %u buffered bytes",
-                 (unsigned)id, (unsigned)prebuf_len);
-    } else {
-        ESP_LOGI(TAG, "stream %u opened", (unsigned)id);
+        ESP_LOGW(TAG, "stream %u: flush of %u prebuf bytes failed at %u (errno=%d)",
+                 (unsigned)id, (unsigned)prebuf_len, (unsigned)off, errno);
+        free_stream_locked(*s);
+        return false;
     }
+    ESP_LOGI(TAG, "stream %u → :%u, flushed %u buffered bytes",
+             (unsigned)id, (unsigned)port, (unsigned)prebuf_len);
     return true;
 }
 
@@ -340,8 +441,13 @@ static void drain_pending_locked()
 
 static void handle_open(uint32_t id)
 {
+    // Always defer: try_open_locked() needs the first request bytes to
+    // decide between :80 (assets) and :81 (WS).  drain_pending_locked()
+    // materialises the stream on the next pump tick once data arrives
+    // (the server pushes the HTTP request line right after `open`, so
+    // the latency is sub-frame in practice).
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (!try_open_locked(id)) enqueue_pending_locked(id);
+    enqueue_pending_locked(id);
     xSemaphoreGive(s_lock);
 }
 
@@ -370,7 +476,8 @@ static void handle_data(uint32_t id, const uint8_t* raw, size_t rlen)
                 return;
             }
             if (p.data_cap < need) {
-                uint8_t* nb = (uint8_t*)realloc(p.data, need);
+                // PSRAM-resident: spares internal DRAM for the TLS path.
+                uint8_t* nb = (uint8_t*)heap_caps_realloc(p.data, need, MALLOC_CAP_SPIRAM);
                 if (!nb) {
                     ESP_LOGW(TAG, "stream %u: pending realloc failed", (unsigned)id);
                     send_ctrl("close", id);
@@ -393,6 +500,7 @@ static void handle_data(uint32_t id, const uint8_t* raw, size_t rlen)
                  (unsigned)id, (unsigned)rlen);
         return;
     }
+    s->last_active_us = esp_timer_get_time();
     xSemaphoreGive(s_lock);
     ESP_LOGI(TAG, "stream %u: %u bytes ← server", (unsigned)id, (unsigned)rlen);
 
@@ -518,7 +626,9 @@ static void on_ws_event(void* /*arg*/, esp_event_base_t /*base*/,
             s_rx_len = 0; break;
         }
         if (s_rx_cap < total + 1) {
-            char* nb = (char*)realloc(s_rx, total + 1);
+            // PSRAM-resident: up to RX_BUF_MAX (16 KB) of reassembly buffer
+            // out of internal DRAM.
+            char* nb = (char*)heap_caps_realloc(s_rx, total + 1, MALLOC_CAP_SPIRAM);
             if (!nb) { s_rx_len = 0; break; }
             s_rx     = nb;
             s_rx_cap = total + 1;
@@ -559,12 +669,13 @@ static void on_ws_event(void* /*arg*/, esp_event_base_t /*base*/,
 
 // ── Pump task: drain local sockets → WS data frames ───────────────────────────
 
+static uint8_t* s_pump_buf = nullptr;   // IO_CHUNK bytes in PSRAM, see wstunnelInit
+
 static void pump_task(void*)
 {
-    // 4 KB doesn't fit on the task stack alongside the rest of the locals
-    // and any IDF library frames we might call into.  Keep it static —
-    // the pump task is the single owner, no reentrancy concern.
-    static uint8_t buf[IO_CHUNK];
+    // Single owner (this task), allocated in PSRAM at init.  Keeps the
+    // task stack small and frees IO_CHUNK bytes of internal DRAM.
+    uint8_t* buf = s_pump_buf;
     for (;;) {
         if (!s_connected) {
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -585,9 +696,28 @@ static void pump_task(void*)
 
         bool any = false;
         for (int i = 0; i < n; i++) {
-            ssize_t r = lwip_read(snaps[i].sock, buf, sizeof(buf));
+            ssize_t r = lwip_read(snaps[i].sock, buf, IO_CHUNK);
             if (r > 0) {
+                // Coalesce: drain whatever else lwip already has queued for
+                // this fd so we don't ship the response in 4-byte slivers.
+                // httpd's chunked-transfer encoding emits size-hex, payload
+                // and CRLF as separate sends, and the loopback queue
+                // surfaces them one-by-one.  Each TLS write has fixed
+                // crypto + framing overhead, so batching turns a 100-frame
+                // font transfer into ~5 frames.
+                while (r < (ssize_t)IO_CHUNK) {
+                    ssize_t r2 = lwip_read(snaps[i].sock, buf + r, IO_CHUNK - r);
+                    if (r2 <= 0) break;          // EAGAIN, EOF or error
+                    r += r2;
+                }
                 ESP_LOGI(TAG, "stream %u: %u bytes → server", (unsigned)snaps[i].id, (unsigned)r);
+                // Bump last-active so the idle-eviction LRU doesn't reap
+                // this stream mid-transfer.
+                xSemaphoreTake(s_lock, portMAX_DELAY);
+                if (Stream* s2 = find_stream_locked(snaps[i].id)) {
+                    s2->last_active_us = esp_timer_get_time();
+                }
+                xSemaphoreGive(s_lock);
                 // If the WS send fails the stream is doomed — tear it down
                 // immediately so we don't half-flush gzip/HTTP content to
                 // the browser (manifests as ERR_CONTENT_DECODING_FAILED).
@@ -601,13 +731,22 @@ static void pump_task(void*)
                 }
                 any = true;
             } else if (r == 0) {
-                // local end closed → tell server, free slot
+                // local end closed → tell server, free slot.  If we get
+                // here BEFORE the stream wrote any bytes back, the server
+                // will surface this to the browser as "upstream closed"
+                // (502).  That means esp_http_server closed the loopback
+                // socket without responding — request mis-parse, header
+                // overflow, or the connection was evicted via lru_purge.
+                ESP_LOGI(TAG, "stream %u: local EOF, closing (no response)",
+                         (unsigned)snaps[i].id);
                 xSemaphoreTake(s_lock, portMAX_DELAY);
                 Stream* s2 = find_stream_locked(snaps[i].id);
                 if (s2) free_stream_locked(*s2);
                 xSemaphoreGive(s_lock);
                 send_ctrl("close", snaps[i].id);
             } else if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                ESP_LOGW(TAG, "stream %u: local read errno=%d, closing",
+                         (unsigned)snaps[i].id, errno);
                 xSemaphoreTake(s_lock, portMAX_DELAY);
                 Stream* s2 = find_stream_locked(snaps[i].id);
                 if (s2) free_stream_locked(*s2);
@@ -680,7 +819,7 @@ static void start_client_locked()
     cfg.uri                  = url;
     cfg.reconnect_timeout_ms = 5000;
     cfg.network_timeout_ms   = 10000;
-    cfg.buffer_size          = 4096;
+    cfg.buffer_size          = 8192;   // ≥ IO_CHUNK + 4 (binary stream-id header) with headroom
     // Required for wss:// against a Let's Encrypt cert: without a trust
     // store esp-tls fails the handshake silently and the WS client just
     // keeps "reconnecting" forever.  The IDF certificate bundle covers
@@ -783,6 +922,17 @@ void wstunnelInit()
     s_lock   = xSemaphoreCreateMutex();
     s_events = xEventGroupCreate();
     for (auto& s : s_streams) { s.active = false; s.sock = -1; }
+
+    // Long-lived I/O buffers in PSRAM.  Keeps ~6 KB of internal DRAM free
+    // for esp-aes (DMA) and PSA crypto contexts that have to live in
+    // SRAM.  Fail loudly if PSRAM isn't available — the tunnel would
+    // crash on the first send_data() / read otherwise.
+    s_send_frame = (uint8_t*)heap_caps_malloc(IO_CHUNK + 4, MALLOC_CAP_SPIRAM);
+    s_pump_buf   = (uint8_t*)heap_caps_malloc(IO_CHUNK,     MALLOC_CAP_SPIRAM);
+    if (!s_send_frame || !s_pump_buf) {
+        ESP_LOGE(TAG, "PSRAM alloc failed (send=%p pump=%p)", s_send_frame, s_pump_buf);
+        return;
+    }
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_cfg.enabled = nvs_get_u8_kv("tunnel", "enabled", 0) != 0;
