@@ -7,18 +7,13 @@ Control surfaces: WebSocket web UI, serial CLI, and a physical 800×480 LCD with
 capacitive touch (in progress). Solar charge data (Victron BLE) and battery SOC
 (Ultimatron BLE) are surfaced on both the LCD and the web UI.
 
-> **Status (2026-05):** mid-migration from the previous ESP32-C5 / NM-CYD-C5 board
-> to the JC4880P443C / ESP32-P4 board. The LCD display is working; the LIN, WiFi,
-> BLE and WebSocket subsystems exist as source files but are not all wired into
-> `app_main` yet. Treat the codebase as porting-in-progress, not feature-complete.
-
 > This software is not provided, endorsed, supported, or sponsored by Truma.
 > See [LICENSE](LICENSE) — no warranty of any kind.
 
 ---
 
 ## Hardware
-
+![JC4880P443C board with LIN interface / PS](doc/screen-with-lin-interface.jpg)
 | | |
 |---|---|
 | **Board** | JC4880P443C (ESP32-P4-WROOM, dual-core RISC-V @ 400 MHz) |
@@ -110,10 +105,10 @@ automatically.
 
 ```
 Truma Combi D ←→ LIN transceiver ←→ ESP32-P4 UART
-                                        ↕
-                         MQTT broker / WebSocket clients / Serial CLI / Touch UI
-                                        ↕
-                         Victron BLE (solar) / Ultimatron BLE (battery)
+                    ↕
+MQTT broker / WebSocket clients / Serial CLI / Touch UI
+                    ↕
+Victron BLE (solar) / Ultimatron BLE (battery)
 ```
 
 Key source files in `main/`:
@@ -150,7 +145,7 @@ for the wire protocol.
 - **Node.js ≥ 18**.
 - A shared secret for `TUNNEL_TOKEN`.  Generate one with:
   ```bash
-  openssl rand -hex 32
+  openssl rand -hex 8
   ```
 
 ### Install on Plesk
@@ -257,14 +252,15 @@ location / {
 
 ### Configure the device
 
-On the TruMinus LCD: ⚙ → **Túnel**:
-- **Dominio**: bare hostname, e.g. `tunnel.example.com` (no scheme, no
+On the TruMinus LCD: **[⚙ Config]** → **Tunnel**:
+- **Domain**: bare hostname, e.g. `tunnel.example.com` (no scheme, no
   path — the firmware composes `wss://<domain>/tunnel?token=…` itself).
 - **Token**: the same value as `TUNNEL_TOKEN` on the server.
-- Enable switch → ON → Save.
+- **Enable switch → ON**
+- Save.
 
 The cloud icon in the top bar blinks while the WSS handshake is in
-flight, turns solid blue (`rgb(70,131,210)`) when up, and goes red after
+flight, turns solid blue when up, and goes red after
 3 consecutive disconnects without a successful connect.
 
 ---
