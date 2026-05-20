@@ -37,6 +37,24 @@ function sendData(id, buf) {
   esp.send(JSON.stringify({ type: "data", id, b: buf.toString("base64") }));
 }
 
+// Cleanly close every in-flight tunneled stream. If a stream hasn't sent
+// any bytes back to the client yet we synthesise a 502 so Passenger /
+// nginx see a well-formed response instead of a half-open socket (which
+// surfaces in the browser as "Incomplete response received from
+// application"). `socket.end()` flushes the FIN so the TCP peer sees a
+// graceful close rather than the RST that `destroy()` would send.
+function teardownStreams(why) {
+  for (const [, s] of streams) {
+    if (s.socket.writableEnded || s.socket.destroyed) continue;
+    if (s.socket.bytesWritten === 0) {
+      s.socket.end(`HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n${why}\n`);
+    } else {
+      s.socket.end();
+    }
+  }
+  streams.clear();
+}
+
 function attachStream(socket, firstChunk) {
   if (!espAlive()) {
     socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\ntunnel offline\n");
@@ -60,8 +78,7 @@ function handleEsp(ws) {
     LOG("tunnel: replacing previous ESP connection");
     try { esp.close(4000, "superseded"); } catch {}
     // Tear down all in-flight streams since their other end is gone.
-    for (const [, s] of streams) s.socket.destroy();
-    streams.clear();
+    teardownStreams("ESP replaced");
   }
   esp = ws;
   LOG("tunnel: ESP connected");
@@ -80,7 +97,14 @@ function handleEsp(ws) {
     if (m.type === "data" && typeof m.b === "string") {
       s.socket.write(Buffer.from(m.b, "base64"));
     } else if (m.type === "close") {
-      s.socket.end();
+      // Same shape as teardownStreams: if the ESP closed before writing a
+      // single byte, send a 502 ourselves so Passenger doesn't surface the
+      // empty stream as "Incomplete response received from application".
+      if (s.socket.bytesWritten === 0) {
+        s.socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nupstream closed\n");
+      } else {
+        s.socket.end();
+      }
       streams.delete(m.id);
     }
   });
@@ -89,8 +113,7 @@ function handleEsp(ws) {
     if (esp === ws) {
       esp = null;
       LOG("tunnel: ESP disconnected");
-      for (const [, s] of streams) s.socket.destroy();
-      streams.clear();
+      teardownStreams("ESP disconnected");
     }
   });
 
