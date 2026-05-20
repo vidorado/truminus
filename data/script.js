@@ -10,6 +10,10 @@ var gateway  = wsScheme + window.location.hostname +
 var wserror      = true;
 var linerror     = false;
 var s_ssid       = '';
+// LAN IP reported by the device.  Used in the status bar instead of
+// window.location.hostname, which through the WSS reverse tunnel resolves
+// to the public domain rather than the local IP.
+var s_ip         = '';
 
 // ── Application state ─────────────────────────────────────────────────────
 var s_temp        = 20.0;
@@ -29,8 +33,10 @@ function updateStatusBar() {
     var msg = document.getElementById('statusMsg');
     var ip  = document.getElementById('deviceIp');
     if (!msg) return;
-    // Format: "SSID  IP" — matches the CYD physical status bar.
-    var addr = window.location.hostname;
+    // Format: "SSID / LAN-IP" — matches the LCD status bar.  Falls back to
+    // the URL hostname only when the device hasn't reported its IP yet
+    // (very early after page load, before the first snapshot).
+    var addr   = s_ip || window.location.hostname;
     var ipText = s_ssid ? (s_ssid + ' / ' + addr) : addr;
     if (wserror) {
         msg.textContent  = t('ws_conn');
@@ -47,11 +53,16 @@ function updateStatusBar() {
     }
 }
 updateStatusBar();
+// Apply the default language (es) to every data-i18n element immediately so
+// the HTML fallback ("Off", etc.) is never visible before the snapshot
+// arrives.  When the snapshot brings d.lang, applySetting('lang', ...) will
+// re-apply if it differs.
+applyLanguage(s_lang);
 
 // ── WebSocket ─────────────────────────────────────────────────────────────
 var ws = new ReconnectingWebSocket(gateway);
-function ping() { ws.send('ping'); setTimeout(ping, 10000); }
-setTimeout(ping, 10000);
+// Liveness is handled by WS control PING (opcode 0x9) sent every 20 s from
+// the firmware; browsers auto-respond with PONG.  No JS heartbeat needed.
 
 // Debounce the "WS down" indicator: brief reconnect cycles (under 3 s)
 // would otherwise flicker the WiFi dot and the "Connecting..." footer.
@@ -94,6 +105,7 @@ ws.onmessage = function (event) {
             }
         }
         if (d.ssid !== undefined)         applyStatus('ssid', d.ssid);
+        if (d.ip   !== undefined)         applyStatus('ip',   d.ip);
         if (d.outdoor_temp !== undefined) applyStatus('outdoor_temp', d.outdoor_temp);
         if (d.energy_idx !== undefined)   applySetting('energy_idx', d.energy_idx);
         if (d.lang !== undefined)         applySetting('lang', d.lang);
@@ -157,10 +169,19 @@ function applyStatus(id, value) {
         return;
     }
 
+    if (id === 'ip') {
+        s_ip = value || '';
+        updateStatusBar();
+        return;
+    }
+
     if (id === 'linok') {
         linerror = parseInt(value) !== 1;
         updateStatusBar();
         setDot('dot-lin', linerror ? 'err' : 'ok');
+        // Indicators are LIN-gated — re-render so they dim on bus loss
+        // and re-illuminate when the bus comes back.
+        refreshIndicators();
     }
 
     if (id === 'water_heating') {
@@ -241,7 +262,11 @@ function refreshBoiler() {
 }
 
 function refreshIndicators() {
-    var boilerOn = s_boiler !== 'off';
+    // Without a live LIN bus the boiler/heat fields are stale (settings
+    // queued but not actually applied by the Truma), so force-dim the
+    // indicators.  Mirrors the LCD gate in p4DisplayUpdate.
+    var linOk    = !linerror;
+    var boilerOn = linOk && s_boiler !== 'off';
     var boilerSetTemp = { eco: 40, high: 60, boost: 60 };
     var wSet = boilerSetTemp[s_boiler] || 0;
     var wAtTemp = boilerOn && s_waterTemp !== null && s_waterTemp > 0 && s_waterTemp >= wSet - 1;
@@ -249,8 +274,9 @@ function refreshIndicators() {
     cls('ind-tint', 'ind-on',     boilerOn && !wDemand);
     cls('ind-tint', 'ind-active', wDemand);
 
-    var heatDemand = s_heat && s_roomTemp !== null && (s_roomTemp < s_temp - 0.3);
-    cls('ind-fire', 'ind-on',     s_heat && !heatDemand);
+    var heatOn      = linOk && s_heat;
+    var heatDemand  = heatOn && s_roomTemp !== null && (s_roomTemp < s_temp - 0.3);
+    cls('ind-fire', 'ind-on',     heatOn && !heatDemand);
     cls('ind-fire', 'ind-active', heatDemand);
 
     // Water temperature bar (matches CYD display)

@@ -95,8 +95,6 @@ static void onWsCommand(const char* id, const char* value) {
         p4SetRoomSetpoint(strtof(value, nullptr));
     } else if (strcmp(k, "energy_idx") == 0) {
         p4SetEnergyIdx(atoi(value));
-    } else if (strcmp(k, "ping") == 0) {
-        // No-op: just a heartbeat to keep the WS warm.
     } else {
         ESP_LOGI(TAG, "ws cmd (unhandled): %s = %s", id, value);
     }
@@ -110,8 +108,9 @@ static void onWsConnected() {
     p4GetControlState(cs);
     WifiStatus ws = wifi_manager_get_status();
     const char* ssid = (ws.connected && ws.ssid[0]) ? ws.ssid : "";
+    const char* ip   = (ws.connected && ws.ip[0])   ? ws.ip   : "";
 
-    char buf[320];
+    char buf[352];
     snprintf(buf, sizeof(buf),
              "{\"command\":\"snapshot\","
              "\"settings\":{"
@@ -122,6 +121,7 @@ static void onWsConnected() {
              "},"
              "\"status\":{},"
              "\"ssid\":\"%s\","
+             "\"ip\":\"%s\","
              "\"energy_idx\":%d"
              "}",
              cs.heatingOn ? 1 : 0,
@@ -129,6 +129,7 @@ static void onWsConnected() {
              boilerIntToStr(cs.boilerMode),
              cs.roomSetpoint,
              ssid,
+             ip,
              cs.energyIdx);
     wsQueueSend(buf);
 }
@@ -178,18 +179,31 @@ static void broadcastControlChanges(const P4ControlState& cs) {
 // WS latency budget.
 // Broadcast SSID changes to connected browsers (footer shows "ssid / ip").
 // Same diff-based scheme as broadcastControlChanges: emit once on change.
-static void broadcastSsidChange() {
-    static char  prev[33] = "";
-    static bool  inited   = false;
+static void broadcastNetInfoChange() {
+    static char prev_ssid[33] = "";
+    static char prev_ip[16]   = "";
+    static bool inited        = false;
     WifiStatus ws = wifi_manager_get_status();
-    const char* cur = (ws.connected && ws.ssid[0]) ? ws.ssid : "";
-    if (inited && strcmp(cur, prev) == 0) return;
+    const char* ssid = (ws.connected && ws.ssid[0]) ? ws.ssid : "";
+    const char* ip   = (ws.connected && ws.ip[0])   ? ws.ip   : "";
+    bool ssid_chg = strcmp(ssid, prev_ssid) != 0;
+    bool ip_chg   = strcmp(ip,   prev_ip)   != 0;
+    if (inited && !ssid_chg && !ip_chg) return;
     char buf[160];
-    snprintf(buf, sizeof(buf),
-             "{\"command\":\"status\",\"id\":\"/ssid\",\"value\":\"%s\"}", cur);
-    wsQueueSend(buf);
-    strncpy(prev, cur, sizeof(prev) - 1);
-    prev[sizeof(prev) - 1] = '\0';
+    if (ssid_chg || !inited) {
+        snprintf(buf, sizeof(buf),
+                 "{\"command\":\"status\",\"id\":\"/ssid\",\"value\":\"%s\"}", ssid);
+        wsQueueSend(buf);
+        strncpy(prev_ssid, ssid, sizeof(prev_ssid) - 1);
+        prev_ssid[sizeof(prev_ssid) - 1] = '\0';
+    }
+    if (ip_chg || !inited) {
+        snprintf(buf, sizeof(buf),
+                 "{\"command\":\"status\",\"id\":\"/ip\",\"value\":\"%s\"}", ip);
+        wsQueueSend(buf);
+        strncpy(prev_ip, ip, sizeof(prev_ip) - 1);
+        prev_ip[sizeof(prev_ip) - 1] = '\0';
+    }
     inited = true;
 }
 
@@ -199,7 +213,7 @@ static void wsPumpTask(void* /*arg*/) {
         P4ControlState cs;
         p4GetControlState(cs);
         broadcastControlChanges(cs);
-        broadcastSsidChange();
+        broadcastNetInfoChange();
         wsQueueDrain();
     }
 }
