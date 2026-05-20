@@ -4,131 +4,126 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=04ad32c9">
+<link rel="stylesheet" href="styles.css?v=3fca8e2f">
 </head>
 <body>
 
-<!-- ── Top bar ────────────────────────────────────────────────────────── -->
+<!-- ── Top bar — mirrors main/p4display.cpp top band ─────────────────────── -->
 <header class="topbar">
   <div class="topbar-temps">
     <span id="ind-tint" class="tbadge tbadge-ind"><i class="fi">&#xF043;</i></span>
-    <span id="ind-fire" class="tbadge tbadge-ind"><i class="fi">&#xF06D;</i></span>
-    <span class="tbadge"><i class="fi">&#xF015;</i> <span id="room_temp">--</span>&nbsp;°C</span>
-    <span class="tbadge tbadge-ext"><i class="fi">&#xF2C9;</i><i class="fi fi-sm">&#xF054;</i> <span id="outdoor_temp">--</span>&nbsp;°C</span>
+    <span id="ind-fire" class="tbadge tbadge-ind"><i class="fi">&#xF7E4;</i></span>
+    <span class="tbadge"><i class="fi">&#xE3AF;</i> <span id="room_temp">--</span>&nbsp;°C</span>
+    <span class="tbadge tbadge-ext"><i class="fi">&#xF2C9;</i><i class="fi fi-sm">&#xF2F6;</i> <span id="outdoor_temp">--</span>&nbsp;°C</span>
   </div>
   <div class="topbar-icons">
-    <button id="btn-conf" class="btn-conf" type="button" title="Configuración">
-      <i class="fi">&#xF013;</i><span>Config</span>
-    </button>
-    <span id="dot-bt"   class="sdot sdot-dis" title="Bluetooth"><i class="fi">&#xF294;</i></span>
+    <span id="dot-bt"   class="sdot sdot-dis" title="Bluetooth"><i class="fib">&#xF293;</i></span>
     <span id="dot-wifi" class="sdot sdot-err" title="WiFi"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M1 9l2 2c5-5 13-5 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3a4.24 4.24 0 0 0-6 0zm-4-4l2 2a7 7 0 0 1 10 0l2-2C15.14 9.14 8.87 9.14 5 13z" fill="currentColor"/></svg></span>
     <span id="dot-lin"  class="sdot sdot-err" title="LIN"><i class="fi">&#xF074;</i></span>
   </div>
 </header>
 
-<!-- ── Main panels ────────────────────────────────────────────────────── -->
-<main class="panels">
+<!-- ── LCD-mirror layout: 800 px canvas, two rows with different column widths
+       that reserve the empty right-hand area the physical screen leaves for
+       future controls. ───────────────────────────────────────────────────── -->
+<main class="lcd">
 
-  <!-- Left panel — HEATING -->
-  <section class="panel">
-    <div class="p-title" data-i18n="heating">CALEFACCIÓN</div>
+  <!-- Row 1: HEATING (301 px) + HOT WATER (350 px) — gap on right = 149 px -->
+  <div class="row row1">
 
-    <button id="heatBtn" class="btn-heat btn-off" onclick="toggleHeating()">APAGADO</button>
+    <!-- HEATING panel (left/top) -->
+    <section class="panel panel-heat">
+      <div class="p-title" data-i18n="heating">CALEFACCIÓN</div>
 
-    <!-- Temperature setpoint (space reserved, toggled via visibility) -->
-    <div id="spRow" class="sp-row sp-hidden">
-      <button class="btn-step" onclick="changeTemp(-0.5)">&#9660;</button>
-      <span id="spVal" class="sp-val">20.0&nbsp;°C</span>
-      <button class="btn-step" onclick="changeTemp(0.5)">&#9650;</button>
-    </div>
+      <button id="heatBtn" class="btn-heat btn-off" onclick="toggleHeating()">APAGADO</button>
 
-    <div class="p-sep"></div>
-    <div class="sec-lbl" data-i18n="fan">VENTILADOR</div>
-
-    <!-- Fan heating mode: Eco | High (heat ON) -->
-    <div id="fanHeatRow" class="btn-row vis-hidden">
-      <button id="fhEco"  class="btn-fan" onclick="setFan('eco')"  data-i18n="fan_eco">Eco</button>
-      <button id="fhHigh" class="btn-fan" onclick="setFan('high')" data-i18n="fan_high">Alto</button>
-    </div>
-
-    <!-- Fan standby mode: Off | On (heat OFF) -->
-    <div id="fanSbyRow" class="btn-row">
-      <button id="fsBtnOff" class="btn-fan btn-sel" onclick="setFanSby('off')" data-i18n="fan_off">Off</button>
-      <button id="fsBtnOn"  class="btn-fan"         onclick="setFanSby('on')"  data-i18n="fan_on">On</button>
-    </div>
-    <!-- Level control 1-10 (visible when standby + fan On) -->
-    <div id="fanLvlRow" class="sp-row vis-hidden">
-      <button class="btn-step" onclick="changeFanLvl(-1)">&#9660;</button>
-      <span id="fanLvlVal" class="sp-val">5</span>
-      <button class="btn-step" onclick="changeFanLvl(1)">&#9650;</button>
-    </div>
-  </section>
-
-  <!-- Right panel — HOT WATER + SOLAR/BATTERY (matches CYD physical layout) -->
-  <section class="panel panel-right">
-    <!-- HOT WATER section (top half) -->
-    <div class="p-title" data-i18n="hot_water">AGUA CALIENTE</div>
-
-    <div class="water-row">
-      <!-- 4 boiler buttons in a 2×2 grid (left) -->
-      <div class="boiler-grid">
-        <button id="bOff"   class="btn-boiler" onclick="setBoiler('off')"   data-i18n="boiler_off">Apag.</button>
-        <button id="bEco"   class="btn-boiler" onclick="setBoiler('eco')">40&nbsp;°C</button>
-        <button id="bHigh"  class="btn-boiler" onclick="setBoiler('high')">60&nbsp;°C</button>
-        <button id="bBoost" class="btn-boiler" onclick="setBoiler('boost')">60&nbsp;°C&nbsp;<i class="fi">&#xF0E7;</i></button>
+      <!-- Setpoint row (visible only when heat is on) -->
+      <div id="spRow" class="sp-row sp-hidden">
+        <button class="btn-step" onclick="changeTemp(-0.5)">&#9660;</button>
+        <span id="spVal" class="sp-val">20.0&nbsp;°C</span>
+        <button class="btn-step" onclick="changeTemp(0.5)">&#9650;</button>
       </div>
+    </section>
 
-      <!-- Water temperature bar (right, battery-style) -->
-      <div class="water-temp-bar-wrap">
-        <div class="water-temp-lbl"><span id="water_temp_val">--</span>&thinsp;°C</div>
-        <div class="water-temp-body">
-          <div id="water_temp_fill" class="water-temp-fill"></div>
+    <!-- HOT WATER panel (right/top) -->
+    <section class="panel panel-water">
+      <div class="p-title" data-i18n="hot_water">AGUA CALIENTE</div>
+
+      <div class="water-row">
+        <div class="boiler-grid">
+          <button id="bOff"   class="btn-boiler" onclick="setBoiler('off')"   data-i18n="boiler_off">Apag.</button>
+          <button id="bEco"   class="btn-boiler" onclick="setBoiler('eco')">40&nbsp;°C</button>
+          <button id="bHigh"  class="btn-boiler" onclick="setBoiler('high')">60&nbsp;°C</button>
+          <button id="bBoost" class="btn-boiler" onclick="setBoiler('boost')">60&nbsp;°C&nbsp;<i class="fi">&#xF0E7;</i></button>
+        </div>
+
+        <div class="water-temp-bar-wrap">
+          <div class="water-temp-lbl"><span id="water_temp_val">--</span>&thinsp;°C</div>
+          <div class="water-temp-body">
+            <div id="water_temp_fill" class="water-temp-fill"></div>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
+  </div>
 
-    <!-- Horizontal separator -->
-    <div class="p-sep"></div>
+  <!-- Row 2: FAN (213 px) + SOLAR (304 px) — gap on right = 283 px -->
+  <div class="row row2">
 
-    <div class="p-title" data-i18n="solar_charge">CARGA SOLAR</div>
+    <!-- FAN panel (left/bottom) -->
+    <section class="panel panel-fan">
+      <div class="sec-lbl" data-i18n="fan">VENTILADOR</div>
 
-    <!-- SOLAR / BATTERY section (bottom half) -->
-    <div class="solar-batt-row">
-      <!-- Solar data (left column) -->
-      <div class="solar-col">
-        <div class="solar-line solar-st">
-          <span class="solar-lbl" data-i18n="solar_state_lbl">Estado</span>
-          <span id="solar_state" class="solar-val">--</span>
-        </div>
-        <div class="solar-line solar-v">
-          <span class="solar-lbl" data-i18n="solar_voltage">Voltaje</span>
-          <span class="solar-val">
+      <!-- Heat ON: Eco | Alto -->
+      <div id="fanHeatRow" class="btn-row vis-hidden">
+        <button id="fhEco"  class="btn-fan" onclick="setFan('eco')"  data-i18n="fan_eco">Eco</button>
+        <button id="fhHigh" class="btn-fan" onclick="setFan('high')" data-i18n="fan_high">Alto</button>
+      </div>
+
+      <!-- Heat OFF: Off | On -->
+      <div id="fanSbyRow" class="btn-row">
+        <button id="fsBtnOff" class="btn-fan btn-sel" onclick="setFanSby('off')" data-i18n="fan_off">Off</button>
+        <button id="fsBtnOn"  class="btn-fan"         onclick="setFanSby('on')"  data-i18n="fan_on">On</button>
+      </div>
+
+      <!-- Level 1-10 (visible when standby + On) -->
+      <div id="fanLvlRow" class="sp-row vis-hidden">
+        <button class="btn-step" onclick="changeFanLvl(-1)">&#9660;</button>
+        <span id="fanLvlVal" class="sp-val">5</span>
+        <button class="btn-step" onclick="changeFanLvl(1)">&#9650;</button>
+      </div>
+    </section>
+
+    <!-- SOLAR panel (right/bottom) — single-column lines like the LCD -->
+    <section class="panel panel-solar">
+      <div class="p-title" data-i18n="solar">SOLAR</div>
+
+      <div class="solar-row">
+        <div class="solar-col">
+          <div id="solar_state"    class="solar-line solar-status">--</div>
+          <div class="solar-line solar-volt">
+            <span data-i18n="solar_voltage">Volt.:</span>
             <span id="solar_battV">--</span>&thinsp;V
-          </span>
-        </div>
-        <div class="solar-line solar-a">
-          <span class="solar-lbl" data-i18n="solar_load">Carga</span>
-          <span class="solar-val">
+          </div>
+          <div class="solar-line solar-load">
+            <span data-i18n="solar_load">Carga:</span>
             <span id="solar_battA">--</span>&thinsp;A&ensp;/&ensp;<span id="solar_pvW">--</span>&thinsp;W
-          </span>
-        </div>
-        <div class="solar-line solar-kwh">
-          <span class="solar-lbl" data-i18n="solar_yield">Producc. hoy</span>
-          <span class="solar-val">
+          </div>
+          <div class="solar-line solar-prod">
+            <span data-i18n="solar_yield">Prod.:</span>
             <span id="solar_kWh">--</span>&thinsp;kWh
-          </span>
+          </div>
         </div>
-      </div>
 
-      <!-- Battery SOC (right column) -->
-      <div id="batt-col" class="batt-col">
-        <div id="batt_soc" class="batt-soc-lbl">--%</div>
-        <div class="batt-body">
-          <div id="batt_fill" class="batt-fill"></div>
+        <div id="batt-col" class="batt-col">
+          <div id="batt_soc" class="batt-soc-lbl">--%</div>
+          <div class="batt-body">
+            <div id="batt_fill" class="batt-fill"></div>
+          </div>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
+  </div>
 
 </main>
 
@@ -153,12 +148,12 @@
     <span id="statusMsg" class="sb-msg"></span>
     <span id="deviceIp"  class="sb-ip"></span>
   </div>
-  <span class="footer-logo" aria-label="TruMinus">truminus</span>
+  <span class="footer-logo" aria-label="TruMinus">TruMinus</span>
 </footer>
 
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=ddd3f31a"></script>
-<script src="i18n.js?v=630dfd9b"></script>
+<script src="i18n.js?v=25391339"></script>
 <script src="script.js?v=9cff2fcb"></script>
 </body>
 </html>

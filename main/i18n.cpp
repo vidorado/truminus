@@ -145,7 +145,7 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Enc. Key",
     "No data",
     "Volt.:",
-    "Load:",
+    "Charge:",
     "Yield:",
     "Tap as close as possible to the center of the + symbol",
     "Calibration complete!",
