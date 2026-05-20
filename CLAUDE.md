@@ -205,6 +205,76 @@ Settings screens that need to block use the navigation-request pattern: an LVGL 
 
 ---
 
+## WSS reverse tunnel — Plesk bridge
+
+`main/wstunnel.cpp/.hpp` dials out to a Plesk-hosted Node.js bridge
+(`server/app.js`) over WSS and multiplexes browser ↔ ESP TCP streams as
+binary WS frames so the local `esp_http_server` is reachable through
+CGNAT.  Settings screen ("Túnel" in the menu) takes only a domain and a
+shared token; the firmware composes `wss://<domain>/tunnel?token=<token>`
+itself.  A cloud icon in the topbar reflects state: blinking blue while
+connecting (500 ms cadence via an LVGL timer), solid `rgb(70,131,210)`
+when up, red after 3 consecutive disconnects without a successful
+connect.
+
+Wire protocol — control frames are text JSON, bulk data is binary:
+
+```
+ESP   → srv  {"type":"hello","node":"truminus","token":"<shared>"}   text
+srv   → ESP  {"type":"open", "id":<n>}                                text
+both         <4-byte BE id><payload bytes…>                          binary
+both         {"type":"close","id":<n>}                                text
+```
+
+Binary data frames save ~33 % bandwidth and a parse/format roundtrip
+vs. the JSON+base64 phase-1 protocol; both sides must match.
+
+### Gating, retries, pending queue
+- Tunnel only starts on `IP_EVENT_STA_GOT_IP`; `WIFI_EVENT_STA_DISCONNECTED`
+  tears the WS down.  Icon stays grey until WiFi is up.
+- `esp_websocket_client` auto-reconnects (5 s).  We count consecutive
+  `WEBSOCKET_EVENT_DISCONNECTED` and flip the icon red after 3.
+- Each tunneled stream consumes 1 local LWIP fd (our client to
+  `127.0.0.1:80`) + 1 httpd-accepted fd, and 2 TCP PCBs.  When all 12
+  stream slots are busy, new `open` frames go to a pending queue with
+  per-id buffer for any `data` bytes that arrive before the open
+  materialises (the server pushes the GET line right after the open, so
+  we must not drop those bytes).  5 s timeout per pending entry.
+- `send_text` / `send_bin` wait up to 10 s on the ws-client internal
+  lock — long enough that TLS write backpressure flows back into the
+  pump task rather than dropping bytes.  On real failure (peer gone) the
+  stream is closed cleanly and the server synthesises a 502 to the
+  browser.
+
+### Capacity dials
+- `MAX_STREAMS=12`, `PENDING_QUEUE_SIZE=16` (`main/wstunnel.cpp`).
+- `httpd cfg.max_open_sockets=12`, `WS_MAX_CLIENTS=8` (`main/webserver.cpp`).
+- `CONFIG_LWIP_MAX_SOCKETS=40`, `CONFIG_LWIP_MAX_ACTIVE_TCP=64` —
+  loopback streams + their 60 s TIME_WAIT lingering blow through the
+  default 16 PCBs immediately.
+- `CONFIG_HTTPD_MAX_REQ_HDR_LEN=4096`, `CONFIG_HTTPD_MAX_URI_LEN=1024` —
+  modern browsers carry ~2 KB of headers; the default 512 / our previous
+  1024 returned HTTP 431 "Header fields are too long" through the tunnel.
+
+### NVS namespace `tunnel`
+- `enabled` (u8) — 0/1
+- `server` (str) — bare domain, e.g. `truminus.victordorado.es`.  The
+  firmware strips any `wss://…/path?…` the user might paste, then
+  rebuilds the URL with the canonical `/tunnel` path and `?token=…`.
+- `token` (str) — shared secret matching `TUNNEL_TOKEN` env on the
+  server.
+
+### Server side (`server/app.js`)
+Single Node.js app on Plesk → Node.js.  Uses `http.createServer()` (so
+Phusion Passenger's `listen()` hook fires and the spawn doesn't time
+out), then replaces the default `connection` listener with a sniffer:
+`GET /tunnel … Upgrade: websocket` is routed back through Node's HTTP
+parser so the `WebSocketServer` can complete the handshake;
+everything else is muxed as opaque bytes through the device control
+channel.  When the device disconnects, in-flight tunneled sockets are
+closed with a synthetic 502 instead of `socket.destroy()` so Passenger
+doesn't surface "Incomplete response received from application".
+
 ## Related skills
 
 - **`.claude/skills/pio-idf-p4/SKILL.md`** — build system, IDF 6.0 pitfalls, ESP32-P4 memory layout, ModemManager, corrupted build dir.
