@@ -7,11 +7,17 @@
 // never parses HTTP for the public traffic — WebSocket upgrades on the
 // inner /ws ride for free as opaque bytes.
 //
-// Wire protocol (text WS frames, JSON):
-//   ESP   -> srv  {"type":"hello","node":"<id>","token":"<shared>"}
-//   srv   -> ESP  {"type":"open", "id":<n>}
-//   both         {"type":"data", "id":<n>, "b":"<base64>"}
-//   both         {"type":"close","id":<n>}
+// Wire protocol:
+//
+//   Control frames are *text* (JSON):
+//     ESP -> srv  {"type":"hello","node":"<id>","token":"<shared>"}
+//     srv -> ESP  {"type":"open", "id":<n>}
+//     both        {"type":"close","id":<n>}
+//
+//   Data frames are *binary* — first 4 bytes are the stream id (big-
+//   endian), followed by the raw stream bytes.  Skipping base64+JSON for
+//   the bulk traffic saves ~33% bandwidth and a parse/format round-trip
+//   on both sides.
 
 import http from "node:http";
 import { WebSocketServer } from "ws";
@@ -34,7 +40,11 @@ function espAlive() { return esp && esp.readyState === 1; }
 function sendCtrl(msg) { if (espAlive()) esp.send(JSON.stringify(msg)); }
 function sendData(id, buf) {
   if (!espAlive()) return;
-  esp.send(JSON.stringify({ type: "data", id, b: buf.toString("base64") }));
+  // Binary frame: 4-byte BE id || payload.  Allocate once and copy.
+  const out = Buffer.allocUnsafe(4 + buf.length);
+  out.writeUInt32BE(id >>> 0, 0);
+  buf.copy(out, 4);
+  esp.send(out, { binary: true });
 }
 
 // Cleanly close every in-flight tunneled stream. If a stream hasn't sent
@@ -83,7 +93,17 @@ function handleEsp(ws) {
   esp = ws;
   LOG("tunnel: ESP connected");
 
-  ws.on("message", raw => {
+  ws.on("message", (raw, isBinary) => {
+    if (isBinary) {
+      // Binary data frame: 4-byte BE id || payload bytes.
+      if (raw.length < 4) return;
+      const id = raw.readUInt32BE(0);
+      const s = streams.get(id);
+      if (!s) return;
+      s.socket.write(raw.subarray(4));
+      return;
+    }
+    // Text frame: JSON control message.
     let m;
     try { m = JSON.parse(raw.toString()); } catch { return; }
     if (!m || typeof m.id !== "number") {
@@ -94,9 +114,7 @@ function handleEsp(ws) {
     }
     const s = streams.get(m.id);
     if (!s) return;
-    if (m.type === "data" && typeof m.b === "string") {
-      s.socket.write(Buffer.from(m.b, "base64"));
-    } else if (m.type === "close") {
+    if (m.type === "close") {
       // Same shape as teardownStreams: if the ESP closed before writing a
       // single byte, send a 502 ourselves so Passenger doesn't surface the
       // empty stream as "Incomplete response received from application".
