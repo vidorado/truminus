@@ -1,8 +1,12 @@
 'use strict';
 
 // ── WebSocket ─────────────────────────────────────────────────────────────
-var gateway = 'ws://' + window.location.hostname +
-              (window.location.port ? ':' + window.location.port : '') + '/ws';
+// Match the page's scheme: when the page is served over HTTPS (typical
+// through the Plesk reverse tunnel) browsers reject `ws://` as mixed
+// content and refuse to open it.
+var wsScheme = (window.location.protocol === 'https:') ? 'wss://' : 'ws://';
+var gateway  = wsScheme + window.location.hostname +
+               (window.location.port ? ':' + window.location.port : '') + '/ws';
 var wserror      = true;
 var linerror     = false;
 var s_ssid       = '';
