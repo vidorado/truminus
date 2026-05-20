@@ -8,21 +8,17 @@
 
 cmake_minimum_required(VERSION 3.16)
 
-# Pre-build: rewrite cache-bust query strings in data/index.html so the
-# LittleFS image picks up the new hash.  Web assets themselves are no
-# longer embedded — the LittleFS image is built by main/CMakeLists.txt
-# via littlefs_create_partition_image() and flashed from <project>/data/.
+# Web-asset preparation now runs at BUILD time via a custom target (see
+# below, after project()).  Doing it at configure time only — as we did
+# before — meant `idf.py build` after editing data/ would build a stale
+# LittleFS image: the script ran during the previous reconfigure, not
+# during the build itself.  Both cache_bust.py and gen_gz.py are
+# idempotent, so re-running on every build is cheap.
 #
 # NOTE: apply_patches.py is NOT here — it has to run AFTER project() because
 # the Component Manager only resolves and downloads managed_components during
 # the project() call.  Running it before would no-op (target files don't exist
 # yet) and patches would never apply.
-if(NOT CMAKE_BUILD_EARLY_EXPANSION)
-    execute_process(
-        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/cache_bust.py
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
@@ -56,6 +52,24 @@ foreach(t flash app-flash partition-table-flash bootloader-flash littlefs-flash)
         set_target_properties(${t} PROPERTIES SUB_ARGS "${_subargs} --skip-flashed")
     endif()
 endforeach()
+
+# Web-asset preparation target — runs on every build before the LittleFS
+# image is regenerated.  cache_bust.py rewrites ?v=<hash> querystrings in
+# data/index.html (and url(...) refs inside CSS) so browsers refetch any
+# changed asset.  gen_gz.py pre-compresses HTML/CSS/JS/TTF into adjacent
+# .gz files; the server prefers the .gz variant and sets Content-Encoding.
+#
+# Both scripts are idempotent: when nothing changed they print "up to
+# date" and return immediately, so making them ALL targets is cheap.
+add_custom_target(web_assets_prep ALL
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/cache_bust.py
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_gz.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Refreshing web asset cache-bust hashes + .gz variants"
+)
+if(TARGET littlefs_littlefs_bin)
+    add_dependencies(littlefs_littlefs_bin web_assets_prep)
+endif()
 
 # Patch managed_components AFTER project() has resolved + downloaded them.
 # Each entry in apply_patches.py is idempotent (no-op on second run), so

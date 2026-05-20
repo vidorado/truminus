@@ -20,9 +20,10 @@ build/
 managed_components/
 sdkconfig.old
 
-# Generated web asset blob (rebuilt by scripts/compress_fs.py at cmake configure)
-main/webfiles.h
-src/webfiles.h
+# Pre-gzipped web assets — rebuilt by scripts/gen_gz.py on every build,
+# stored next to their source files in data/ for the webserver to serve
+# with Content-Encoding: gzip.  Build artifact, not source.
+data/*.gz
 
 # C6 co-processor slave firmware binary (built by 'make build-c6')
 main/slave_fw/*.bin
