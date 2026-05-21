@@ -29,8 +29,8 @@
 // Gates the LOG_<CAT>_PF / LOG_<CAT>_PL / LOG_<CAT>_P helpers.  Disabled by
 // default; the macros expand to ((void)0).  Uncomment to compile in.
 //
-// #define LOG_BLE_ENABLED         // Victron BLE listener
-// #define LOG_ULT_ENABLED         // Ultimatron BMS
+#define LOG_BLE_ENABLED         // Victron BLE listener
+#define LOG_ULT_ENABLED         // Ultimatron BMS
 // #define LOG_WIFI_ENABLED        // (not used by current wifi_manager — see §3)
 // #define LOG_WEB_ENABLED         // (not used by current webserver  — see §3)
 // #define LOG_LIN_ENABLED         // dormant Arduino LIN frame layer

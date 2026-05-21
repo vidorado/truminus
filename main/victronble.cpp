@@ -139,11 +139,29 @@ static void parseMfrData(const uint8_t* mfr, int len) {
 // ── Victron scan callback (continuous monitoring) ─────────────────────────
 class VictronScanCb : public NimBLEScanCallbacks {
     void onResult(const NimBLEAdvertisedDevice* dev) override {
-        if (!dev->haveManufacturerData()) return;
+        // Diagnostic: log every advertisement that matches the target MAC so
+        // we can tell "the device isn't advertising" from "it advertises but
+        // without Victron manufacturer data".  Logged once per scan window
+        // because NimBLE de-dupes by default.
+        bool addrMatch = false;
         if (s_targetAddr.size() > 0) {
             std::string devAddr = normaliseAddr(dev->getAddress().toString());
-            if (devAddr != s_targetAddr) return;
+            addrMatch = (devAddr == s_targetAddr);
         }
+        if (addrMatch) {
+            if (dev->haveManufacturerData()) {
+                const std::string& mfr = dev->getManufacturerData();
+                uint8_t b0 = mfr.size() >= 1 ? (uint8_t)mfr[0] : 0;
+                uint8_t b1 = mfr.size() >= 2 ? (uint8_t)mfr[1] : 0;
+                LOG_BLE_PF("[ble] adv target mfr_len=%u mfr_id=%02X%02X\n",
+                           (unsigned)mfr.size(), b1, b0);
+            } else {
+                LOG_BLE_PL("[ble] adv target — no manufacturer data");
+            }
+        }
+
+        if (!dev->haveManufacturerData()) return;
+        if (s_targetAddr.size() > 0 && !addrMatch) return;
         std::string raw = dev->getManufacturerData();
         parseMfrData((const uint8_t*)raw.data(), (int)raw.size());
     }
