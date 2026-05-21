@@ -12,7 +12,7 @@ TruMinus is firmware for the **JC4880P443C** board (ESP32-P4) that emulates a Tr
 
 Solar charge data (Victron BLE) and battery SOC (Ultimatron BLE) are surfaced both on the LCD and the web UI.
 
-> **Status (2026-05):** the project is mid-migration from the previous ESP32-C5 / NM-CYD-C5 board to the JC4880P443C / ESP32-P4 board. `main/main.cpp` runs the LCD, WiFi (via C6 hosted), BLE supervisor (Victron + Ultimatron) and the HTTP/WebSocket server. **Not yet ported:** the Arduino-flavoured `settings.cpp` / `trumaframes.cpp` / `waterboost.cpp` / `commandreader.cpp` / `autodiscovery.cpp` — these still use `String`/`AsyncWebServer`/`ArduinoJson`/`mqttClient.publish(...)` and are not in `main/CMakeLists.txt::SRCS`. They are dormant, waiting for an IDF-native port.  Treat the codebase as porting-in-progress, not feature-complete.
+> **Status (2026-05):** the project is mid-migration from the previous ESP32-C5 / NM-CYD-C5 board to the JC4880P443C / ESP32-P4 board. `main/main.cpp` runs the LCD, WiFi (via C6 hosted), BLE supervisor (Victron + Ultimatron), the HTTP/WebSocket server and a minimal LIN scheduler (`main/truma_lin.cpp`, IDF-native, no MQTT). The legacy Arduino-flavoured `settings.cpp` / `trumaframes.cpp` / `waterboost.cpp` / `commandreader.cpp` / `autodiscovery.cpp` are **still dormant** — they use `String`/`AsyncWebServer`/`ArduinoJson`/`mqttClient.publish(...)`, are not in `main/CMakeLists.txt::SRCS`, and will be ported in a later phase to bring MQTT, Home Assistant autodiscovery, water-boost and the serial CLI back online. Treat the codebase as porting-in-progress, not feature-complete.
 
 ## Build System
 
@@ -76,7 +76,8 @@ The project follows the ESP-IDF native convention: there is no `src/`; all firmw
 
 - **`main.cpp`** — `app_main` entry point. Currently a stub that initialises the LCD and runs a demo update loop; the WiFi/MQTT/LIN/BLE wiring from the previous board is not all re-attached yet.
 - **`p4display.cpp/.hpp`** — LVGL UI for the 800×480 LCD (replaces the old `cyddisplay.cpp`). Public surface: `p4DisplayInit()`, `p4DisplayUpdate(const P4DisplayData&)`, `p4DisplaySetStatus(const char*)`, plus `lvglLock()` / `lvglUnlock()` for callers that need to touch LVGL from other tasks.
-- **`trumaframes.cpp/.hpp`** — LIN protocol layer. Each readable/writable frame class parses raw bytes and publishes to MQTT/WebSocket. See `.claude/skills/truma-protocol/SKILL.md` for the byte-level reference.
+- **`trumaframes.cpp/.hpp`** — Legacy Arduino-flavoured LIN protocol layer (dormant; not built). Each readable/writable frame class parses raw bytes and publishes to MQTT/WebSocket via `TMqttPublisherBase`. Kept in the tree as the byte-level reference for the future MQTT/autodiscovery port. See `.claude/skills/truma-protocol/SKILL.md`.
+- **`truma_lin.cpp/.hpp`** — Active IDF-native LIN scheduler. Emulates the CP-Plus D control unit on `UART_NUM_1 @ 9600` baud (J5, TX=GPIO26 / RX=GPIO27). Reads setpoints from `p4GetControlState()`, writes 7 setpoint frames + the 0x20 control frame each cycle, alternates two master requests (`0xB8` OnOff, `0xB2` GetErrorInfo) over the 0x3C / 0x3D transport, and reads frames 0x21 (room/water temp) + 0x22 (water heating). Exposes a thread-safe `TrumaLinSnapshot` consumed by the main loop. No MQTT, no autodiscovery, no waterboost — those still belong to the dormant Arduino code path.
 - **`lin_driver.cpp/.hpp`** — Low-level half-duplex LIN driver over ESP-IDF `driver/uart.h` (UART_NUM_1 recommended; UART_NUM_0 is the console).
 - **`settings.cpp/.hpp`** — Setpoint abstraction. `TBoilerSetting`, `TTempSetting`, `TFanSetting`, `TOnOffSetting`, all derived from `TMqttSetting / TAutoDiscovery`. Single source of truth for values consumed by `main.cpp`'s LIN write loop and broadcast back to MQTT/WS/LCD.
 - **`globals.hpp`** — shared `mqttClient`, `ws`, MQTT base topics, Home Assistant autodiscovery identifiers.
@@ -139,7 +140,7 @@ Writable setpoints: `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off
 
 ### Pin assignments (LIN / external sensor)
 
-LIN UART pins and the AM2301/DHT22 external temperature sensor pin live in `main/main.cpp` and are still being finalised on the new board. **Always grep `main/main.cpp` and `main/lin_driver.cpp` for the current mapping rather than relying on this document.** The previous C5 board used TX=GPIO5 / RX=GPIO4 (P5 LP-UART), DHT=GPIO27 — those pin numbers do NOT apply on the JC4880-P4 because GPIO27 is the LCD backlight on this board.
+LIN UART pins and the AM2301/DHT22 external temperature sensor pin live in `main/main.cpp`. On the JC4880-P4 board the LIN bus is wired to **connector J5 → TX=GPIO26 / RX=GPIO27 on UART_NUM_1 @ 9600 baud** (see `LIN_TX_PIN`/`LIN_RX_PIN` in `main/main.cpp` and `trumaLinStart()` in `main/truma_lin.cpp`). The LCD backlight is on GPIO23 (`CONFIG_BSP_JC4880P443C_LCD_BL_GPIO=23`), not GPIO27 as a previous draft of this document claimed. The AM2301/DHT pin is not yet assigned on the P4 board; the sensor task is dormant.
 
 ### LVGL / display library
 

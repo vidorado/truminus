@@ -17,6 +17,7 @@ idf_component_register(
         "p4settings.cpp"
         "i18n.cpp"
         "lin_driver.cpp"
+        "truma_lin.cpp"
         "flags.cpp"
         "wifi_manager.cpp"
         "victronble.cpp"

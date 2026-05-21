@@ -8,6 +8,7 @@
 #include "libs/tiny_ttf/lv_tiny_ttf.h"
 #include "nvs.h"
 #include <stdio.h>
+#include <cmath>
 #include <string.h>
 
 static const char* TAG = "display";
@@ -1119,12 +1120,12 @@ void p4DisplayUpdate(const P4DisplayData& d)
     // st.* is the authoritative control state — only LVGL callbacks write it.
     // Do NOT overwrite it from d here; main.cpp reads it back via p4GetControlState.
 
-    if (d.roomTemp > -100.0f)
+    if (!std::isnan(d.roomTemp))
         lv_label_set_text_fmt(ui.lbl_room_temp, "%.1f°C", d.roomTemp);
     else
         lv_label_set_text(ui.lbl_room_temp, "--°C");
 
-    if (d.outdoorTemp > -100.0f)
+    if (!std::isnan(d.outdoorTemp))
         lv_label_set_text_fmt(ui.lbl_outdoor, "%.1f°C", d.outdoorTemp);
     else
         lv_label_set_text(ui.lbl_outdoor, "--°C");
@@ -1151,7 +1152,7 @@ void p4DisplayUpdate(const P4DisplayData& d)
     }
 
     // Water tank
-    if (d.waterTemp > -100.0f) {
+    if (!std::isnan(d.waterTemp)) {
         lv_label_set_text_fmt(ui.lbl_water_temp, "%.0f°C", d.waterTemp);
         int wv = (int)d.waterTemp;
         if (wv < 0)  wv = 0;

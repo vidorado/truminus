@@ -15,7 +15,14 @@
 #include "webserver.hpp"
 #include "wstunnel.hpp"
 #include "cli.hpp"
+#include "truma_lin.hpp"
 #include "flags.h"
+
+// LIN bus pins on the JC4880-P4 board — wired to connector J5.
+// UART_NUM_1 is fixed inside truma_lin.cpp (UART0 is the debug console).
+// J5 connector: ESP TX=GPIO26 (→ transceiver RXD), ESP RX=GPIO27 (← transceiver TXD).
+#define LIN_TX_PIN 26
+#define LIN_RX_PIN 27
 #include "esp_hosted_host_fw_ver.h"
 extern "C" {
 #include "esp_hosted_misc.h"
@@ -343,7 +350,9 @@ static void bootTask(void* /*arg*/) {
     // `show`, `help`.
     cliStart();
 
-    // TODO: xTaskCreatePinnedToCore(linBusTask, "lin", 4096, nullptr, 5, nullptr, 0);
+    // LIN scheduler — emulates the CP-Plus D control unit on UART1.
+    // Pinned to Core 0 (legacy convention: blocking serial off the LVGL core).
+    trumaLinStart(LIN_TX_PIN, LIN_RX_PIN);
 
     ESP_LOGI("boot", "background boot complete (heap=%lu)",
              (unsigned long)esp_get_free_heap_size());
@@ -364,9 +373,9 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(esp_netif_init());
 
-    // Apply per-TAG log levels (silences web/wstunnel/ledc/httpd/BSP/hosted
-    // chatter by default; see main/flags.h to re-enable or tune).  Must run
-    // before any subsystem emits its first message.
+    // Apply per-TAG log levels (silences web/wstunnel/ledc/httpd by default;
+    // see main/flags.h to re-enable or tune).  Must run before any other
+    // subsystem emits its first message.
     flags_apply_log_levels();
 
     ESP_LOGI(TAG, "TruMinus P4 — starting (heap=%lu)",
@@ -387,9 +396,9 @@ extern "C" void app_main(void)
     xTaskCreate(bootTask, "boot", 6144, nullptr, 5, nullptr);
 
     P4DisplayData d = {};
-    d.roomTemp     = -999.0f;
-    d.waterTemp    = -999.0f;
-    d.outdoorTemp  = -999.0f;
+    d.roomTemp     = NAN;
+    d.waterTemp    = NAN;
+    d.outdoorTemp  = NAN;
     d.roomSetpoint = 20.0f;
 
     p4DisplayUpdate(d);
@@ -436,6 +445,13 @@ extern "C" void app_main(void)
         } else {
             d.batt.valid = false;
         }
+
+        // LIN snapshot → room/water temp + LIN-ok dot.
+        TrumaLinSnapshot lin;
+        trumaLinGetSnapshot(lin);
+        d.linOk = lin.linOk;
+        d.roomTemp  = lin.roomTemp;   // already NAN when no valid frame yet
+        d.waterTemp = lin.waterTemp;
 
         // Tunnel state → topbar cloud icon (grey/blinking/blue/red).
         p4SetTunnelState(static_cast<uint8_t>(wstunnelUiState()));

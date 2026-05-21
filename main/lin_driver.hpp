@@ -19,6 +19,12 @@ public:
 
     int verboseMode = -1;
 
+    // Diagnostic: total bytes consumed from the UART RX FIFO since boot
+    // (echoes of our own TX + any slave reply).  Non-zero = the line is
+    // physically alive (RX pin sees activity, transceiver powered);
+    // zero = RX pin / transceiver / wiring is dead.
+    uint32_t rxBytesTotal = 0;
+
     void writeCmdWakeup();
     void writeCmdSleep();
 
