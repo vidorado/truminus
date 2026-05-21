@@ -90,7 +90,82 @@ stale — `rm -rf build/` and rebuild.
 
 ---
 
-## 6. Upload / OTA
+## 6. DRAM exhaustion cascade — `MBEDTLS_ERR_SSL_ALLOC_FAILED` ↔ SDIO assert
+
+Symptom pair seen together (always together, ~1 s apart):
+
+```
+E (...) esp-tls-mbedtls: mbedtls_ssl_handshake returned -0x3B00
+E (...) esp-tls: Failed to open new connection
+...
+assert failed: sdio_rx_get_buffer sdio_drv.c:953 (*buf)
+```
+
+Both are symptoms of the **same root cause**: internal DRAM exhausted while
+TLS handshakes are in flight. `-0x3B00 = MBEDTLS_ERR_SSL_ALLOC_FAILED` is
+`malloc() == NULL` inside mbedtls. The SDIO RX path needs a DMA-capable
+(internal-DRAM) buffer for the next inbound packet from the C6 and
+similarly gets NULL → `assert` → reboot loop. The trigger is almost always
+the WSS reverse tunnel coming up right after `IP_EVENT_STA_GOT_IP`: TLS
+handshake state and the 16 KB `SSL_IN_CONTENT_LEN` buffer land in internal
+DRAM unless steered to PSRAM.
+
+The three knobs in `sdkconfig.defaults` (pinned with a comment header):
+
+| key | from → to | why |
+|---|---|---|
+| `CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC` | `y` → `n` | stop pinning all mbedtls allocs to DRAM |
+| `CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC`  | (off) → `y` | use the global heap, which spills to PSRAM |
+| `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` | 16384 → 2048 | lower the threshold so >2 KB allocs land in PSRAM |
+| `CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN`   | 16384 → 4096 | tunnel IO_CHUNK is 4 KB; 16 KB was 12 KB of dead DRAM |
+
+**Diagnosing future cases:**
+- Print free internal heap (`heap_caps_get_free_size(MALLOC_CAP_INTERNAL)`)
+  in the wstunnel task right before `esp_websocket_client_start()` and
+  inside the WS event handler — sub-20 KB at handshake time = trouble
+  brewing.
+- `idf.py size-components --diff` after the config change should show
+  mbedtls and `lwip` shifting from `.dram` to `.ext_ram`.
+- Don't "fix" by disabling the tunnel. The tunnel is just the trigger;
+  any large enough TLS workload (OTA, HTTPS client, MQTT-TLS) will hit
+  the same heap and crash the C6 link.
+
+---
+
+## 7. `/dev/ttyACM0` is USB-Serial-JTAG, not UART0
+
+The P4 exposes USB-Serial-JTAG natively on the USB-C port (no CH340 /
+CP210x). UART0 lives on header pins (not wired on jc4880_p4). Knock-on
+effects:
+
+- **Console primary must be `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`**
+  (set in `sdkconfig.defaults`). If primary is `ESP_CONSOLE_UART_DEFAULT`,
+  `ESP_LOGx` output is duplicated to JTAG only because secondary is
+  enabled, but `stdin` reads come from UART0 — which the user is not
+  connected to. Symptom: a picocom user sees logs and (with the right
+  REPL) sees the prompt, but typing produces zero echo and zero command
+  effect. Fix is the sdkconfig change, not picocom flags.
+
+- **`esp_console` REPLs must use `esp_console_new_repl_usb_serial_jtag()`**
+  (see `main/cli.cpp::cliStart`). The UART variant binds the line editor
+  to UART0 and the input vanishes into the void. The JTAG variant only
+  declares its config struct if primary console is JTAG (the `#if
+  CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG` in `components/console/esp_console.h`),
+  so the previous point and this one are linked.
+
+- **linenoise must run in dumb mode on USB-Serial-JTAG.** The JTAG
+  endpoint doesn't reply to linenoise's `ESC[6n` cursor probe in the
+  expected window, so the probe fails and linenoise falls back to a
+  half-broken state where arrow keys leak as raw `[D[C[A[B` and
+  backspace echo is unreliable. `linenoiseSetDumbMode(1)` is required;
+  it trades arrow editing + history for a working char-by-char echo and
+  BACKSPACE. Ctrl+U still clears the line, which is the practical
+  recovery for typos. Don't try to "fix" the probe — it's a hardware
+  limit of how USB-Serial-JTAG schedules CDC reads.
+
+---
+
+## 8. Upload / OTA
 
 ```bash
 # USB-CDC (default)
