@@ -14,6 +14,7 @@
 #include "c6_ota.hpp"
 #include "webserver.hpp"
 #include "wstunnel.hpp"
+#include "cli.hpp"
 #include "flags.h"
 #include "esp_hosted_host_fw_ver.h"
 extern "C" {
@@ -277,6 +278,12 @@ static void bootTask(void* /*arg*/) {
     // WS pump runs at 100 ms cadence so touch inputs on the LCD reach
     // connected browsers in ≤100 ms.  Lower than the main loop's 1 s tick.
     xTaskCreate(wsPumpTask, "ws_pump", 4096, nullptr, 3, nullptr);
+
+    // Serial REPL on USB-Serial-JTAG — provisions WiFi / Victron /
+    // Ultimatron / tunnel credentials while the LCD settings screen is
+    // unavailable.  Commands: `wifi`, `victron`, `ultimatron`, `tunnel`,
+    // `show`, `help`.
+    cliStart();
 
     // TODO: xTaskCreatePinnedToCore(linBusTask, "lin", 4096, nullptr, 5, nullptr, 0);
 

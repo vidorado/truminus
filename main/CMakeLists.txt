@@ -24,6 +24,7 @@ idf_component_register(
         "c6_ota.cpp"
         "webserver.cpp"
         "wstunnel.cpp"
+        "cli.cpp"
     INCLUDE_DIRS
         "."
     EMBED_FILES
@@ -38,6 +39,7 @@ idf_component_register(
         esp_netif
         esp_http_server
         esp_driver_uart
+        console
         esp_driver_gpio
         esp_timer
         esp_wifi
