@@ -17,6 +17,7 @@ idf_component_register(
         "p4settings.cpp"
         "i18n.cpp"
         "lin_driver.cpp"
+        "flags.cpp"
         "wifi_manager.cpp"
         "victronble.cpp"
         "ultimatronble.cpp"
@@ -62,7 +63,7 @@ littlefs_create_partition_image(
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
-    "-include" "${CMAKE_CURRENT_SOURCE_DIR}/dummy_flags.h"
+    "-include" "${CMAKE_CURRENT_SOURCE_DIR}/flags.h"
 )
 
 if(EXISTS "${C6_FW_BIN}")

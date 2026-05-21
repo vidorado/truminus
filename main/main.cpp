@@ -14,6 +14,7 @@
 #include "c6_ota.hpp"
 #include "webserver.hpp"
 #include "wstunnel.hpp"
+#include "flags.h"
 #include "esp_hosted_host_fw_ver.h"
 extern "C" {
 #include "esp_hosted_misc.h"
@@ -298,12 +299,13 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(esp_netif_init());
 
+    // Apply per-TAG log levels (silences web/wstunnel/ledc/httpd/BSP/hosted
+    // chatter by default; see main/flags.h to re-enable or tune).  Must run
+    // before any subsystem emits its first message.
+    flags_apply_log_levels();
+
     ESP_LOGI(TAG, "TruMinus P4 — starting (heap=%lu)",
              (unsigned long)esp_get_free_heap_size());
-
-    // GPIO 23 is wired to the backlight but LEDC flags it as "conflicted" —
-    // cosmetic warning, display works fine. Suppress it.
-    esp_log_level_set("ledc", ESP_LOG_ERROR);
 
     // Display first so the user sees pixels as soon as the panel is up.
     // Everything below this point runs in the background to keep the
