@@ -844,6 +844,8 @@ static void scanItemCb(lv_event_t* e) {
 
 static void scanAbortCb(lv_event_t*) { sc_scanAborted = true; }
 
+static String runBattScan();
+
 static String runSolarScan() {
     sc_devices.clear();
     sc_pickedMac    = "";
