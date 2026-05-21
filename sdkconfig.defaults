@@ -10,6 +10,32 @@ CONFIG_IDF_TARGET="esp32p4"
 CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
 CONFIG_ESP32P4_REV_MIN_1=y
 
+# ── Primary console on USB-Serial-JTAG ───────────────────────────────────
+# /dev/ttyACM0 is the P4's native USB-Serial-JTAG, not UART0 (the latter
+# is on header pins and not wired on this dev setup).  Keeping the
+# primary console here lets the esp_console REPL bind input + output to
+# the same port the developer connects to with picocom / idf.py monitor.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# ── DRAM pressure relief for mbedtls + ESP-Hosted SDIO ───────────────────
+# Symptom (2026-05): WSS handshake fails with MBEDTLS_ERR_SSL_ALLOC_FAILED
+# (-0x3B00) right after WiFi gets an IP, and the C6 SDIO RX path asserts
+# at sdio_drv.c:953 because heap_caps_malloc(DMA) returns NULL.  Both are
+# the same root cause: internal DRAM exhausted while bringing TLS up.
+#
+# 1. Default mbedtls allocator (was INTERNAL only) → big chunks land in
+#    PSRAM via the global heap, only DMA-tagged allocs stay internal.
+# 2. Lower the "always internal" threshold so allocations as small as 2 KB
+#    can spill to PSRAM (IDF default was 16 KB, which kept almost
+#    everything mbedtls touches in DRAM).
+# 3. Shrink the TLS input record buffer from 16 KB → 4 KB.  WSS frames
+#    from the Plesk bridge are small JSON / binary chunks (IO_CHUNK=4096
+#    on both sides), so 16 KB was pure overhead.
+CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC=n
+CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=2048
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=4096
+
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
