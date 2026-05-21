@@ -134,6 +134,22 @@ static void onWsConnected() {
              ip,
              cs.energyIdx);
     wsQueueSend(buf);
+
+    // Push current BLE data so newly-connected browsers don't have to wait
+    // for the next change in broadcastBleData() to populate the panels.
+    VictronData v = victronGetData();
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"solar\",\"valid\":%s,\"state\":%u,"
+             "\"pvW\":%d,\"kWh\":%.2f,\"battV\":%.2f,\"battA\":%.2f}",
+             v.valid ? "true" : "false",
+             (unsigned)v.state, (int)v.pvW, v.kWhToday, v.battV, v.battA);
+    wsQueueSend(buf);
+
+    UltimatronData u = ultimatronGetData();
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"batt\",\"valid\":%s,\"soc\":%u,\"battV\":%.2f}",
+             u.valid ? "true" : "false", (unsigned)u.soc, u.battV);
+    wsQueueSend(buf);
 }
 
 // ── Broadcast LCD-originated changes ─────────────────────────────────────
@@ -209,6 +225,47 @@ static void broadcastNetInfoChange() {
     inited = true;
 }
 
+// Broadcast Victron + Ultimatron BLE data on change.  Frames match the
+// shape applySolar / applyBatt expect in data/script.js.
+static void broadcastBleData() {
+    static VictronData    prevV = {};
+    static UltimatronData prevU = {};
+    static bool           inited = false;
+    char buf[256];
+
+    VictronData v = victronGetData();
+    bool vChanged = !inited
+                    || v.valid != prevV.valid
+                    || (v.valid && (v.state != prevV.state
+                                    || fabsf(v.battV - prevV.battV)  > 0.05f
+                                    || fabsf(v.battA - prevV.battA)  > 0.05f
+                                    || fabsf(v.pvW   - prevV.pvW)    > 0.5f
+                                    || fabsf(v.kWhToday - prevV.kWhToday) > 0.01f));
+    if (vChanged) {
+        snprintf(buf, sizeof(buf),
+                 "{\"command\":\"solar\",\"valid\":%s,\"state\":%u,"
+                 "\"pvW\":%d,\"kWh\":%.2f,\"battV\":%.2f,\"battA\":%.2f}",
+                 v.valid ? "true" : "false",
+                 (unsigned)v.state, (int)v.pvW, v.kWhToday, v.battV, v.battA);
+        wsQueueSend(buf);
+        prevV = v;
+    }
+
+    UltimatronData u = ultimatronGetData();
+    bool uChanged = !inited
+                    || u.valid != prevU.valid
+                    || (u.valid && (u.soc != prevU.soc
+                                    || fabsf(u.battV - prevU.battV) > 0.05f));
+    if (uChanged) {
+        snprintf(buf, sizeof(buf),
+                 "{\"command\":\"batt\",\"valid\":%s,\"soc\":%u,\"battV\":%.2f}",
+                 u.valid ? "true" : "false", (unsigned)u.soc, u.battV);
+        wsQueueSend(buf);
+        prevU = u;
+    }
+    inited = true;
+}
+
 static void wsPumpTask(void* /*arg*/) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -216,6 +273,7 @@ static void wsPumpTask(void* /*arg*/) {
         p4GetControlState(cs);
         broadcastControlChanges(cs);
         broadcastNetInfoChange();
+        broadcastBleData();
         wsQueueDrain();
     }
 }
