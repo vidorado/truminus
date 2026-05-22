@@ -1200,13 +1200,14 @@ void loop() {
   // We only need to update display state; grab the mutex briefly.
   if (xSemaphoreTake(s_lvglMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
     double wTempDisp = getWaterTempForDisplay();
-    bool   wHeating  = (Frame22 ? Frame22->getWaterHeating(): Frame21->getWaterDemand())
-                       && (WaterSetpoint->getFloatValue() > 0.0);
+    bool   bFiring   = (Frame22 ? Frame22->getWaterHeating() : Frame21->getWaterDemand());
+    bool   wHeating  = bFiring && (WaterSetpoint->getFloatValue() > 0.0);
     cydDisplayUpdate(wifiok, trumaok, truma_reset, inota,
                      (float)Frame21->getRoomTemp(), (float)wTempDisp,
                      wHeating, s_extTemp,
                      getErrorInfo ? getErrorInfo->getErrorClass() : 0,
-                     getErrorInfo ? getErrorInfo->getErrorCode()  : 0);
+                     getErrorInfo ? getErrorInfo->getErrorCode()  : 0,
+                     bFiring);
     // Throttle solar/battery display updates to ~1/3 Hz to avoid LVGL redraw
     // overhead interfering with screen dimming animations.
     {

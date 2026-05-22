@@ -1440,7 +1440,8 @@ void cydDisplayInit(TTempSetting*   roomSetpoint,
 void cydDisplayUpdate(bool wifiok, bool trumaok,
                       bool truma_reset, bool inota,
                       float roomTemp, float waterTemp, bool waterHeating,
-                      float extTemp, uint8_t errClass, uint8_t errCode) {
+                      float extTemp, uint8_t errClass, uint8_t errCode,
+                      bool burnerFiring) {
 
     // ── Auto screen-off ─────────────────────────────────────────────────
     // Three stages: 100% → 30% dim warning (5 s before) → off.
@@ -1473,33 +1474,57 @@ void cydDisplayUpdate(bool wifiok, bool trumaok,
     }
 
     // ── Tint (boiler/water) and fire (heating) indicators ────────────────
+    //
+    // Mutual-exclusion rule (mirrors the real Truma Combi behaviour):
+    // the single physical burner can either be heating the air or
+    // priority-heating the water, never both at once.  Heating always
+    // takes priority — water heats only as a side-effect — EXCEPT when
+    // the boiler is in 60 °C "boost" mode, which explicitly pauses
+    // heating to maximise hot-water throughput.
+    //
+    //   burner firing + boost mode          → water blinks, fire solid
+    //   burner firing + heating demand      → fire blinks,  water solid
+    //   burner firing + only water demand   → water blinks, fire solid/off
+    //   burner not firing                   → neither blinks
     {
         bool blinkPhase = (millis() % 1000) < 500;
+
+        bool   boilerOn   = s_waterSp && (s_waterSp->getStringValue() != "off");
+        bool   isBoost    = s_waterSp && (s_waterSp->getStringValue() == "boost");
+        double wSetpoint  = s_waterSp ? s_waterSp->getFloatValue() : 0.0;
+        // Cooldown override: water_heating flag may stay set after the
+        // burner stops; temperature is authoritative for "reached".
+        bool   wAtTemp    = boilerOn && (waterTemp > 0.0f) && ((double)waterTemp >= wSetpoint - 1.0);
+
+        bool   heatOn     = s_heatOn && (s_heatOn->getIntValue() != 0);
+        float  rSetpoint  = (s_roomSp && heatOn) ? s_roomSp->getFloatValue() : 0.0f;
+        bool   heatDemand = heatOn && trumaok && (roomTemp > -200.0f) && (roomTemp < rSetpoint - 0.3f);
+
+        // burnerFiring is the raw frame 0x22 water_heating bit passed in
+        // by the caller — independent of WaterSetpoint, so it stays true
+        // even when the boiler is "off" but the burner is firing for air.
+
+        // Decide which icon (if any) gets the blink this cycle.
+        bool waterBlinks = burnerFiring && boilerOn && !wAtTemp && ( isBoost || !heatDemand );
+        bool fireBlinks  = burnerFiring && heatDemand && !isBoost;
+
         if (s_aguaLbl) {
-            bool   boilerOn  = s_waterSp && (s_waterSp->getStringValue() != "off");
-            double wSetpoint = s_waterSp ? s_waterSp->getFloatValue() : 0.0;
-            // Override the protocol flag during cooldown: flag stays set after
-            // the burner stops, but temperature comparison is authoritative.
-            bool   wAtTemp   = boilerOn && (waterTemp > 0.0f) && ((double)waterTemp >= wSetpoint - 1.0);
             lv_color_t c;
             lv_opa_t   opa;
-            if (!boilerOn)                     { c = lv_color_hex(0xaaccff); opa = LV_OPA_20; } // off: dim blue
-            else if (!waterHeating || wAtTemp) { c = lv_color_hex(0xaaccff); opa = LV_OPA_COVER; } // at temp: solid blue
-            else if (blinkPhase)               { c = lv_color_hex(0xaaccff); opa = LV_OPA_COVER; } // heating: visible phase
-            else                               { c = lv_color_hex(C_TOPBAR); opa = LV_OPA_COVER; } // heating: dark phase
+            if (!boilerOn)        { c = lv_color_hex(0xaaccff); opa = LV_OPA_20; }    // off: dim blue
+            else if (!waterBlinks){ c = lv_color_hex(0xaaccff); opa = LV_OPA_COVER; } // at temp / not our turn: solid blue
+            else if (blinkPhase)  { c = lv_color_hex(0xaaccff); opa = LV_OPA_COVER; } // boost / water-only firing: visible phase
+            else                  { c = lv_color_hex(C_TOPBAR); opa = LV_OPA_COVER; } // ...dark phase
             lv_obj_set_style_text_color(s_aguaLbl, c, LV_PART_MAIN);
             lv_obj_set_style_text_opa(s_aguaLbl, opa, LV_PART_MAIN);
         }
         if (s_fireLbl) {
-            bool  heatOn     = s_heatOn && (s_heatOn->getIntValue() != 0);
-            float sp         = (s_roomSp && heatOn) ? s_roomSp->getFloatValue() : 0.0f;
-            bool  heatDemand = heatOn && trumaok && (roomTemp > -200.0f) && (roomTemp < sp - 0.3f);
             lv_color_t c;
             lv_opa_t   opa;
-            if (!heatOn)      { c = lv_color_hex(0xaaccff); opa = LV_OPA_20; } // off: dim blue
-            else if (!heatDemand) { c = lv_color_hex(0xff8844); opa = LV_OPA_COVER; } // at temp: solid orange
+            if (!heatOn)          { c = lv_color_hex(0xaaccff); opa = LV_OPA_20; }    // off: dim blue
+            else if (!fireBlinks) { c = lv_color_hex(0xff8844); opa = LV_OPA_COVER; } // at temp / boost / burner paused: solid orange
             else if (blinkPhase)  { c = lv_color_hex(0xff8844); opa = LV_OPA_COVER; } // heating: visible phase
-            else                  { c = lv_color_hex(C_TOPBAR);  opa = LV_OPA_COVER; } // heating: dark phase
+            else                  { c = lv_color_hex(C_TOPBAR); opa = LV_OPA_COVER; } // heating: dark phase
             lv_obj_set_style_text_color(s_fireLbl, c, LV_PART_MAIN);
             lv_obj_set_style_text_opa(s_fireLbl, opa, LV_PART_MAIN);
         }

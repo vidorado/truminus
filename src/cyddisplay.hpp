@@ -18,7 +18,8 @@ void cydDisplayUpdate(bool wifiok, bool trumaok,
                       bool    waterHeating = false,
                       float   extTemp      = -273.0f,
                       uint8_t errClass     = 0,
-                      uint8_t errCode      = 0);
+                      uint8_t errCode      = 0,
+                      bool    burnerFiring = false);
 
 // Index of the energy mode selected on-screen (0-4).
 // Maps to TEnergySelection: 0=EsGasDiesel … 4=EsElectro1800.
