@@ -131,6 +131,7 @@ Key source files in `main/`:
 | `victronble.cpp/.hpp` | Victron SmartSolar BLE (Instant Readout protocol) |
 | `ultimatronble.cpp/.hpp` | Ultimatron LiFePO4 BMS BLE (GATT) |
 | `tankble.cpp/.hpp` | Fresh-water tank level — BLE BTHome v2 receiver |
+| `multiplusble.cpp/.hpp` | Victron Multiplus / VE.Bus inverter — BLE Instant Readout receiver |
 | `i18n.cpp/.hpp` | `TK` enum + `t(TK::KEY)` — Spanish/English, persisted in NVS |
 
 Build system notes and known gotchas are in
@@ -308,6 +309,30 @@ above.
 
 ---
 
+## Multiplus / VE.Bus inverter (BLE Instant Readout)
+
+The right-most panel on row 2 mirrors the Victron Multiplus dashboard:
+shore (`RED`), inverter status, AC load (`CARGA`) and DC battery side
+(`BAT.`).  Data comes from the *VE.Bus Smart* dongle the Multiplus has
+plugged into its accessory port — that dongle is what advertises over
+BLE; the Multiplus itself does not.
+
+Wire side is the same Instant Readout protocol that the Solar panel
+already uses, but with **record type `0x0C`** (VE.Bus) instead of `0x01`
+(Solar), a **per-device AES-128 bind key** retrieved from VictronConnect
+→ device → Product info, and a **packed 102-bit plaintext** that
+includes the inverter operation mode, shore-side power, load-side
+power, battery V/A/T, AC-in state, alarm flags and SOC.  Full byte map
+in [`.claude/skills/multiplusble/SKILL.md`](.claude/skills/multiplusble/SKILL.md).
+
+Read-only: the **On / Off** buttons render disabled because turning
+the Multiplus on or off requires VE.Bus over BLE GATT, a protocol
+Victron has not documented and which no open-source library
+(`keshavdv/victron-ble`, `Fabian-Schmidt/esphome-victron_ble`, …) has
+reverse-engineered.
+
+---
+
 ## Relation to upstream
 
 This project started as a fork of **[olivluca/TruMinus](https://github.com/olivluca/TruMinus)**
@@ -326,7 +351,9 @@ The previous board (ESP32-C5 / NM-CYD-C5) is preserved in the git history and in
 - **[olivluca/TruMinus](https://github.com/olivluca/TruMinus)** — original CP Plus emulator, LIN protocol and web UI
 - **[olivluca/TrumaDisplay](https://github.com/olivluca/TrumaDisplay)** — CYD touch UI reference
 - **[danielfett/inetbox.py](https://github.com/danielfett/inetbox.py)** — LIN transceiver wiring reference
-- **[chrisj7903/Read-Victron-advertised-data](https://github.com/chrisj7903/Read-Victron-advertised-data)** — Victron Instant Readout reference
+- **[chrisj7903/Read-Victron-advertised-data](https://github.com/chrisj7903/Read-Victron-advertised-data)** — Victron Instant Readout reference (Solar / BMV)
+- **[keshavdv/victron-ble](https://github.com/keshavdv/victron-ble)** — Python parser used as reference for the VE.Bus record format
+- **[Fabian-Schmidt/esphome-victron_ble](https://github.com/Fabian-Schmidt/esphome-victron_ble)** — confirmed the C struct layout of the Instant Readout envelope
 - **[sergkh/node-ultimatron-battery](https://github.com/sergkh/node-ultimatron-battery)** — Ultimatron BMS GATT protocol reference
 
 ## License

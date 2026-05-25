@@ -1,6 +1,7 @@
 #include "victronble.hpp"
 #include "ultimatronble.hpp"
 #include "tankble.hpp"
+#include "multiplusble.hpp"
 #include "logs.hpp"
 #include <math.h>
 #if defined(ENABLE_BLE)
@@ -110,6 +111,9 @@ static void parseMfrData(const uint8_t* mfr, int len) {
     if (len < 18) return;
     if (mfr[0] != 0xE1 || mfr[1] != 0x02) return;
     if (mfr[2] != 0x10) return;
+    if (mfr[6] != 0x01) return;             // 0x01 = SolarCharger; let other
+                                            // record types (VE.Bus 0x0C, etc.)
+                                            // fall through to their own parser
     if (mfr[9] != s_aesKey[0]) return;
 
     uint8_t out[16] = {};
@@ -166,6 +170,12 @@ class VictronScanCb : public NimBLEScanCallbacks {
         // different MAC and a different AD type, so the Victron path's
         // strict addr/mfr filter would otherwise drop it.
         tankBleHandleAd(dev);
+
+        // Multiplus / VE.Bus dongle uses the same Victron envelope but a
+        // different record type (0x0C), different MAC and different
+        // bind key.  Hand off here too — the Solar parser below ignores
+        // it because addr+mfr-id won't match.
+        multiplusBleHandleAd(dev);
 
         if (!dev->haveManufacturerData()) return;
         if (s_targetAddr.size() > 0 && !addrMatch) return;

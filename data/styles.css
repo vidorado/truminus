@@ -177,7 +177,10 @@ body {
    = 37.625% / 43.75% / 18.625%.  AGUA L. (fresh-water tank) sits in the
    right-most slot. */
 .row1 { grid-template-columns: 37.625% 43.75%  18.625%; }
-.row2 { grid-template-columns: 26.625% 38.000% 1fr; }
+/* Row 2 splits the 800-px canvas into FAN(213)/SOLAR(304)/INVERSOR(283)
+   = 26.625% / 38% / 35.375%.  The INV panel now occupies what used to be
+   the empty right slot. */
+.row2 { grid-template-columns: 26.625% 38.000% 35.375%; }
 
 /* Stretch each panel to fill its row so the border-bottom of Row 1
    visually separates the rows along the entire width, not just under
@@ -736,6 +739,159 @@ body {
   background: #4488ff;
   transition: height 0.4s ease, background 0.3s ease;
 }
+
+/* ── INVERSOR panel — Victron VE.Bus / Multiplus ─────────────────────────
+   Mirrors main/p4display.cpp's INV panel.  Top row: title + the two
+   disabled On/Off buttons share a single row to save vertical space.
+   Below: MAINS | (flows + Multiplus body) | (CARGA / BAT stacked).
+   Flow lines live inside the middle column and extend OUTward from the
+   Multiplus body so they always touch the edges of the adjacent ports
+   regardless of how the panel scales. */
+.panel-inv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.inv-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.inv-header > .p-title { padding-bottom: 0; }   /* aligned vertically w/ buttons */
+
+.inv-toolbar {
+  display: flex;
+  gap: 6px;
+}
+.inv-btn {
+  border: 0;
+  border-radius: 5px;
+  padding: 4px 10px;
+  color: #ffffff;
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: not-allowed;       /* disabled until GATT control lands */
+  opacity: 0.55;
+}
+.inv-btn-off { background: #2a2a4a; }
+.inv-btn-on  { background: #3a7bd5; }
+
+/* Diagram: 3-column grid.  Each side column holds its port(s); the
+   middle column hosts the Multiplus body + the flow line stubs. */
+.inv-diagram {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Port boxes — integrated header strip (no negative margins).  overflow
+   hidden so the header background clips to the rounded corners. */
+.inv-port {
+  background: #6a727f;
+  border-radius: 5px;
+  color: #ffffff;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.inv-port-hdr {
+  background: #969ba3;
+  padding: 2px 0;
+  font-size: 0.7em;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.inv-port-val {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 6px;
+  font-size: 0.85em;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Right column holds CARGA on top and BAT below, evenly sized so they
+   bracket the Multiplus body. */
+.inv-right {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+}
+.inv-right > .inv-port { flex: 1; }
+
+/* Middle column: the MPX body anchors the flow lines.  Horizontal
+   padding equal to the flow-line length carves out the "gap" between
+   MPX and the side ports — the flow lines fill it exactly. */
+.inv-mid {
+  position: relative;
+  align-self: stretch;
+  display: flex;
+  align-items: stretch;       /* MPX grows vertically with the column */
+  justify-content: center;
+  /* Vertical padding leaves a visible margin above and below the MPX so
+     the body looks "inset" inside the panel instead of growing as tall
+     as the stacked CARGA/BAT column on the right. */
+  padding: 14px 22px;
+}
+
+.inv-mpx {
+  position: relative;
+  background: #0077c5;
+  border: 1px solid #2b2b2b;
+  border-radius: 2px;
+  width: 64px;
+  min-height: 88px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding-bottom: 6px;
+  color: #ffffff;
+}
+.inv-mpx-bar {
+  position: absolute;
+  top: 18px; left: 8%;
+  width: 84%;
+  height: 4px;
+  background: #f96432;
+  border-radius: 1px;
+}
+.inv-mpx-state {
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+/* Flow lines bridge MPX ↔ port edges.  Anchored to .inv-mid, they
+   extend horizontally a fixed pixel distance INTO the adjacent column
+   from the MPX edges.  18px = roughly half a column gap on the 800-px
+   canvas; at narrower widths the columns shrink toward the MPX edges
+   and the line still meets the port border without overlapping. */
+.inv-flow {
+  position: absolute;
+  height: 3px;
+  width: 22px;       /* matches .inv-mid horizontal padding */
+  background: #aed7f2;
+  opacity: 0.3;
+  transition: opacity 0.3s ease;
+}
+/* Flow Y positions match the vertical centre of the port each line points
+   at.  MAINS is the only port in the left column so its centre is 50 %;
+   CARGA/BAT split the right column 50/50 with a 6 px gap, so their
+   centres land at ~25 % and ~75 %. */
+.inv-flow-left  { left: 0;  top: 50%; }   /* MAINS → MPX */
+.inv-flow-right { right: 0; }             /* MPX → side  */
+.inv-flow-upper { top: 25%; }             /* MPX → LOAD  */
+.inv-flow-lower { top: 75%; }             /* MPX → BAT   */
+.inv-flow.active { opacity: 1; }
 
 
 /* ── Utilidades ──────────────────────────────────────────────────────── */

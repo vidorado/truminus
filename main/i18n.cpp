@@ -81,6 +81,8 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Buscar sensor de dep\xC3\xB3sito (BTHome)",                       // SCAN_TANK
     "Sensor dep\xC3\xB3sito agua",                                     // TANK_SECTION
     "BLE BTHome (moisture 0x2F). Opcional.",                          // TANK_INFO
+    "Inversor Multiplus (VE.Bus)",                                     // MULTI_SECTION
+    "Necesita el dongle VE.Bus Smart. Opcional.",                      // MULTI_INFO
     "Buscando... 8 s",
     "No se encontraron dispositivos BLE",
     "Buscar",
@@ -191,6 +193,8 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Scan tank sensor (BTHome)",                                       // SCAN_TANK
     "Water tank sensor",                                               // TANK_SECTION
     "BLE BTHome (moisture 0x2F). Optional.",                          // TANK_INFO
+    "Multiplus inverter (VE.Bus)",                                     // MULTI_SECTION
+    "Requires the VE.Bus Smart dongle. Optional.",                     // MULTI_INFO
     "Scanning... 8 s",
     "No BLE devices found",
     "Search",

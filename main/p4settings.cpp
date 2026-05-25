@@ -17,6 +17,7 @@
 #include "victronble.hpp"
 #include "ultimatronble.hpp"
 #include "tankble.hpp"
+#include "multiplusble.hpp"
 #include "esp_log.h"
 #include "nvs.h"
 #include "lvgl.h"
@@ -945,6 +946,8 @@ struct BleCtx {
     lv_obj_t* ta_solar_key;
     lv_obj_t* ta_batt_mac;
     lv_obj_t* ta_tank_mac;
+    lv_obj_t* ta_multi_mac;
+    lv_obj_t* ta_multi_key;
     lv_obj_t* kb;
     lv_obj_t* lbl_status;
     lv_obj_t* prev;
@@ -1001,6 +1004,16 @@ static void ble_tank_select_cb(lv_event_t* e) {
     lv_obj_delete(ov);
 }
 
+static void ble_multi_select_cb(lv_event_t* e) {
+    lv_obj_t* btn   = lv_event_get_target_obj(e);
+    const char* mac = (const char*)lv_obj_get_user_data(btn);
+    lv_textarea_set_text(bl_ctx.ta_multi_mac, mac ? mac : "");
+    lv_obj_t* ov   = lv_obj_get_parent(lv_obj_get_parent(btn));
+    lv_obj_t* prev = (lv_obj_t*)lv_obj_get_user_data(ov);
+    lv_screen_load(prev);
+    lv_obj_delete(ov);
+}
+
 static void ble_scan_victron_cb(lv_event_t*) {
     lv_obj_t* list = nullptr;
     lv_obj_t* sp   = nullptr;
@@ -1037,14 +1050,31 @@ static void ble_scan_tank_cb(lv_event_t*) {
     bleDiscoveryScan(false, ble_scan_done, ctx);
 }
 
+static void ble_scan_multi_cb(lv_event_t*) {
+    lv_obj_t* list = nullptr;
+    lv_obj_t* sp   = nullptr;
+    // Reuse SCAN_VICTRON copy — same identification path (Victron mfr-data).
+    make_scan_overlay(bl_ctx.scr, t(TK::SCAN_VICTRON), &list, &sp);
+    auto* ctx      = (BleScanCtx*)malloc(sizeof(BleScanCtx));
+    ctx->list      = list;
+    ctx->spinner   = sp;
+    ctx->select_cb = ble_multi_select_cb;
+    // VE.Bus dongle advertises Victron mfr-id 0x02E1, so victron_only=true
+    // narrows the list usefully here.
+    bleDiscoveryScan(true, ble_scan_done, ctx);
+}
+
 static void ble_save_cb(lv_event_t*) {
     nvs_write("solar", "addr", lv_textarea_get_text(bl_ctx.ta_solar_mac));
     nvs_write("solar", "key",  lv_textarea_get_text(bl_ctx.ta_solar_key));
     nvs_write("batt",  "addr", lv_textarea_get_text(bl_ctx.ta_batt_mac));
     nvs_write("tank",  "addr", lv_textarea_get_text(bl_ctx.ta_tank_mac));
+    nvs_write("multiplus", "addr", lv_textarea_get_text(bl_ctx.ta_multi_mac));
+    nvs_write("multiplus", "key",  lv_textarea_get_text(bl_ctx.ta_multi_key));
     victronBleReloadConfig();
     ultimatronBleReloadConfig();
     tankBleReloadConfig();
+    multiplusBleReloadConfig();
     lv_label_set_text(bl_ctx.lbl_status, t(TK::CFG_SAVED));
     schedule_back(bl_ctx.prev);
 }
@@ -1180,6 +1210,49 @@ static void show_ble(lv_obj_t* from) {
     lv_obj_set_pos(lbl_tinfo, COL2_X, 272);
     lv_obj_set_width(lbl_tinfo, COL2_W);
     lv_label_set_long_mode(lbl_tinfo, LV_LABEL_LONG_WRAP);
+
+    // ── Multiplus (VE.Bus Smart dongle) — full-width row, read-only data ──
+    lv_obj_t* lbl_multi_title = make_label(bl_ctx.panel, t(TK::MULTI_SECTION), f->title, C_DIM);
+    lv_obj_set_pos(lbl_multi_title, 0, 392);
+
+    lv_obj_t* lbl_mmac = make_label(bl_ctx.panel, t(TK::MAC_BLE_LABEL), f->f22, C_LABEL);
+    lv_obj_set_pos(lbl_mmac, 0, 432);
+
+    bl_ctx.ta_multi_mac = lv_textarea_create(bl_ctx.panel);
+    lv_obj_set_pos(bl_ctx.ta_multi_mac, 0, 460);
+    lv_obj_set_size(bl_ctx.ta_multi_mac, 326, 52);
+    lv_obj_set_style_text_font(bl_ctx.ta_multi_mac, f->f22, 0);
+    lv_textarea_set_one_line(bl_ctx.ta_multi_mac, true);
+    nvs_read("multiplus", "addr", buf, sizeof(buf));
+    if (buf[0]) lv_textarea_set_text(bl_ctx.ta_multi_mac, buf);
+    lv_obj_add_event_cb(bl_ctx.ta_multi_mac, ble_alpha_focus_cb, LV_EVENT_FOCUSED, nullptr);
+
+    {
+        lv_obj_t* sb = lv_button_create(bl_ctx.panel);
+        lv_obj_set_pos(sb, 334, 460);
+        lv_obj_set_size(sb, 46, 52);
+        style_btn(sb);
+        lv_obj_add_event_cb(sb, ble_scan_multi_cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t* sl = make_label(sb, FA_SEARCH, f->icons22, C_TEXT);
+        lv_obj_center(sl);
+    }
+
+    lv_obj_t* lbl_mkey = make_label(bl_ctx.panel, t(TK::SOLAR_KEY), f->f22, C_LABEL);
+    lv_obj_set_pos(lbl_mkey, COL2_X, 432);
+
+    bl_ctx.ta_multi_key = lv_textarea_create(bl_ctx.panel);
+    lv_obj_set_pos(bl_ctx.ta_multi_key, COL2_X, 460);
+    lv_obj_set_size(bl_ctx.ta_multi_key, COL2_W, 52);
+    lv_obj_set_style_text_font(bl_ctx.ta_multi_key, f->f22, 0);
+    lv_textarea_set_one_line(bl_ctx.ta_multi_key, true);
+    nvs_read("multiplus", "key", buf, sizeof(buf));
+    if (buf[0]) lv_textarea_set_text(bl_ctx.ta_multi_key, buf);
+    lv_obj_add_event_cb(bl_ctx.ta_multi_key, ble_alpha_focus_cb, LV_EVENT_FOCUSED, nullptr);
+
+    lv_obj_t* lbl_minfo = make_label(bl_ctx.panel, t(TK::MULTI_INFO), f->f20, C_LABEL);
+    lv_obj_set_pos(lbl_minfo, 0, 524);
+    lv_obj_set_width(lbl_minfo, SCR_W - 40);
+    lv_label_set_long_mode(lbl_minfo, LV_LABEL_LONG_WRAP);
 
     // ── Status + Save button — fixed children of scr (always visible at bottom) ──
     bl_ctx.lbl_status = make_label(bl_ctx.scr, "", f->f20, C_LABEL);

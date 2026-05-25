@@ -82,6 +82,8 @@ enum class TK : uint8_t {
     SCAN_TANK,         // "Buscar sensor de deposito (BTHome)" / "Scan tank sensor (BTHome)"
     TANK_SECTION,      // "Sensor deposito agua" / "Water tank sensor"
     TANK_INFO,         // "BLE BTHome moisture (0x2F). Opcional." / "BLE BTHome moisture (0x2F). Optional."
+    MULTI_SECTION,     // "Inversor Multiplus (VE.Bus)" / "Multiplus inverter (VE.Bus)"
+    MULTI_INFO,        // "Necesita el dongle VE.Bus Smart. Opcional." / "Requires the VE.Bus Smart dongle. Optional."
     SCANNING,          // "Buscando... 8 s" / "Scanning... 8 s"
     NO_BLE_DEVS,       // "No se encontraron dispositivos BLE" / "No BLE devices found"
     SEARCH,            // scan button: "Buscar" / "Search"

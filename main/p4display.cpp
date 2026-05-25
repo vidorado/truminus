@@ -73,10 +73,14 @@ static constexpr int HEAT_W  = 301;
 static constexpr int WATER_X = 301;
 static constexpr int WATER_W = 350;
 
-// Row 2: Fan | Solar | (empty)
+// Row 2: Fan | Solar | INVERTER
 static constexpr int FAN_W   = 213;
 static constexpr int SOLAR_X = 213;
 static constexpr int SOLAR_W = 304;
+// INVERSOR panel — right slot of ROW 2 (was empty), 283 × ROW2_H.
+// Layout copied from ui/truminus_ui.eez-project ("INVERTER" panel).
+static constexpr int INV_X   = 517;
+static constexpr int INV_W   = 283;
 // "AGUA L." panel — right-most slot of ROW 1 (next to AGUA CALIENTE).
 // 149 × ROW1_H, flush against the right edge.  Layout matches
 // ui/truminus_ui.eez-project (EMPTY 1 / SOLAR_1 panel).
@@ -163,6 +167,15 @@ static struct {
     // AGUA L. panel (fresh-water tank, BTHome)
     lv_obj_t* bar_tank;
     lv_obj_t* lbl_tank_pct;
+
+    // INVERSOR panel (Victron VE.Bus / Multiplus)
+    lv_obj_t* lbl_inv_state;       // "Inverting" / "Charging" / "Off" / …
+    lv_obj_t* lbl_inv_mains_w;     // shore power
+    lv_obj_t* lbl_inv_load_w;      // AC out power
+    lv_obj_t* lbl_inv_batt_w;      // computed battery W (V*A)
+    lv_obj_t* flow_mains;          // arrow MAINS → INV
+    lv_obj_t* flow_load;           // arrow INV → LOAD
+    lv_obj_t* flow_batt;           // arrow INV ↔ BAT
 
     // Status bar
     lv_obj_t* lbl_conn;
@@ -629,6 +642,123 @@ static void build_main_screen()
     lv_obj_set_style_border_width(ui.bar_batt, 2, LV_PART_MAIN);
     lv_obj_set_style_pad_all(ui.bar_batt, 2, 0);
 
+    // ── INVERSOR panel (Victron VE.Bus / Multiplus dongle) ───────────────────
+    // Right slot of row 2 (283 × ROW2_H).  Layout copied from the EEZ
+    // project: MAINS box on the left, Multiplus icon in the middle, LOAD
+    // box top-right and BAT box bottom-right, plus three flow lines.
+    // Read-only for now — ON/OFF requires VE.Bus GATT, not advertising.
+    {
+        lv_obj_t* p_inv = make_section(scr, INV_X, ROW2_Y, INV_W, ROW2_H);
+
+        make_label(p_inv, "INVERSOR", s_font_title, C_DIM, 10, 12);
+
+        // ON / OFF placeholder buttons.  They render so the panel looks
+        // complete, but they're disabled until VE.Bus GATT control lands.
+        auto make_btn_stub = [&](int x, const char* txt, lv_color_t bg) {
+            lv_obj_t* b = lv_button_create(p_inv);
+            lv_obj_set_pos(b, x, 12);
+            lv_obj_set_size(b, 60, 36);
+            lv_obj_set_style_bg_color(b, bg, 0);
+            lv_obj_set_style_radius(b, 5, 0);
+            lv_obj_set_style_border_width(b, 0, 0);
+            lv_obj_add_state(b, LV_STATE_DISABLED);
+            lv_obj_t* l = lv_label_create(b);
+            lv_label_set_text(l, txt);
+            lv_obj_set_style_text_color(l, C_TEXT, 0);
+            lv_obj_set_style_text_font(l, s_font_20, 0);
+            lv_obj_center(l);
+        };
+        make_btn_stub(148, "Apag.", C_BTN);
+        make_btn_stub(213, "Enc.",  C_BTN_ACTIVE);
+
+        auto make_io_box = [&](int x, int y, int w, int h,
+                               const char* hdr, lv_obj_t** out_val) {
+            lv_obj_t* box = lv_obj_create(p_inv);
+            lv_obj_set_pos(box, x, y);
+            lv_obj_set_size(box, w, h);
+            lv_obj_set_style_bg_color(box, lv_color_hex(0x6a727f), 0);
+            lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(box, 0, 0);
+            lv_obj_set_style_radius(box, 5, 0);
+            lv_obj_set_style_pad_all(box, 0, 0);
+            lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+            // Header strip above the box.
+            lv_obj_t* head = lv_obj_create(p_inv);
+            lv_obj_set_pos(head, x - 5, y - 16);
+            lv_obj_set_size(head, w - 4, 16);
+            lv_obj_set_style_bg_color(head, lv_color_hex(0x969ba3), 0);
+            lv_obj_set_style_bg_opa(head, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(head, 0, 0);
+            lv_obj_set_style_radius(head, 0, 0);
+            lv_obj_set_style_pad_all(head, 0, 0);
+            lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_t* hl = lv_label_create(head);
+            lv_label_set_text(hl, hdr);
+            lv_obj_set_style_text_color(hl, C_TEXT, 0);
+            lv_obj_set_style_text_font(hl, s_font_18, 0);
+            lv_obj_center(hl);
+
+            // Value label centred inside the box.
+            lv_obj_t* v = lv_label_create(box);
+            lv_label_set_text(v, "--");
+            lv_obj_set_style_text_color(v, C_TEXT, 0);
+            lv_obj_set_style_text_font(v, s_font_20, 0);
+            lv_obj_center(v);
+            *out_val = v;
+        };
+
+        make_io_box(15, 78, 68, 44, "RED",   &ui.lbl_inv_mains_w);
+        make_io_box(197, 66, 69, 47, "CARGA", &ui.lbl_inv_load_w);
+        make_io_box(197, 120, 69, 47, "BAT.",  &ui.lbl_inv_batt_w);
+
+        // Multiplus icon — abstract block matching the EEZ silhouette
+        // (rounded blue body with an orange decorative bar).  Kept simple
+        // because the EEZ used many overlapping panels for ornament; the
+        // user mostly needs MAINS/CARGA/BAT/state to be readable.
+        lv_obj_t* mp = lv_obj_create(p_inv);
+        lv_obj_set_pos(mp, 111, 65);
+        lv_obj_set_size(mp, 58, 88);
+        lv_obj_set_style_bg_color(mp, lv_color_hex(0x0077c5), 0);
+        lv_obj_set_style_bg_opa(mp, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(mp, lv_color_hex(0x2b2b2b), 0);
+        lv_obj_set_style_border_width(mp, 1, 0);
+        lv_obj_set_style_radius(mp, 2, 0);
+        lv_obj_set_style_pad_all(mp, 0, 0);
+        lv_obj_clear_flag(mp, LV_OBJ_FLAG_SCROLLABLE);
+        // Orange accent strip (LED bar look)
+        lv_obj_t* ob = lv_obj_create(mp);
+        lv_obj_set_pos(ob, 4, 18);
+        lv_obj_set_size(ob, 50, 4);
+        lv_obj_set_style_bg_color(ob, lv_color_hex(0xf96432), 0);
+        lv_obj_set_style_bg_opa(ob, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(ob, 0, 0);
+        lv_obj_set_style_radius(ob, 1, 0);
+        lv_obj_clear_flag(ob, LV_OBJ_FLAG_SCROLLABLE);
+        // State label inside the body
+        ui.lbl_inv_state = lv_label_create(mp);
+        lv_label_set_text(ui.lbl_inv_state, "--");
+        lv_obj_set_style_text_color(ui.lbl_inv_state, C_TEXT, 0);
+        lv_obj_set_style_text_font(ui.lbl_inv_state, s_font_18, 0);
+        lv_obj_align(ui.lbl_inv_state, LV_ALIGN_BOTTOM_MID, 0, -4);
+
+        auto make_flow = [&](int x, int y, lv_obj_t** out) {
+            lv_obj_t* f = lv_obj_create(p_inv);
+            lv_obj_set_pos(f, x, y);
+            lv_obj_set_size(f, 32, 3);
+            lv_obj_set_style_bg_color(f, lv_color_hex(0xaed7f2), 0);
+            lv_obj_set_style_bg_opa(f, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(f, 0, 0);
+            lv_obj_set_style_radius(f, 0, 0);
+            lv_obj_set_style_pad_all(f, 0, 0);
+            lv_obj_clear_flag(f, LV_OBJ_FLAG_SCROLLABLE);
+            *out = f;
+        };
+        make_flow(81,  107, &ui.flow_mains);   // MAINS → INV
+        make_flow(167,  91, &ui.flow_load);    // INV → LOAD
+        make_flow(167, 138, &ui.flow_batt);    // INV → BAT
+    }
+
     // ── AGUA L. panel (fresh-water tank, BTHome) ──────────────────────────────
     // Layout mirrors ui/truminus_ui.eez-project (SOLAR_1 child inside EMPTY 1):
     //   - title "AGUA L." at (19,12)
@@ -717,6 +847,7 @@ static void build_main_screen()
     make_sep(scr, SOLAR_X,             ROW2_Y,        1,  ROW2_H);  // fan  | solar (left)
     make_sep(scr, SOLAR_X + SOLAR_W,   ROW2_Y,        1,  ROW2_H);  // solar right edge
     make_sep(scr, AGUA_X,              CONTENT_Y,     1,  ROW1_H);  // water | AGUA L.
+    make_sep(scr, INV_X,               ROW2_Y,        1,  ROW2_H);  // solar | INVERSOR
     make_sep(scr, 0,                   ROW2_Y - 1,    HEAT_W,  1);  // heat / fan
     make_sep(scr, WATER_X,             ROW2_Y - 1,    WATER_W, 1);  // water / solar
     make_sep(scr, 0,       H - STATUS_H - 1, W,   1);   // above status bar
@@ -1258,6 +1389,39 @@ void p4DisplayUpdate(const P4DisplayData& d)
     } else {
         lv_label_set_text(ui.lbl_batt_soc, "--%");
         lv_bar_set_value(ui.bar_batt, 0, LV_ANIM_OFF);
+    }
+
+    // Multiplus / VE.Bus inverter — render mains / load / battery flow.
+    {
+        char tb[24];
+        if (d.multi.valid) {
+            lv_label_set_text(ui.lbl_inv_state,
+                d.multi.stateName ? d.multi.stateName : "--");
+            snprintf(tb, sizeof(tb), "%d W", (int)d.multi.acInW);
+            lv_label_set_text(ui.lbl_inv_mains_w, tb);
+            snprintf(tb, sizeof(tb), "%d W", (int)d.multi.acOutW);
+            lv_label_set_text(ui.lbl_inv_load_w, tb);
+            int battW = (int)lroundf((std::isnan(d.multi.battV) ? 0.0f : d.multi.battV)
+                                     * d.multi.battA);
+            snprintf(tb, sizeof(tb), "%d W", battW);
+            lv_label_set_text(ui.lbl_inv_batt_w, tb);
+
+            // Flow lines: bright when actively carrying power, dim when idle.
+            auto flow_opa = [](int absW) {
+                return (absW > 5) ? LV_OPA_COVER : LV_OPA_30;
+            };
+            lv_obj_set_style_bg_opa(ui.flow_mains, flow_opa(abs(d.multi.acInW)),  0);
+            lv_obj_set_style_bg_opa(ui.flow_load,  flow_opa(abs(d.multi.acOutW)), 0);
+            lv_obj_set_style_bg_opa(ui.flow_batt,  flow_opa(abs(battW)),          0);
+        } else {
+            lv_label_set_text(ui.lbl_inv_state, "--");
+            lv_label_set_text(ui.lbl_inv_mains_w, "--");
+            lv_label_set_text(ui.lbl_inv_load_w,  "--");
+            lv_label_set_text(ui.lbl_inv_batt_w,  "--");
+            lv_obj_set_style_bg_opa(ui.flow_mains, LV_OPA_30, 0);
+            lv_obj_set_style_bg_opa(ui.flow_load,  LV_OPA_30, 0);
+            lv_obj_set_style_bg_opa(ui.flow_batt,  LV_OPA_30, 0);
+        }
     }
 
     // Fresh-water tank (BTHome).  Same red→amber→green colour ramp as the

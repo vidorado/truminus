@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=19dc381e">
+<link rel="stylesheet" href="styles.css?v=8c65e971">
 </head>
 <body>
 
@@ -80,7 +80,7 @@
     </section>
   </div>
 
-  <!-- Row 2: FAN (213 px) + SOLAR (304 px) — gap on right = 283 px -->
+  <!-- Row 2: FAN (213 px) + SOLAR (304 px) + INVERSOR (283 px) -->
   <div class="row row2">
 
     <!-- FAN panel (left/bottom) -->
@@ -135,6 +135,53 @@
         </div>
       </div>
     </section>
+
+    <!-- INVERSOR panel (right slot of row 2) — Victron Multiplus / VE.Bus.
+         Read-only: ON/OFF needs VE.Bus GATT which isn't implemented yet,
+         so the buttons render disabled.  Three I/O boxes (RED/CARGA/BAT)
+         flank a central Multiplus icon; horizontal flow lines pulse when
+         the corresponding port carries non-trivial power. -->
+    <section class="panel panel-inv">
+      <div class="inv-header">
+        <div class="p-title" data-i18n="inverter">INVERSOR</div>
+        <div class="inv-toolbar">
+          <button class="inv-btn inv-btn-off" disabled title="VE.Bus GATT control not implemented">
+            <span data-i18n="inv_off">Apag.</span>
+          </button>
+          <button class="inv-btn inv-btn-on" disabled title="VE.Bus GATT control not implemented">
+            <span data-i18n="inv_on">Enc.</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="inv-diagram">
+        <div class="inv-port inv-mains">
+          <div class="inv-port-hdr" data-i18n="inv_mains">RED</div>
+          <div class="inv-port-val"><span id="inv_mains_w">--</span>&thinsp;W</div>
+        </div>
+
+        <div class="inv-mid">
+          <div id="flow_mains" class="inv-flow inv-flow-left"></div>
+          <div class="inv-mpx">
+            <div class="inv-mpx-bar"></div>
+            <div id="inv_state" class="inv-mpx-state">--</div>
+          </div>
+          <div id="flow_load"  class="inv-flow inv-flow-right inv-flow-upper"></div>
+          <div id="flow_batt"  class="inv-flow inv-flow-right inv-flow-lower"></div>
+        </div>
+
+        <div class="inv-right">
+          <div class="inv-port inv-load">
+            <div class="inv-port-hdr" data-i18n="inv_load">CARGA</div>
+            <div class="inv-port-val"><span id="inv_load_w">--</span>&thinsp;W</div>
+          </div>
+          <div class="inv-port inv-batt">
+            <div class="inv-port-hdr" data-i18n="inv_batt">BAT.</div>
+            <div class="inv-port-val"><span id="inv_batt_w">--</span>&thinsp;W</div>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 
 </main>
@@ -165,7 +212,7 @@
 
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=ddd3f31a"></script>
-<script src="i18n.js?v=be5b4b71"></script>
-<script src="script.js?v=97abde06"></script>
+<script src="i18n.js?v=a44b2edb"></script>
+<script src="script.js?v=1d193e6f"></script>
 </body>
 </html>

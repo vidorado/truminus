@@ -38,6 +38,18 @@ struct P4TankData {
     uint8_t pct;      // 0–100 % — fresh-water tank fill level (BTHome)
 };
 
+struct P4MultiData {
+    bool        valid;        // false → render everything as "--"
+    uint8_t     deviceState;  // VE.Bus OperationMode (0xFF = no data)
+    const char* stateName;    // localised label for `deviceState` (or nullptr)
+    int32_t     acInW;        // shore power [W]
+    int32_t     acOutW;       // load power [W]
+    float       battV;        // battery voltage [V] (NaN = no data)
+    float       battA;        // battery current [A] (positive = charging)
+    uint8_t     soc;          // 0..100 %, 0xFF = no data
+    uint8_t     alarm;        // 0..2; 3 = no data
+};
+
 struct P4DisplayData {
     // Temperatures — value < -100 means "invalid / no data"
     float roomTemp;
@@ -70,6 +82,7 @@ struct P4DisplayData {
     P4SolarData solar;
     P4BattData  batt;
     P4TankData  tank;
+    P4MultiData multi;
 };
 
 // ── Control state — reflects user button presses ─────────────────────────

@@ -17,6 +17,7 @@
 #include "cli.hpp"
 #include "truma_lin.hpp"
 #include "tankble.hpp"
+#include "multiplusble.hpp"
 #include "flags.h"
 
 // LIN bus pins on the JC4880-P4 board — wired to connector J5.
@@ -165,6 +166,20 @@ static void onWsConnected() {
              tk.valid ? "true" : "false", (unsigned)tk.pct);
     wsQueueSend(buf);
 
+    MultiplusData mp = multiplusGetData();
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"multi\",\"valid\":%s,\"state\":%u,"
+             "\"ac_in_w\":%d,\"ac_out_w\":%d,"
+             "\"batt_v\":%.2f,\"batt_a\":%.1f,"
+             "\"ac_in_state\":%u,\"alarm\":%u,\"soc\":%u}",
+             mp.valid ? "true" : "false",
+             (unsigned)mp.deviceState,
+             (int)mp.acInW, (int)mp.acOutW,
+             std::isnan(mp.battV) ? 0.0 : mp.battV, mp.battA,
+             (unsigned)mp.acInState, (unsigned)mp.alarm,
+             (unsigned)mp.soc);
+    wsQueueSend(buf);
+
     // Push current LIN snapshot so freshly-loaded pages get room/water temp
     // without waiting for the next change in broadcastLinTemps().
     TrumaLinSnapshot lin;
@@ -306,6 +321,43 @@ static void broadcastBleData() {
     inited = true;
 }
 
+// Broadcast Multiplus VE.Bus snapshot to WS clients on change.
+// Frame shape: {"command":"multi","valid":bool,"state":N,"ac_in_w":N,
+//               "ac_out_w":N,"batt_v":F,"batt_a":F,"soc":N,"alarm":N}
+static void broadcastMultiplusData() {
+    static MultiplusData prev   = {};
+    static bool          inited = false;
+    char buf[224];
+
+    MultiplusData m = multiplusGetData();
+    bool changed = !inited
+                   || m.valid != prev.valid
+                   || (m.valid && (m.deviceState != prev.deviceState
+                                   || m.alarm       != prev.alarm
+                                   || m.acInState   != prev.acInState
+                                   || abs(m.acInW  - prev.acInW)  > 5
+                                   || abs(m.acOutW - prev.acOutW) > 5
+                                   || (!std::isnan(m.battV) &&
+                                       fabsf(m.battV - prev.battV) > 0.05f)
+                                   || fabsf(m.battA - prev.battA) > 0.1f
+                                   || m.soc         != prev.soc));
+    if (!changed) return;
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"multi\",\"valid\":%s,\"state\":%u,"
+             "\"ac_in_w\":%d,\"ac_out_w\":%d,"
+             "\"batt_v\":%.2f,\"batt_a\":%.1f,"
+             "\"ac_in_state\":%u,\"alarm\":%u,\"soc\":%u}",
+             m.valid ? "true" : "false",
+             (unsigned)m.deviceState,
+             (int)m.acInW, (int)m.acOutW,
+             std::isnan(m.battV) ? 0.0 : m.battV, m.battA,
+             (unsigned)m.acInState, (unsigned)m.alarm,
+             (unsigned)m.soc);
+    wsQueueSend(buf);
+    prev   = m;
+    inited = true;
+}
+
 // Broadcast tank-level (BTHome) to every connected WS client on change.
 // Frame shape mirrors solar/batt: {"command":"tank","valid":bool,"pct":N}.
 static void broadcastTankData() {
@@ -388,6 +440,7 @@ static void wsPumpTask(void* /*arg*/) {
         broadcastNetInfoChange();
         broadcastBleData();
         broadcastTankData();
+        broadcastMultiplusData();
         broadcastLinTemps();
         wsQueueDrain();
     }
@@ -433,6 +486,7 @@ static void bootTask(void* /*arg*/) {
     victronBleInit();
     ultimatronBleInit();
     tankBleInit();
+    multiplusBleInit();
     xTaskCreate([](void*) {
         bleSupervisorStart();
         vTaskDelete(nullptr);
@@ -560,6 +614,18 @@ extern "C" void app_main(void)
         TankData td = tankGetData();
         d.tank.valid = td.valid;
         d.tank.pct   = td.pct;
+
+        // Multiplus VE.Bus snapshot — read-only (control needs GATT).
+        MultiplusData mp = multiplusGetData();
+        d.multi.valid       = mp.valid;
+        d.multi.deviceState = mp.deviceState;
+        d.multi.stateName   = multiplusStateName(mp.deviceState);
+        d.multi.acInW       = mp.acInW;
+        d.multi.acOutW      = mp.acOutW;
+        d.multi.battV       = mp.battV;
+        d.multi.battA       = mp.battA;
+        d.multi.soc         = mp.soc;
+        d.multi.alarm       = mp.alarm;
 
         // LIN snapshot → room/water temp + LIN-ok dot.
         TrumaLinSnapshot lin;

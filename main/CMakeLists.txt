@@ -23,6 +23,7 @@ idf_component_register(
         "victronble.cpp"
         "ultimatronble.cpp"
         "tankble.cpp"
+        "multiplusble.cpp"
         "c6_ota.cpp"
         "webserver.cpp"
         "wstunnel.cpp"

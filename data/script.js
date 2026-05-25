@@ -91,6 +91,7 @@ ws.onmessage = function (event) {
     if (d.command === 'solar') { applySolar(d); return; }
     if (d.command === 'batt')  { applyBatt(d);  return; }
     if (d.command === 'tank')  { applyTank(d);  return; }
+    if (d.command === 'multi') { applyMulti(d); return; }
     if (d.command === 'snapshot') {
         // Full initial-state burst from wsConnected() on the server.
         // One message with every cached setting and status value to
@@ -479,6 +480,47 @@ function applyTank(d) {
                            : '#4488ff';
         fill.style.background = col;
     }
+}
+
+var MULTI_STATES = {
+    0:   'inv_st_off',    1:   'inv_st_lowpower',  2:   'inv_st_fault',
+    3:   'inv_st_bulk',   4:   'inv_st_abs',       5:   'inv_st_float',
+    6:   'inv_st_storage',7:   'inv_st_equalize',  8:   'inv_st_passthru',
+    9:   'inv_st_inv',   10:   'inv_st_assist',   11:   'inv_st_supply',
+    252: 'inv_st_ext'
+};
+
+function applyMulti(d) {
+    var st  = document.getElementById('inv_state');
+    var rm  = document.getElementById('inv_mains_w');
+    var rl  = document.getElementById('inv_load_w');
+    var rb  = document.getElementById('inv_batt_w');
+    var fm  = document.getElementById('flow_mains');
+    var fl  = document.getElementById('flow_load');
+    var fb  = document.getElementById('flow_batt');
+
+    if (!d.valid) {
+        if (st) st.textContent = '--';
+        if (rm) rm.textContent = '--';
+        if (rl) rl.textContent = '--';
+        if (rb) rb.textContent = '--';
+        if (fm) fm.classList.remove('active');
+        if (fl) fl.classList.remove('active');
+        if (fb) fb.classList.remove('active');
+        return;
+    }
+    if (st) st.textContent = t(MULTI_STATES[d.state] || 'inv_st_off');
+    var inW  = parseInt(d.ac_in_w)  || 0;
+    var outW = parseInt(d.ac_out_w) || 0;
+    var battV = parseFloat(d.batt_v) || 0;
+    var battA = parseFloat(d.batt_a) || 0;
+    var battW = Math.round(battV * battA);
+    if (rm) rm.textContent = inW;
+    if (rl) rl.textContent = outW;
+    if (rb) rb.textContent = battW;
+    if (fm) fm.classList.toggle('active', Math.abs(inW)  > 5);
+    if (fl) fl.classList.toggle('active', Math.abs(outW) > 5);
+    if (fb) fb.classList.toggle('active', Math.abs(battW) > 5);
 }
 
 function applyBatt(d) {
