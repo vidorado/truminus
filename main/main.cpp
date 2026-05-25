@@ -205,6 +205,21 @@ static void onWsConnected() {
              "{\"command\":\"status\",\"id\":\"/linok\",\"value\":\"%d\"}",
              lin.linOk ? 1 : 0);
     wsQueueSend(buf);
+
+    // Icon states (BLE + tunnel)
+    VictronData    vx = victronGetData();
+    UltimatronData ux = ultimatronGetData();
+    TankData       tx = tankGetData();
+    MultiplusData  mx = multiplusGetData();
+    int ble = (vx.valid || ux.valid || tx.valid || mx.valid) ? 2
+            : (victronIsConfigured() || ultimatronIsConfigured()
+               || tankIsConfigured() || multiplusIsConfigured()) ? 1
+            : 0;
+    snprintf(buf, sizeof(buf), "{\"command\":\"icon\",\"id\":\"ble\",\"state\":%d}", ble);
+    wsQueueSend(buf);
+    snprintf(buf, sizeof(buf), "{\"command\":\"icon\",\"id\":\"tunnel\",\"state\":%d}",
+             static_cast<int>(wstunnelUiState()));
+    wsQueueSend(buf);
 }
 
 // ── Broadcast LCD-originated changes ─────────────────────────────────────
@@ -431,6 +446,33 @@ static void broadcastLinTemps() {
     inited = true;
 }
 
+static void broadcastIconStates() {
+    static int prevBle = -1;
+    static int prevTun = -1;
+
+    VictronData    v  = victronGetData();
+    UltimatronData u  = ultimatronGetData();
+    TankData       tk = tankGetData();
+    MultiplusData  mp = multiplusGetData();
+    int ble = (v.valid || u.valid || tk.valid || mp.valid) ? 2
+            : (victronIsConfigured() || ultimatronIsConfigured()
+               || tankIsConfigured() || multiplusIsConfigured()) ? 1
+            : 0;
+    int tun = static_cast<int>(wstunnelUiState());
+
+    char buf[80];
+    if (ble != prevBle) {
+        snprintf(buf, sizeof(buf), "{\"command\":\"icon\",\"id\":\"ble\",\"state\":%d}", ble);
+        wsQueueSend(buf);
+        prevBle = ble;
+    }
+    if (tun != prevTun) {
+        snprintf(buf, sizeof(buf), "{\"command\":\"icon\",\"id\":\"tunnel\",\"state\":%d}", tun);
+        wsQueueSend(buf);
+        prevTun = tun;
+    }
+}
+
 static void wsPumpTask(void* /*arg*/) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -442,6 +484,7 @@ static void wsPumpTask(void* /*arg*/) {
         broadcastTankData();
         broadcastMultiplusData();
         broadcastLinTemps();
+        broadcastIconStates();
         wsQueueDrain();
     }
 }
@@ -637,8 +680,9 @@ extern "C" void app_main(void)
         // Tunnel state → topbar cloud icon (grey/blinking/blue/red).
         p4SetTunnelState(static_cast<uint8_t>(wstunnelUiState()));
 
-        d.bleState = (vd.valid || ud.valid) ? 2
-                   : (victronIsConfigured() || ultimatronIsConfigured()) ? 1
+        d.bleState = (vd.valid || ud.valid || td.valid || mp.valid) ? 2
+                   : (victronIsConfigured() || ultimatronIsConfigured()
+                      || tankIsConfigured() || multiplusIsConfigured()) ? 1
                    : 0;
 
         // Dummy overrides (in dummy_flags.h)

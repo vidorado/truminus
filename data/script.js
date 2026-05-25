@@ -53,6 +53,8 @@ function updateStatusBar() {
     }
 }
 updateStatusBar();
+// Hide mobile browser address bar by scrolling past the URL chrome.
+setTimeout(function () { window.scrollTo(0, 1); }, 0);
 // Apply the default language (es) to every data-i18n element immediately so
 // the HTML fallback ("Off", etc.) is never visible before the snapshot
 // arrives.  When the snapshot brings d.lang, applySetting('lang', ...) will
@@ -92,6 +94,7 @@ ws.onmessage = function (event) {
     if (d.command === 'batt')  { applyBatt(d);  return; }
     if (d.command === 'tank')  { applyTank(d);  return; }
     if (d.command === 'multi') { applyMulti(d); return; }
+    if (d.command === 'icon')  { applyIcon(d);  return; }
     if (d.command === 'snapshot') {
         // Full initial-state burst from wsConnected() on the server.
         // One message with every cached setting and status value to
@@ -129,6 +132,19 @@ function send(id, value) {
 function setDot(id, state) {
     var el = document.getElementById(id);
     if (el) el.className = 'sdot sdot-' + state;
+}
+
+// ── Icon state (BLE / tunnel) ────────────────────────────────────────────
+// state: 0=disabled(grey), 1=configured-no-data(amber), 2=connected(blue)
+// tunnel adds: 1=connecting(blink), 3=failed(red)
+var BLE_DOT    = { 0: 'dis', 1: 'warn', 2: 'ok' };
+var TUNNEL_DOT = { 0: 'dis', 1: 'warn', 2: 'ok', 3: 'err' };
+function applyIcon(d) {
+    if (d.id === 'ble') {
+        setDot('dot-bt', BLE_DOT[d.state] || 'dis');
+    } else if (d.id === 'tunnel') {
+        setDot('dot-cloud', TUNNEL_DOT[d.state] || 'dis');
+    }
 }
 
 // ── Settings received from device ─────────────────────────────────────────

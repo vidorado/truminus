@@ -1,0 +1,22 @@
+{
+  "name": "TruMinus",
+  "short_name": "TruMinus",
+  "start_url": "/",
+  "icons": [
+    {
+      "src": "/icons/web-app-manifest-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/web-app-manifest-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "theme_color": "#0f0f22",
+  "background_color": "#1a1a2e",
+  "display": "standalone"
+}
