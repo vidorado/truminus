@@ -76,7 +76,7 @@ body {
   font-size: 16px;
   padding-top: var(--bar-h);
   padding-bottom: var(--foot-h);
-  min-height: calc(100vh + 1px);
+  min-height: calc(100dvh + 1px);
 }
 
 /* ── Barra superior ───────────────────────────────────────────────────── */
@@ -163,7 +163,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0;                       /* row separators come from a bottom border */
-  min-height: calc(100vh - var(--bar-h) - var(--foot-h));
+  min-height: calc(100dvh - var(--bar-h) - var(--foot-h));
 }
 
 .row {
@@ -275,7 +275,7 @@ body {
 
 /* ── Landscape on phones: compact topbar, smaller badges ─────────────── */
 @media (max-height: 500px) and (orientation: landscape) {
-  :root { --bar-h: 40px; --foot-h: 40px; }
+  :root { --bar-h: 36px; --foot-h: 36px; }
   .topbar         { padding: 0 10px; gap: 8px; }
   .topbar-temps   { gap: 12px; }
   .tbadge         { font-size: 0.95em; gap: 4px; }
@@ -285,6 +285,14 @@ body {
   .sb-msg         { font-size: 0.9em; }
   .sb-ip          { font-size: 0.85em; }
   .row1 { grid-template-columns: 30% 43.75% 26.25%; }
+  .lcd  { height: calc(100vh - var(--bar-h) - var(--foot-h)); height: calc(100svh - var(--bar-h) - var(--foot-h)); min-height: 0; overflow: hidden; }
+  .row  { flex: 1 1 0; min-height: 0; overflow: hidden; }
+  .row .panel { min-height: 0; overflow: hidden; }
+  .panel { padding: 8px; gap: 6px; }
+  .boiler-grid { gap: 4px; }
+  .btn-boiler  { padding: 4px 6px; font-size: 0.95em; }
+  .btn-heat    { padding: 4px 8px; }
+  .btn-fan     { padding: 4px 4px; }
   .panel-inv .inv-mpx       { width: 50px; min-height: 60px; }
   .panel-inv .inv-mpx-bar   { top: 12px; }
   .panel-inv .inv-mpx-state { font-size: 0.75em; }
