@@ -87,6 +87,7 @@ The project follows the ESP-IDF native convention: there is no `src/`; all firmw
 - **`commandreader.cpp/.hpp`** — Serial CLI line buffer for `main.cpp`.
 - **`victronble.cpp/.hpp`** — Victron Solar Charger BLE listener (Instant Readout). Uses NimBLE 2.x; stubbed when `-DENABLE_BLE` is absent. See `.claude/skills/victronble/SKILL.md`.
 - **`ultimatronble.cpp/.hpp`** — Ultimatron LiFePO4 BMS BLE listener (GATT). See `.claude/skills/ultimatronble/SKILL.md`.
+- **`tankble.cpp/.hpp`** — Fresh-water tank level receiver.  Parses BTHome v2 unencrypted service-data (UUID `0xFCD2`, moisture tag `0x2F`) from BLE adverts, filtered by NVS `tank/addr` allow-list and deduped by BTHome packet-id (tag `0x00`).  No separate scan — `VictronScanCb::onResult` calls `tankBleHandleAd()` so we don't fight NimBLE for the single scan callback slot.  Exposes a thread-safe `TankData {pct, valid, lastMs}` consumed by the LCD (AGUA L. panel) and broadcast over WS as `{"command":"tank","valid":bool,"pct":N}`.
 - **`i18n.cpp/.hpp`** — `TK` enum + `t(TK::KEY)`. Spanish (default) / English; language persisted in NVS.
 - **`logs.hpp`** — Logging macros / tag conventions.
 
@@ -94,7 +95,7 @@ The project follows the ESP-IDF native convention: there is no `src/`; all firmw
 
 Assets live in `data/` and are served from LittleFS (see §"Web assets are served from LittleFS"). `script.js` communicates with the firmware over a WebSocket at `/ws` using JSON envelopes (`{"command": "...", "id": "...", "value": "..."}`).
 
-**Layout mirrors the LCD** (see `main/p4display.cpp`): an 800-px canvas with two rows whose column widths reproduce the LCD's HEAT/HOT-WATER/empty (301/350/149 px) and FAN/SOLAR/empty (213/304/283 px) splits. Encoded as `grid-template-columns` percentages so the canvas can shrink (`--lcd-w: 640px`) while keeping LCD geometry. Container queries (`container-type: inline-size` + `clamp(…, Xcqi, …)`) scale title font sizes proportionally. The Montserrat TTFs the LCD uses live in `data/` too and are served as `@font-face` for the typographic `truminus` logo.
+**Layout mirrors the LCD** (see `main/p4display.cpp`): an 800-px canvas with two rows whose column widths reproduce the LCD's HEAT/HOT-WATER/AGUA-L. (301/350/149 px) and FAN/SOLAR/empty (213/304/283 px) splits. Encoded as `grid-template-columns` percentages so the canvas can shrink (`--lcd-w: 640px`) while keeping LCD geometry. Container queries (`container-type: inline-size` + `clamp(…, Xcqi, …)`) scale title font sizes proportionally. The Montserrat TTFs the LCD uses live in `data/` too and are served as `@font-face` for the typographic `truminus` logo.
 
 ## Cross-cutting gotchas (write these down once, save the next session)
 
@@ -194,13 +195,14 @@ void lvglUnlock();
 | `display` | `timeout_idx`, `lang` | Screen timeout option index, language (0=ES, 1=EN) |
 | `solar` | `addr`, `key` | Victron BLE MAC + encryption key |
 | `batt` | `addr` | Ultimatron BLE MAC |
+| `tank` | `addr` | Fresh-water tank BTHome sensor MAC (BTHome v2, moisture tag 0x2F). Empty/missing = sensor disabled. |
 
 ### Settings screens
 
 Reachable from the ⚙ button in the top bar (will be ported from the old `wifisetup.cpp` flow):
 - **WiFi config** — blocking scan + connect; saves to NVS and reboots.
 - **MQTT config** — blocking host/port/user/pass; saves to NVS and reboots.
-- **Solar / battery** — Victron MAC + encryption key + Ultimatron MAC. Works without BLE compiled in (allows pre-provisioning).
+- **Monitorización** (was "Solar") — Victron MAC + encryption key, Ultimatron MAC, and fresh-water tank sensor MAC. Each MAC field has a 🔍 button that runs the same BLE discovery scan; the tank scan uses `victron_only=false` because BTHome devices carry service-data, not manufacturer-data. Save writes `solar/`, `batt/`, and `tank/` NVS namespaces in one go and calls each module's `*BleReloadConfig()`.
 - **Display** — timeout selector (30 s / 1 min / 3 min / never).
 - **Language** — Spanish / English; applied immediately.
 

@@ -130,6 +130,7 @@ Key source files in `main/`:
 | `webserver.cpp/.hpp` | HTTP static serving + WebSocket JSON handler |
 | `victronble.cpp/.hpp` | Victron SmartSolar BLE (Instant Readout protocol) |
 | `ultimatronble.cpp/.hpp` | Ultimatron LiFePO4 BMS BLE (GATT) |
+| `tankble.cpp/.hpp` | Fresh-water tank level — BLE BTHome v2 receiver |
 | `i18n.cpp/.hpp` | `TK` enum + `t(TK::KEY)` — Spanish/English, persisted in NVS |
 
 Build system notes and known gotchas are in
@@ -269,6 +270,41 @@ On the TruMinus LCD: **[⚙ Config]** → **Tunnel**:
 The cloud icon in the top bar blinks while the WSS handshake is in
 flight, turns solid blue when up, and goes red after
 3 consecutive disconnects without a successful connect.
+
+---
+
+## Fresh-water tank sensor (BLE / BTHome v2)
+
+The right-most panel on the screen (and the matching widget in the web
+UI) shows the fill level of the fresh-water tank as a percentage.  The
+value comes from any BLE device that broadcasts a [BTHome v2](https://bthome.io)
+unencrypted Service Data frame (UUID `0xFCD2`) carrying tag `0x2F`
+(*Moisture*, `uint8` 0..100 %).  Same wire format Home Assistant and
+ESPHome use for their generic moisture sensors, so anything that can
+emit BTHome works as a sensor — including the
+[TruMinus-HWSim](https://github.com/seguridad2000/TruMinus-HWSim)
+ESP32-C3 simulator we use on the bench.
+
+Pairing is one-shot: the firmware filters incoming ads by source MAC,
+so you tell it which MAC to trust and it ignores everything else.
+
+### Pair a sensor
+
+1. Power up the sensor near the TruMinus device.
+2. On the LCD: **[⚙ Config]** → **Monitorización** → scroll to *Sensor
+   depósito agua*.  Tap the 🔍 button next to the MAC field and pick
+   your device from the scan list, then **Save**.
+3. Or from the serial REPL (USB-Serial-JTAG on `/dev/ttyACM0`):
+   ```
+   tank AABBCCDDEEFF      # paste the MAC of your sensor
+   show                   # confirm: "tank: addr=AABBCCDDEEFF"
+   ```
+   Use `tank clear` to unpair.
+
+The widget shows `-- %` until the first valid frame arrives (typically
+within one BLE scan window, ~5 s).  Fill colour follows the same
+ramp as the battery: red below 20 %, amber 20–49 %, blue 50 % and
+above.
 
 ---
 
