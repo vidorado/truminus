@@ -199,9 +199,23 @@ body {
   .row1, .row2 { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 460px) {
-  .row { display: block; }
-  .row1, .row2 { grid-template-columns: 1fr; }
+  /* Collapse .row wrappers so .lcd becomes the single grid parent and we
+     can freely reorder the 6 panels across rows. */
+  .lcd { display: grid; grid-template-columns: repeat(6, 1fr); padding: 0; }
+  .row { display: contents; }
+  .row1, .row2 { border-bottom: none; }
   .row .panel { border-right: none; border-bottom: 1px solid var(--sep); }
+  /* HEATING + FAN side by side */
+  .row .panel-heat { grid-column: 1 / 4; order: 1; border-right: 1px solid var(--sep); }
+  .row .panel-fan  { grid-column: 4 / 7; order: 2; }
+  .row .panel-water { border-top: none; }
+  /* HOT WATER, AGUA L., SOLAR, INVERSOR — full width, stacked */
+  .panel-water { grid-column: 1 / -1; order: 3; }
+  .row .panel-solar { grid-column: 1 / 5; order: 4; border-right: 1px solid var(--sep); }
+  .panel-tank  { grid-column: 5 / 7; order: 5; }
+  .row .panel-inv { grid-column: 1 / -1; order: 6; border-bottom: none; }
+  .panel-solar .solar-line { font-size: 0.85em; }
+  .panel-solar .batt-soc-lbl { font-size: 0.95em; }
   /* On narrow screens the controls stack vertically and the proportional
      layout used at desktop sizes would clip content.  Revert every
      flex-based growth rule so each element sizes to its natural content
@@ -229,6 +243,7 @@ body {
      + 46 px square exceeded the column width on the tightest devices). */
   .btn-step   { flex: 0 0 36px; width: 36px; height: 36px; min-height: 36px; font-size: 0.9em; }
   .sp-row     { gap: 8px; align-items: center; }
+  .panel .sp-val { font-size: 1.1em; white-space: nowrap; }
   /* Tanks/batteries back to fixed pixel sizes — they no longer have a
      row height to fill on stacked layouts. */
   .water-temp-bar-wrap { width: 64px; max-width: none; min-width: 0; }
@@ -241,6 +256,19 @@ body {
      the page is stacked. */
   .panel-tank          { align-items: center; }
   .tank-wrap           { width: 80%; max-width: 220px; flex: 0 0 auto; min-height: 0; aspect-ratio: 106 / 71; }
+  /* Unify all panel titles to the same viewport-based size */
+  .sec-lbl             { font-size: clamp(14px, 2.3vw, 20px); }
+  /* Topbar: tighter badges with smaller icons */
+  .topbar-temps        { gap: 12px; }
+  .tbadge              { font-size: 0.95em; gap: 4px; }
+  .tbadge .fi          { font-size: 1.08em; }
+  .tbadge-ext          { margin-left: 6px; }
+  .topbar-icons        { gap: 2px; }
+  #dot-cloud .fi       { font-size: 0.95em; }
+  .panel-inv .inv-port-hdr { padding: 3px 0; font-size: 0.75em; }
+  .panel-inv .inv-port-val { padding: 6px 6px; font-size: 0.9em; }
+  .row .panel-inv { border-bottom: none; flex: 1; }
+  .panel-inv .inv-diagram  { flex: 1; }
 }
 
 /* ── Panel ────────────────────────────────────────────────────────────── */

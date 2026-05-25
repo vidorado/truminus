@@ -29,6 +29,7 @@ SOLID = [
     0xF054,  # chevron-right (outdoor-temp arrow fallback)
     0xF06D,  # fire (heating indicator)
     0xF074,  # random/shuffle (LIN status)
+    0xF0C2,  # cloud (WSS tunnel status)
     0xF0E7,  # bolt (boiler boost)
     0xF2C9,  # thermometer-half
     0xF2F6,  # right-to-bracket (outdoor-temp arrow on P4 LCD)
