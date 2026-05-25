@@ -22,6 +22,7 @@ idf_component_register(
         "wifi_manager.cpp"
         "victronble.cpp"
         "ultimatronble.cpp"
+        "tankble.cpp"
         "c6_ota.cpp"
         "webserver.cpp"
         "wstunnel.cpp"

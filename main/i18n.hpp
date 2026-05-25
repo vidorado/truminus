@@ -79,6 +79,9 @@ enum class TK : uint8_t {
     // ── BLE scan screens ───────────────────────────────────────────────────
     SCAN_VICTRON,      // "Buscar dispositivos Victron" / "Scan Victron devices"
     SCAN_BATT,         // "Buscar bateria BLE (Ultimatron)" / "Scan BLE battery (Ultimatron)"
+    SCAN_TANK,         // "Buscar sensor de deposito (BTHome)" / "Scan tank sensor (BTHome)"
+    TANK_SECTION,      // "Sensor deposito agua" / "Water tank sensor"
+    TANK_INFO,         // "BLE BTHome moisture (0x2F). Opcional." / "BLE BTHome moisture (0x2F). Optional."
     SCANNING,          // "Buscando... 8 s" / "Scanning... 8 s"
     NO_BLE_DEVS,       // "No se encontraron dispositivos BLE" / "No BLE devices found"
     SEARCH,            // scan button: "Buscar" / "Search"

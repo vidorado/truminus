@@ -33,6 +33,11 @@ struct P4BattData {
     float voltageV;
 };
 
+struct P4TankData {
+    bool    valid;    // false → display "-- %" and empty fill
+    uint8_t pct;      // 0–100 % — fresh-water tank fill level (BTHome)
+};
+
 struct P4DisplayData {
     // Temperatures — value < -100 means "invalid / no data"
     float roomTemp;
@@ -64,6 +69,7 @@ struct P4DisplayData {
     // Peripherals
     P4SolarData solar;
     P4BattData  batt;
+    P4TankData  tank;
 };
 
 // ── Control state — reflects user button presses ─────────────────────────

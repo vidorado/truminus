@@ -1,5 +1,6 @@
 #include "victronble.hpp"
 #include "ultimatronble.hpp"
+#include "tankble.hpp"
 #include "logs.hpp"
 #include <math.h>
 #if defined(ENABLE_BLE)
@@ -159,6 +160,12 @@ class VictronScanCb : public NimBLEScanCallbacks {
                 LOG_BLE_PL("[ble] adv target — no manufacturer data");
             }
         }
+
+        // Route possible BTHome service-data to the tank receiver before
+        // we filter on Victron's mfr-data: the tank sensor lives on a
+        // different MAC and a different AD type, so the Victron path's
+        // strict addr/mfr filter would otherwise drop it.
+        tankBleHandleAd(dev);
 
         if (!dev->haveManufacturerData()) return;
         if (s_targetAddr.size() > 0 && !addrMatch) return;

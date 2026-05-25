@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=7e54887b">
+<link rel="stylesheet" href="styles.css?v=19dc381e">
 </head>
 <body>
 
@@ -28,7 +28,7 @@
        future controls. ───────────────────────────────────────────────────── -->
 <main class="lcd">
 
-  <!-- Row 1: HEATING (301 px) + HOT WATER (350 px) — gap on right = 149 px -->
+  <!-- Row 1: HEATING (301 px) + HOT WATER (350 px) + AGUA L. (149 px) -->
   <div class="row row1">
 
     <!-- HEATING panel (left/top) -->
@@ -61,6 +61,20 @@
         <div class="water-temp-lbl"><span id="water_temp_val">--</span>&thinsp;°C</div>
         <div class="water-temp-body">
           <div id="water_temp_fill" class="water-temp-fill"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- AGUA L. panel (right slot of row 1) — fresh-water tank fill level
+         from a BTHome BLE sensor.  Horizontal "jug" silhouette with a small
+         neck cap on top-right; vertical fill grows from bottom. -->
+    <section class="panel panel-tank">
+      <div class="p-title" data-i18n="tank_l">AGUA L.</div>
+      <div class="tank-pct"><span id="tank_pct_val">--</span>&nbsp;%</div>
+      <div class="tank-wrap">
+        <div class="tank-neck"></div>
+        <div class="tank-body">
+          <div id="tank_fill" class="tank-fill"></div>
         </div>
       </div>
     </section>
@@ -151,7 +165,7 @@
 
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=ddd3f31a"></script>
-<script src="i18n.js?v=25391339"></script>
-<script src="script.js?v=bac9afa3"></script>
+<script src="i18n.js?v=be5b4b71"></script>
+<script src="script.js?v=97abde06"></script>
 </body>
 </html>

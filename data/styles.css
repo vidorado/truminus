@@ -173,7 +173,10 @@ body {
   flex: 1 1 0;
   min-height: 0;
 }
-.row1 { grid-template-columns: 37.625% 43.75%  1fr; }
+/* Row 1 splits the 800 px LCD canvas into HEAT(301)/WATER(350)/AGUA(149)
+   = 37.625% / 43.75% / 18.625%.  AGUA L. (fresh-water tank) sits in the
+   right-most slot. */
+.row1 { grid-template-columns: 37.625% 43.75%  18.625%; }
 .row2 { grid-template-columns: 26.625% 38.000% 1fr; }
 
 /* Stretch each panel to fill its row so the border-bottom of Row 1
@@ -230,6 +233,11 @@ body {
   .batt-col            { width: 64px; max-width: none; min-width: 0; }
   .batt-body           { width: 42px; height: 72px; flex: 0 0 auto; min-height: 0; }
   .boiler-grid         { grid-template-rows: auto auto; }
+  /* Same trick for the AGUA L. tank: without a row height to fill, the
+     `flex:1` on .tank-wrap collapses to 0.  Pin a fixed pixel size when
+     the page is stacked. */
+  .panel-tank          { align-items: center; }
+  .tank-wrap           { width: 80%; max-width: 220px; flex: 0 0 auto; min-height: 0; aspect-ratio: 106 / 71; }
 }
 
 /* ── Panel ────────────────────────────────────────────────────────────── */
@@ -245,11 +253,12 @@ body {
   container-type: inline-size;
 }
 
-/* Titles scale with the panel's inline (width) size.  ~5% of panel width
-   gives ~15 px on a 300 px-wide panel and ~22 px on a 440 px-wide one;
-   clamps keep the result readable at the extremes. */
+/* Titles scale with the viewport (not the panel) so every panel header
+   reads at the same size regardless of how wide its slot is.  Mirrors the
+   LCD where every section uses bold_26.  ~2.3 vw gives ~18 px at the
+   800-px design width; clamps keep the result legible on phones. */
 .p-title {
-  font-size: clamp(12px, 5cqi, 22px);
+  font-size: clamp(14px, 2.3vw, 20px);
   font-weight: 700;
   color: var(--lbl);
   letter-spacing: 0.5px;
@@ -667,6 +676,64 @@ body {
   width: 100%;
   background: #44bb44;
   border-radius: 2px;
+  transition: height 0.4s ease, background 0.3s ease;
+}
+
+/* ── AGUA L. panel (fresh-water tank) ────────────────────────────────────
+   Mirrors the LCD layout in main/p4display.cpp:  title at top, big %
+   under it, then a horizontal "jug" body with a small filler-cap neck on
+   the top-right.  Vertical fill grows from the bottom proportional to
+   the BTHome moisture reading. */
+.panel-tank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap);
+}
+.panel-tank > .p-title { align-self: flex-start; }
+
+.tank-pct {
+  font-size: 1.2em;
+  color: #ffffff;
+  text-align: center;
+}
+
+/* Container for the body + neck — the neck is positioned absolutely
+   relative to this wrapper so it can sit half-on-top of the body. */
+.tank-wrap {
+  position: relative;
+  width: 85%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  margin-top: 4px;   /* leaves room for the neck cap above the body */
+}
+
+.tank-neck {
+  position: absolute;
+  top: -4px;
+  right: 12%;        /* matches EEZ neck offset (103/149 panel) */
+  width: 16%;
+  height: 6px;
+  background: #888888;
+  border-radius: 1px;
+}
+
+.tank-body {
+  flex: 1;
+  border: 2px solid #888888;
+  border-radius: 3px;
+  background: #1a1a2e;
+  position: relative;
+  overflow: hidden;
+}
+
+.tank-fill {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 0%;
+  background: #4488ff;
   transition: height 0.4s ease, background 0.3s ease;
 }
 

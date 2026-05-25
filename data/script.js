@@ -90,6 +90,7 @@ ws.onmessage = function (event) {
     if (!d.command) return;
     if (d.command === 'solar') { applySolar(d); return; }
     if (d.command === 'batt')  { applyBatt(d);  return; }
+    if (d.command === 'tank')  { applyTank(d);  return; }
     if (d.command === 'snapshot') {
         // Full initial-state burst from wsConnected() on the server.
         // One message with every cached setting and status value to
@@ -454,6 +455,30 @@ function applySolar(d) {
     document.getElementById('solar_kWh').textContent   = d.kWh;
     document.getElementById('solar_battV').textContent = d.battV;
     document.getElementById('solar_battA').textContent = d.battA;
+}
+
+function applyTank(d) {
+    var lbl  = document.getElementById('tank_pct_val');
+    var fill = document.getElementById('tank_fill');
+    if (!d.valid) {
+        if (lbl)  lbl.textContent = '--';
+        if (fill) fill.style.height = '0%';
+        return;
+    }
+    var pct = parseInt(d.pct);
+    if (isNaN(pct)) pct = 0;
+    if (pct < 0)   pct = 0;
+    if (pct > 100) pct = 100;
+    if (lbl) lbl.textContent = pct;
+    if (fill) {
+        fill.style.height = pct + '%';
+        // Same red→amber→blue ramp as the LCD's lv_bar (C_RED / C_AMBER_BAR
+        // / C_WATER_COLD).  Empty stays the dark tank colour.
+        var col = pct < 20 ? '#ff4444'
+                : pct < 50 ? '#ffaa00'
+                           : '#4488ff';
+        fill.style.background = col;
+    }
 }
 
 function applyBatt(d) {

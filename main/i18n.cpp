@@ -44,8 +44,8 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "BLOQUEADO",                // LOCKED_LBL
     "Clase %02Xh  /  Cod.%d",  // ERR_SUBTITLE_FMT
     "Aceptar",                  // ACCEPT
-    "Solar",                    // SOLAR_CFG
-    "Config. Solar",            // SOLAR_TITLE
+    "Monitorizaci\xC3\xB3n",    // SOLAR_CFG (label kept for compat — screen retitled)
+    "Config. Monitorizaci\xC3\xB3n", // SOLAR_TITLE
     "Direcc. MAC",              // SOLAR_ADDR
     "Clave cifrado",            // SOLAR_KEY
     "Sin datos",                // SOLAR_NO_DATA
@@ -70,7 +70,7 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "usuario...",
     "contrase\xC3\xB1" "a (opcional)...",
     "Introduce los datos del broker MQTT",
-    "TruMinus - Config. Solar",
+    "TruMinus - Monitorizaci\xC3\xB3n",
     "Bater\xC3\xAD" "a Ultimatron",
     "MAC BLE (12 hex, sin \":\"): ",
     "Clave cifrado (32 hex):",
@@ -78,6 +78,9 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "12100AE21001 (opcional)",
     "Buscar dispositivos Victron",
     "Buscar bater\xC3\xAD" "a BLE (Ultimatron)",
+    "Buscar sensor de dep\xC3\xB3sito (BTHome)",                       // SCAN_TANK
+    "Sensor dep\xC3\xB3sito agua",                                     // TANK_SECTION
+    "BLE BTHome (moisture 0x2F). Opcional.",                          // TANK_INFO
     "Buscando... 8 s",
     "No se encontraron dispositivos BLE",
     "Buscar",
@@ -151,8 +154,8 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "LOCKED",
     "Class %02Xh  /  Code %d",
     "Accept",
-    "Solar",
-    "Solar Config",
+    "Monitoring",
+    "Monitoring Config",
     "MAC Address",
     "Enc. Key",
     "No data",
@@ -177,7 +180,7 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "user...",
     "password (optional)...",
     "Enter MQTT broker details",
-    "TruMinus - Solar Config",
+    "TruMinus - Monitoring",
     "Ultimatron Battery",
     "MAC BLE (12 hex, no \":\"):",
     "Encryption Key (32 hex):",
@@ -185,6 +188,9 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "12100AE21001 (optional)",
     "Scan Victron devices",
     "Scan BLE battery (Ultimatron)",
+    "Scan tank sensor (BTHome)",                                       // SCAN_TANK
+    "Water tank sensor",                                               // TANK_SECTION
+    "BLE BTHome (moisture 0x2F). Optional.",                          // TANK_INFO
     "Scanning... 8 s",
     "No BLE devices found",
     "Search",

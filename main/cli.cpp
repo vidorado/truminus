@@ -4,6 +4,7 @@
 #include "linenoise/linenoise.h"
 #include "victronble.hpp"
 #include "ultimatronble.hpp"
+#include "tankble.hpp"
 #include "wifi_manager.hpp"
 #include "wstunnel.hpp"
 #include <strings.h>
@@ -45,6 +46,28 @@ static int cmd_ultimatron(int argc, char** argv) {
     ultimatronBleReloadConfig();
     printf("ultimatron saved: %s%s%s\n", mac.c_str(),
            pass.empty() ? "" : " pass=", pass.c_str());
+    return 0;
+}
+
+static int cmd_tank(int argc, char** argv) {
+    if (argc < 2) {
+        printf("usage: tank <mac>|clear\n");
+        return 1;
+    }
+    if (strcasecmp(argv[1], "clear") == 0) {
+        tankSaveConfig("");
+        tankBleReloadConfig();
+        printf("tank: cleared\n");
+        return 0;
+    }
+    std::string mac;
+    if (!normalize_hex(argv[1], 12, mac)) {
+        printf("bad mac (need 12 hex)\n");
+        return 1;
+    }
+    tankSaveConfig(mac);
+    tankBleReloadConfig();
+    printf("tank saved: %s\n", mac.c_str());
     return 0;
 }
 
@@ -91,6 +114,11 @@ static int cmd_show(int, char**) {
                up.empty() ? "" : " pass=", up.c_str());
     else
         printf("ultimatron: <unconfigured>\n");
+    std::string ta;
+    if (tankLoadConfig(ta))
+        printf("tank:       addr=%s\n", ta.c_str());
+    else
+        printf("tank:       <unconfigured>\n");
     return 0;
 }
 
@@ -118,11 +146,13 @@ void cliStart() {
     esp_console_cmd_t c_tunnel     = {}; c_tunnel.command     = "tunnel";     c_tunnel.help     = "tunnel <on|off>: enable/disable WSS reverse tunnel"; c_tunnel.func     = cmd_tunnel;
     esp_console_cmd_t c_victron    = {}; c_victron.command    = "victron";    c_victron.help    = "victron <mac> <key32hex>: set Victron BLE creds";    c_victron.func    = cmd_victron;
     esp_console_cmd_t c_ultimatron = {}; c_ultimatron.command = "ultimatron"; c_ultimatron.help = "ultimatron <mac> [pass]: set Ultimatron BLE creds"; c_ultimatron.func = cmd_ultimatron;
+    esp_console_cmd_t c_tank       = {}; c_tank.command       = "tank";       c_tank.help       = "tank <mac>|clear: bind BTHome tank sensor MAC";   c_tank.func       = cmd_tank;
     esp_console_cmd_t c_show       = {}; c_show.command       = "show";       c_show.help       = "show: print stored BLE config";                      c_show.func       = cmd_show;
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_wifi));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_tunnel));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_victron));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_ultimatron));
+    ESP_ERROR_CHECK(esp_console_cmd_register(&c_tank));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_show));
     esp_console_register_help_command();
 

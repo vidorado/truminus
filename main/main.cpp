@@ -16,6 +16,7 @@
 #include "wstunnel.hpp"
 #include "cli.hpp"
 #include "truma_lin.hpp"
+#include "tankble.hpp"
 #include "flags.h"
 
 // LIN bus pins on the JC4880-P4 board — wired to connector J5.
@@ -156,6 +157,12 @@ static void onWsConnected() {
     snprintf(buf, sizeof(buf),
              "{\"command\":\"batt\",\"valid\":%s,\"soc\":%u,\"battV\":%.2f}",
              u.valid ? "true" : "false", (unsigned)u.soc, u.battV);
+    wsQueueSend(buf);
+
+    TankData tk = tankGetData();
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"tank\",\"valid\":%s,\"pct\":%u}",
+             tk.valid ? "true" : "false", (unsigned)tk.pct);
     wsQueueSend(buf);
 
     // Push current LIN snapshot so freshly-loaded pages get room/water temp
@@ -299,6 +306,27 @@ static void broadcastBleData() {
     inited = true;
 }
 
+// Broadcast tank-level (BTHome) to every connected WS client on change.
+// Frame shape mirrors solar/batt: {"command":"tank","valid":bool,"pct":N}.
+static void broadcastTankData() {
+    static TankData prev   = {};
+    static bool     inited = false;
+    char buf[96];
+
+    TankData t = tankGetData();
+    bool changed = !inited
+                   || t.valid != prev.valid
+                   || (t.valid && t.pct != prev.pct);
+    if (changed) {
+        snprintf(buf, sizeof(buf),
+                 "{\"command\":\"tank\",\"valid\":%s,\"pct\":%u}",
+                 t.valid ? "true" : "false", (unsigned)t.pct);
+        wsQueueSend(buf);
+        prev   = t;
+        inited = true;
+    }
+}
+
 // Broadcast LIN-derived values (room/water temp, water-heating flag, LIN-ok)
 // to every connected WS client.  Mirrors the room_temp / water_temp /
 // water_heating / linok ids handled by data/script.js::applyStatus.
@@ -359,6 +387,7 @@ static void wsPumpTask(void* /*arg*/) {
         broadcastControlChanges(cs);
         broadcastNetInfoChange();
         broadcastBleData();
+        broadcastTankData();
         broadcastLinTemps();
         wsQueueDrain();
     }
@@ -403,6 +432,7 @@ static void bootTask(void* /*arg*/) {
 
     victronBleInit();
     ultimatronBleInit();
+    tankBleInit();
     xTaskCreate([](void*) {
         bleSupervisorStart();
         vTaskDelete(nullptr);
@@ -524,6 +554,12 @@ extern "C" void app_main(void)
         } else {
             d.batt.valid = false;
         }
+
+        // Fresh-water tank — BTHome sensor (TruMinus-HWSim today,
+        // dedicated C3 once the firmware is forked out).
+        TankData td = tankGetData();
+        d.tank.valid = td.valid;
+        d.tank.pct   = td.pct;
 
         // LIN snapshot → room/water temp + LIN-ok dot.
         TrumaLinSnapshot lin;

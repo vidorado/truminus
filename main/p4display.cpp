@@ -73,10 +73,15 @@ static constexpr int HEAT_W  = 301;
 static constexpr int WATER_X = 301;
 static constexpr int WATER_W = 350;
 
-// Row 2: Fan | Solar | (energy stub)
+// Row 2: Fan | Solar | (empty)
 static constexpr int FAN_W   = 213;
 static constexpr int SOLAR_X = 213;
 static constexpr int SOLAR_W = 304;
+// "AGUA L." panel — right-most slot of ROW 1 (next to AGUA CALIENTE).
+// 149 × ROW1_H, flush against the right edge.  Layout matches
+// ui/truminus_ui.eez-project (EMPTY 1 / SOLAR_1 panel).
+static constexpr int AGUA_X  = 651;
+static constexpr int AGUA_W  = 149;
 
 // Vertical bar dimensions
 static constexpr int TANK_W        = 64;
@@ -154,6 +159,10 @@ static struct {
     lv_obj_t* lbl_solar_power;
     lv_obj_t* bar_batt;
     lv_obj_t* lbl_batt_soc;
+
+    // AGUA L. panel (fresh-water tank, BTHome)
+    lv_obj_t* bar_tank;
+    lv_obj_t* lbl_tank_pct;
 
     // Status bar
     lv_obj_t* lbl_conn;
@@ -620,6 +629,56 @@ static void build_main_screen()
     lv_obj_set_style_border_width(ui.bar_batt, 2, LV_PART_MAIN);
     lv_obj_set_style_pad_all(ui.bar_batt, 2, 0);
 
+    // ── AGUA L. panel (fresh-water tank, BTHome) ──────────────────────────────
+    // Layout mirrors ui/truminus_ui.eez-project (SOLAR_1 child inside EMPTY 1):
+    //   - title "AGUA L." at (19,12)
+    //   - percent label at (31,59)
+    //   - tank body 106×71 at (21,96) — horizontal jug silhouette
+    //   - neck cap 17×6 at (103,92) — small spout on top-right of the body
+    // Fill grows from bottom up using lv_bar in vertical orientation, sized to
+    // the inside of the tank body (border-aware padding).
+    {
+        lv_obj_t* p_tank = make_section(scr, AGUA_X, CONTENT_Y, AGUA_W, ROW1_H);
+
+        make_label(p_tank, "AGUA L.", s_font_title, C_DIM, 19, 12);
+
+        ui.lbl_tank_pct = lv_label_create(p_tank);
+        lv_label_set_text(ui.lbl_tank_pct, "-- %");
+        lv_obj_set_style_text_font(ui.lbl_tank_pct, s_font_22, 0);
+        lv_obj_set_style_text_color(ui.lbl_tank_pct, C_TEXT, 0);
+        lv_obj_set_pos(ui.lbl_tank_pct, 31, 59);
+        lv_obj_set_width(ui.lbl_tank_pct, 64);
+        lv_obj_set_style_text_align(ui.lbl_tank_pct, LV_TEXT_ALIGN_CENTER, 0);
+
+        // Neck cap on top-right of the tank body — small grey rectangle
+        // protruding 6 px above the body top, like a screw-cap.
+        lv_obj_t* neck = lv_obj_create(p_tank);
+        lv_obj_set_size(neck, 17, 6);
+        lv_obj_set_pos(neck, 103, 92);
+        lv_obj_set_style_bg_color(neck, C_BORDER_BAT, 0);
+        lv_obj_set_style_bg_opa(neck, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(neck, 0, 0);
+        lv_obj_set_style_radius(neck, 1, 0);
+        lv_obj_clear_flag(neck, LV_OBJ_FLAG_SCROLLABLE);
+
+        // Tank body — vertical bar that owns its own border/background so we
+        // don't need a separate container.  Vertical orientation: indicator
+        // rises from bottom proportional to pct.
+        ui.bar_tank = lv_bar_create(p_tank);
+        lv_obj_set_pos(ui.bar_tank, 21, 96);
+        lv_obj_set_size(ui.bar_tank, 106, 71);
+        lv_bar_set_range(ui.bar_tank, 0, 100);
+        lv_bar_set_value(ui.bar_tank, 0, LV_ANIM_OFF);
+        lv_bar_set_orientation(ui.bar_tank, LV_BAR_ORIENTATION_VERTICAL);
+        lv_obj_set_style_bg_color(ui.bar_tank, C_BG, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(ui.bar_tank, C_WATER_COLD, LV_PART_INDICATOR);
+        lv_obj_set_style_radius(ui.bar_tank, 3, LV_PART_MAIN);
+        lv_obj_set_style_radius(ui.bar_tank, 0, LV_PART_INDICATOR);
+        lv_obj_set_style_border_color(ui.bar_tank, C_BORDER_BAT, LV_PART_MAIN);
+        lv_obj_set_style_border_width(ui.bar_tank, 2, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(ui.bar_tank, 2, 0);
+    }
+
     // ── Status bar ────────────────────────────────────────────────────────────
     lv_obj_t* statusbar = lv_obj_create(scr);
     lv_obj_set_pos(statusbar, 0, H - STATUS_H);
@@ -657,6 +716,7 @@ static void build_main_screen()
     make_sep(scr, WATER_X + WATER_W,   CONTENT_Y,    1,  ROW1_H);  // water right edge
     make_sep(scr, SOLAR_X,             ROW2_Y,        1,  ROW2_H);  // fan  | solar (left)
     make_sep(scr, SOLAR_X + SOLAR_W,   ROW2_Y,        1,  ROW2_H);  // solar right edge
+    make_sep(scr, AGUA_X,              CONTENT_Y,     1,  ROW1_H);  // water | AGUA L.
     make_sep(scr, 0,                   ROW2_Y - 1,    HEAT_W,  1);  // heat / fan
     make_sep(scr, WATER_X,             ROW2_Y - 1,    WATER_W, 1);  // water / solar
     make_sep(scr, 0,       H - STATUS_H - 1, W,   1);   // above status bar
@@ -1198,6 +1258,21 @@ void p4DisplayUpdate(const P4DisplayData& d)
     } else {
         lv_label_set_text(ui.lbl_batt_soc, "--%");
         lv_bar_set_value(ui.bar_batt, 0, LV_ANIM_OFF);
+    }
+
+    // Fresh-water tank (BTHome).  Same red→amber→green colour ramp as the
+    // battery so "low" reads at a glance.
+    if (d.tank.valid) {
+        int pct = d.tank.pct;
+        if (pct < 0)   pct = 0;
+        if (pct > 100) pct = 100;
+        lv_bar_set_value(ui.bar_tank, pct, LV_ANIM_ON);
+        lv_color_t tc = (pct < 20) ? C_RED : (pct < 50) ? C_AMBER_BAR : C_WATER_COLD;
+        lv_obj_set_style_bg_color(ui.bar_tank, tc, LV_PART_INDICATOR);
+        lv_label_set_text_fmt(ui.lbl_tank_pct, "%d %%", pct);
+    } else {
+        lv_label_set_text(ui.lbl_tank_pct, "-- %");
+        lv_bar_set_value(ui.bar_tank, 0, LV_ANIM_OFF);
     }
 
     if (d.wifiOk && d.ssid && d.ip) {
