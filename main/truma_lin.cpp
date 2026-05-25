@@ -213,9 +213,9 @@ bool       g_started = false;
 // appear, deduping repeats so the monitor stays readable.
 //
 // Bypasses LinDriver entirely: configures UART_NUM_1 with RX only so our
-// TX can't fight the real master.  We assume RX is wired to GPIO27.
+// TX can't fight the real master.  We assume RX is wired to GPIO26.
 void lin_task(void*) {
-    ESP_LOGW(TAG, "LIN sniffer running (LIN_SNIFF_ONLY — RX-only on GPIO27)");
+    ESP_LOGW(TAG, "LIN sniffer running (LIN_SNIFF_ONLY — RX-only on GPIO26)");
 
     uart_config_t cfg = {};
     cfg.baud_rate  = 9600;
@@ -226,10 +226,10 @@ void lin_task(void*) {
     cfg.source_clk = UART_SCLK_XTAL;
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, 1024, 0, 0, nullptr, 0));
     ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &cfg));
-    // Only set RX; TX stays unrouted so GPIO26 floats high via external pull-up.
-    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, UART_PIN_NO_CHANGE, 27,
+    // Only set RX; TX stays unrouted so GPIO27 floats high via external pull-up.
+    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, UART_PIN_NO_CHANGE, 26,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    gpio_set_pull_mode((gpio_num_t)27, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode((gpio_num_t)26, GPIO_PULLUP_ONLY);
 
     enum St { S_IDLE, S_GOT_BREAK, S_GOT_SYNC, S_IN_FRAME };
     St st = S_IDLE;
@@ -301,150 +301,6 @@ void lin_task(void*) {
                             memcpy(hist[slot].data, buf, 9);
                         }
                     }
-                    st = S_IDLE; n = 0;
-                }
-                break;
-        }
-    }
-}
-#elif defined(LIN_SLAVE_EMU)
-// Slave emulator — pretends to be a Truma Combi D for bench testing.  Used
-// when the real boiler is unreachable: connect a working LIN master (e.g.
-// the C5 board acting as CP-Plus) to the P4 transceiver and watch the C5
-// monitor.  If readFrame(0x21) succeeds on the C5 side, the P4's TJA1021
-// is good.
-//
-// Wire layout: GPIO26 = TX, GPIO27 = RX, UART_NUM_1 @ 9600 8N1, XTAL clock.
-// We're the only slave on the bus, so half-duplex collision avoidance is
-// trivial: only transmit while in S_GOT_SYNC after a PID we own, never
-// while the master is sending the header.
-void lin_task(void*) {
-    ESP_LOGW(TAG, "LIN slave emu running (LIN_SLAVE_EMU — TX=GPIO26 RX=GPIO27)");
-
-    uart_config_t cfg = {};
-    cfg.baud_rate  = 9600;
-    cfg.data_bits  = UART_DATA_8_BITS;
-    cfg.parity     = UART_PARITY_DISABLE;
-    cfg.stop_bits  = UART_STOP_BITS_1;
-    cfg.flow_ctrl  = UART_HW_FLOWCTRL_DISABLE;
-    cfg.source_clk = UART_SCLK_XTAL;
-    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, 1024, 256, 0, nullptr, 0));
-    ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &cfg));
-    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, 26, 27,
-                                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    gpio_set_pull_mode((gpio_num_t)27, GPIO_PULLUP_ONLY);
-
-    auto nowMs = []() { return (uint32_t)(esp_timer_get_time() / 1000ULL); };
-
-    // Enhanced LIN checksum: sum of PID + data bytes, end-around carry, inverted.
-    // For PID & 0x3F >= 0x3C use classic (PID excluded).
-    auto linChecksum = [](uint8_t pid, const uint8_t* data, int len) -> uint8_t {
-        uint16_t sum = ((pid & 0x3F) >= 0x3C) ? 0 : pid;
-        for (int i = 0; i < len; i++) sum += data[i];
-        while (sum >> 8) sum = (sum & 0xFF) + (sum >> 8);
-        return (uint8_t)(~sum);
-    };
-
-    auto sendResponse = [&](uint8_t pid, const uint8_t* data) {
-        uint8_t pkt[9];
-        memcpy(pkt, data, 8);
-        pkt[8] = linChecksum(pid, data, 8);
-        uart_write_bytes(UART_NUM_1, pkt, 9);
-        uart_wait_tx_done(UART_NUM_1, pdMS_TO_TICKS(20));
-    };
-
-    // Canned slave data.
-    auto encF21 = [](double room, double water, uint8_t* out) {
-        uint16_t r = (uint16_t)lround((room  + 273.0) * 10.0);
-        uint16_t w = (uint16_t)lround((water + 273.0) * 10.0);
-        out[0] = r & 0xFF;
-        out[1] = ((r >> 8) & 0x0F) | ((w & 0x0F) << 4);
-        out[2] = (uint8_t)((w >> 4) & 0xFF);
-        out[3] = 0; out[4] = 0; out[5] = 0; out[6] = 0; out[7] = 0;
-    };
-    uint8_t resp21[8];
-    encF21(22.0, 45.0, resp21);
-    uint8_t resp22[8] = { 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-    // 0x3D: ack of last 0x3C — copy of master's request with SID + 0x40.
-    uint8_t resp3D[8] = { 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF };
-    bool have3C = false;
-
-    // Pre-computed protected IDs (master sends these on the wire).
-    constexpr uint8_t PID_21 = 0x61;  // frame 0x21 → PID 0x61
-    constexpr uint8_t PID_22 = 0xE2;  // frame 0x22 → PID 0xE2
-    constexpr uint8_t PID_3C = 0x3C;  // diag frames use classic PID = ID
-    constexpr uint8_t PID_3D = 0x7D;  // frame 0x3D → PID 0x7D
-
-    enum St { S_IDLE, S_GOT_BREAK, S_GOT_SYNC, S_IN_DATA };
-    St st = S_IDLE;
-    uint8_t pid = 0; uint8_t buf[12]; int n = 0; int expect = 0;
-    uint32_t lastByteMs = 0;
-
-    uint32_t hbLastMs = 0;
-    uint32_t replies21 = 0, replies22 = 0, replies3D = 0, headersSeen = 0;
-
-    for (;;) {
-        uint8_t b;
-        int r = uart_read_bytes(UART_NUM_1, &b, 1, pdMS_TO_TICKS(20));
-        uint32_t now = nowMs();
-        if (now - hbLastMs > 2000) {
-            hbLastMs = now;
-            ESP_LOGI(TAG, "slave hb: headers=%lu  replies 0x21=%lu 0x22=%lu 0x3D=%lu",
-                     (unsigned long)headersSeen,
-                     (unsigned long)replies21, (unsigned long)replies22,
-                     (unsigned long)replies3D);
-        }
-        if (r != 1) {
-            if (st == S_IN_DATA && n > 0 && (now - lastByteMs) > 8) {
-                st = S_IDLE; n = 0;
-            }
-            continue;
-        }
-        if (st == S_IN_DATA && n > 0 && (now - lastByteMs) > 8) {
-            st = S_IDLE; n = 0;
-        }
-        lastByteMs = now;
-        switch (st) {
-            case S_IDLE:
-            case S_GOT_BREAK:
-                if      (b == 0x00)                            st = S_GOT_BREAK;
-                else if (b == 0x55 && st == S_GOT_BREAK)       st = S_GOT_SYNC;
-                else                                            st = S_IDLE;
-                break;
-            case S_GOT_SYNC: {
-                pid = b; n = 0; headersSeen++;
-                // PID drives the action: respond, swallow, or ignore.
-                if (pid == PID_21) {
-                    sendResponse(pid, resp21);
-                    replies21++;
-                    st = S_IDLE;
-                } else if (pid == PID_22) {
-                    sendResponse(pid, resp22);
-                    replies22++;
-                    st = S_IDLE;
-                } else if (pid == PID_3D) {
-                    sendResponse(pid, resp3D);
-                    replies3D++;
-                    st = S_IDLE;
-                } else {
-                    // Master is going to write 8 data bytes + checksum.  Swallow
-                    // them so they don't poison the next frame's parser.
-                    expect = 9;
-                    st = S_IN_DATA;
-                }
-                break;
-            }
-            case S_IN_DATA:
-                if (n < 12) buf[n++] = b;
-                if (n == expect) {
-                    // If this was a 0x3C from the master, snapshot it so the
-                    // next 0x3D reply contains the matching SID + 0x40 ack.
-                    if (pid == PID_3C && expect == 9) {
-                        memcpy(resp3D, buf, 8);
-                        resp3D[2] = (uint8_t)(buf[2] + 0x40);
-                        have3C = true;
-                    }
-                    (void)have3C;
                     st = S_IDLE; n = 0;
                 }
                 break;
@@ -584,9 +440,8 @@ void trumaLinStart(int tx_pin, int rx_pin) {
     g_started = true;
 
     g_lock = xSemaphoreCreateMutex();
-#if defined(LIN_SNIFF_ONLY) || defined(LIN_SLAVE_EMU)
-    // Sniff / slave-emu modes configure UART directly inside lin_task —
-    // no LinDriver needed.
+#if defined(LIN_SNIFF_ONLY)
+    // Sniff mode configures UART directly inside lin_task — no LinDriver needed.
     (void)tx_pin; (void)rx_pin;
 #else
     // Truma Combi D LIN bus runs at 9600 baud, not the 19200 LIN default.

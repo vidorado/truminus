@@ -140,7 +140,7 @@ Writable setpoints: `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off
 
 ### Pin assignments (LIN / external sensor)
 
-LIN UART pins and the AM2301/DHT22 external temperature sensor pin live in `main/main.cpp`. On the JC4880-P4 board the LIN bus is wired to **connector J5 → TX=GPIO26 / RX=GPIO27 on UART_NUM_1 @ 9600 baud** (see `LIN_TX_PIN`/`LIN_RX_PIN` in `main/main.cpp` and `trumaLinStart()` in `main/truma_lin.cpp`). The LCD backlight is on GPIO23 (`CONFIG_BSP_JC4880P443C_LCD_BL_GPIO=23`), not GPIO27 as a previous draft of this document claimed. The AM2301/DHT pin is not yet assigned on the P4 board; the sensor task is dormant.
+LIN UART pins and the AM2301/DHT22 external temperature sensor pin live in `main/main.cpp`. On the JC4880-P4 board the LIN bus is wired to **connector J5 → TX=GPIO27 / RX=GPIO26 on UART_NUM_1 @ 9600 baud** (see `LIN_TX_PIN`/`LIN_RX_PIN` in `main/main.cpp` and `trumaLinStart()` in `main/truma_lin.cpp`). The LCD backlight is on GPIO23 (`CONFIG_BSP_JC4880P443C_LCD_BL_GPIO=23`), not GPIO27 as a previous draft of this document claimed. The AM2301/DHT pin is not yet assigned on the P4 board; the sensor task is dormant.
 
 ### LVGL / display library
 

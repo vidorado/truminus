@@ -291,13 +291,31 @@ static void bleSupervisorTask(void* /*arg*/) {
             continue;
         }
 
+        constexpr uint32_t SCAN_MS = 5000;
         if (s_configured && s_bleScan) {
             s_bleScan->clearResults();
             s_supervisorInScan = true;
-            bool ok = s_bleScan->start(5000, false);
+            // NimBLE 2.x: start() is non-blocking — it returns once the GAP
+            // procedure is queued, not when the duration elapses.  Wait for
+            // the scan window to actually end, otherwise the Ultimatron
+            // GATT connect below cuts it short and Victron ads are lost.
+            bool ok = s_bleScan->start(SCAN_MS, false);
+            if (ok) {
+                uint32_t waited = 0;
+                while (s_bleScan->isScanning() && waited < SCAN_MS + 1000) {
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                    waited += 100;
+                }
+                if (s_bleScan->isScanning()) s_bleScan->stop();
+                failCount = 0;
+            } else {
+                failCount++;
+            }
             s_supervisorInScan = false;
-            if (!ok) failCount++;
-            else     failCount = 0;
+        } else {
+            // Nothing to scan — still pace the loop so Ultimatron polls at the
+            // expected cadence.
+            vTaskDelay(pdMS_TO_TICKS(SCAN_MS));
         }
 
         if (ultimatronIsConfigured() && (cycleCount % ULTIMATRON_EVERY_N) == 0) {
@@ -305,9 +323,12 @@ static void bleSupervisorTask(void* /*arg*/) {
         }
         cycleCount++;
 
-        uint32_t idleMs = s_aggressive ? 5000 : 30000;
+        // Cycle pacing: 5 s scan + idle.  With aggressive=true (default) and
+        // ULTIMATRON_EVERY_N=6 → Victron sample every ~5 s, Ultimatron every
+        // ~30 s.  Non-aggressive falls back to 30 s idle (cold-start safety).
+        uint32_t idleMs = s_aggressive ? 0 : 30000;
         if (failCount > 3) idleMs = 30000;
-        vTaskDelay(pdMS_TO_TICKS(idleMs));
+        if (idleMs) vTaskDelay(pdMS_TO_TICKS(idleMs));
     }
 }
 

@@ -26,14 +26,6 @@
 // #define LIN_SNIFF_ONLY         // passive LIN bus listener — no TX at all.
                                   // Use with a real CP-Plus as master via RJ12
                                   // splitter to capture the live conversation.
-// #define LIN_SLAVE_EMU          // emulate a Truma Combi D slave on the bus.
-                                  // The P4 listens for headers from an
-                                  // external LIN master (e.g. a working C5
-                                  // CP-Plus emulator) and replies to PIDs
-                                  // 0x21 / 0x22 / 0x3D with canned data.
-                                  // Used to bench-test the P4 transceiver
-                                  // when the real Truma boiler is unreachable.
-#define LIN_SLAVE_EMU
 
 // ── 2. Per-category legacy log enables (logs.hpp) ────────────────────────
 //

@@ -20,9 +20,9 @@
 
 // LIN bus pins on the JC4880-P4 board — wired to connector J5.
 // UART_NUM_1 is fixed inside truma_lin.cpp (UART0 is the debug console).
-// J5 connector: ESP TX=GPIO26 (→ transceiver RXD), ESP RX=GPIO27 (← transceiver TXD).
-#define LIN_TX_PIN 26
-#define LIN_RX_PIN 27
+// J5 connector: ESP TX=GPIO27 (→ transceiver RXD), ESP RX=GPIO26 (← transceiver TXD).
+#define LIN_TX_PIN 27
+#define LIN_RX_PIN 26
 #include "esp_hosted_host_fw_ver.h"
 extern "C" {
 #include "esp_hosted_misc.h"
@@ -157,6 +157,32 @@ static void onWsConnected() {
              "{\"command\":\"batt\",\"valid\":%s,\"soc\":%u,\"battV\":%.2f}",
              u.valid ? "true" : "false", (unsigned)u.soc, u.battV);
     wsQueueSend(buf);
+
+    // Push current LIN snapshot so freshly-loaded pages get room/water temp
+    // without waiting for the next change in broadcastLinTemps().
+    TrumaLinSnapshot lin;
+    trumaLinGetSnapshot(lin);
+    auto fmtTemp = [](float t, char* out, size_t n) {
+        if (!std::isfinite(t) || t <= -200.0f) snprintf(out, n, "-273");
+        else                              snprintf(out, n, "%.1f", t);
+    };
+    char rt[16], wt[16];
+    fmtTemp(lin.roomTemp,  rt, sizeof(rt));
+    fmtTemp(lin.waterTemp, wt, sizeof(wt));
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"status\",\"id\":\"/room_temp\",\"value\":\"%s\"}", rt);
+    wsQueueSend(buf);
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"status\",\"id\":\"/water_temp\",\"value\":\"%s\"}", wt);
+    wsQueueSend(buf);
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"status\",\"id\":\"/water_heating\",\"value\":\"%d\"}",
+             lin.waterHeating ? 1 : 0);
+    wsQueueSend(buf);
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"status\",\"id\":\"/linok\",\"value\":\"%d\"}",
+             lin.linOk ? 1 : 0);
+    wsQueueSend(buf);
 }
 
 // ── Broadcast LCD-originated changes ─────────────────────────────────────
@@ -273,6 +299,58 @@ static void broadcastBleData() {
     inited = true;
 }
 
+// Broadcast LIN-derived values (room/water temp, water-heating flag, LIN-ok)
+// to every connected WS client.  Mirrors the room_temp / water_temp /
+// water_heating / linok ids handled by data/script.js::applyStatus.
+static void broadcastLinTemps() {
+    static TrumaLinSnapshot prev = {};
+    static bool             inited = false;
+    char buf[96];
+
+    TrumaLinSnapshot lin;
+    trumaLinGetSnapshot(lin);
+
+    auto emit = [&](const char* id, const char* value) {
+        snprintf(buf, sizeof(buf),
+                 "{\"command\":\"status\",\"id\":\"/%s\",\"value\":\"%s\"}",
+                 id, value);
+        wsQueueSend(buf);
+    };
+
+    auto fmtTemp = [](float t, char* out, size_t n) {
+        if (!std::isfinite(t) || t <= -200.0f) snprintf(out, n, "-273");
+        else                              snprintf(out, n, "%.1f", t);
+    };
+
+    auto tempChanged = [](float a, float b) {
+        bool aBad = !std::isfinite(a) || a <= -200.0f;
+        bool bBad = !std::isfinite(b) || b <= -200.0f;
+        if (aBad != bBad) return true;
+        if (aBad && bBad) return false;
+        return fabsf(a - b) > 0.05f;
+    };
+
+    char val[16];
+
+    if (!inited || tempChanged(lin.roomTemp, prev.roomTemp)) {
+        fmtTemp(lin.roomTemp, val, sizeof(val));
+        emit("room_temp", val);
+    }
+    if (!inited || tempChanged(lin.waterTemp, prev.waterTemp)) {
+        fmtTemp(lin.waterTemp, val, sizeof(val));
+        emit("water_temp", val);
+    }
+    if (!inited || lin.waterHeating != prev.waterHeating) {
+        emit("water_heating", lin.waterHeating ? "1" : "0");
+    }
+    if (!inited || lin.linOk != prev.linOk) {
+        emit("linok", lin.linOk ? "1" : "0");
+    }
+
+    prev = lin;
+    inited = true;
+}
+
 static void wsPumpTask(void* /*arg*/) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -281,6 +359,7 @@ static void wsPumpTask(void* /*arg*/) {
         broadcastControlChanges(cs);
         broadcastNetInfoChange();
         broadcastBleData();
+        broadcastLinTemps();
         wsQueueDrain();
     }
 }
