@@ -381,7 +381,9 @@ void wsQueueDrain() {
                 if (httpd_ws_get_fd_info(s.h, fds[i]) != HTTPD_WS_CLIENT_WEBSOCKET) continue;
                 esp_err_t e = httpd_ws_send_frame_async(s.h, fds[i], &frame);
                 if (e != ESP_OK) {
-                    ESP_LOGD(TAG, "ws_send fd=%d err=%s", fds[i], esp_err_to_name(e));
+                    ESP_LOGW(TAG, "ws_send fd=%d failed (%s), closing",
+                             fds[i], esp_err_to_name(e));
+                    httpd_sess_trigger_close(s.h, fds[i]);
                 }
             }
         }
@@ -515,10 +517,13 @@ esp_err_t startWebServer(WsCommandCb cb, WsConnectedCb conn) {
                 for (size_t i = 0; i < fds_count; i++) {
                     if (httpd_ws_get_fd_info(s.h, fds[i]) != HTTPD_WS_CLIENT_WEBSOCKET) continue;
                     esp_err_t e = httpd_ws_send_frame_async(s.h, fds[i], &ping);
-                    if (e == ESP_OK) sent++;
-                    else {
+                    if (e == ESP_OK) {
+                        sent++;
+                    } else {
                         failed++;
-                        ESP_LOGD(TAG, "ws ping fd=%d err=%s", fds[i], esp_err_to_name(e));
+                        ESP_LOGW(TAG, "ws ping fd=%d failed (%s), closing",
+                                 fds[i], esp_err_to_name(e));
+                        httpd_sess_trigger_close(s.h, fds[i]);
                     }
                 }
             }
