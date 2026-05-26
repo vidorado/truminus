@@ -179,10 +179,10 @@ body {
    = 37.625% / 43.75% / 18.625%.  AGUA L. (fresh-water tank) sits in the
    right-most slot. */
 .row1 { grid-template-columns: 37.625% 43.75%  18.625%; }
-/* Row 2 splits the 800-px canvas into FAN(213)/SOLAR(304)/INVERSOR(283)
-   = 26.625% / 38% / 35.375%.  The INV panel now occupies what used to be
-   the empty right slot. */
-.row2 { grid-template-columns: 26.625% 38.000% 35.375%; }
+/* Row 2 splits the 800-px canvas into FAN(213)/SOLAR/INVERSOR.
+   SOLAR narrowed (34%) to give INVERSOR (39.375%) more room for the
+   state label inside the Multiplus body. */
+.row2 { grid-template-columns: 26.625% 34.000% 39.375%; }
 
 /* Stretch each panel to fill its row so the border-bottom of Row 1
    visually separates the rows along the entire width, not just under
@@ -293,11 +293,11 @@ body {
   .btn-boiler  { padding: 4px 6px; font-size: 0.95em; }
   .btn-heat    { padding: 4px 8px; }
   .btn-fan     { padding: 4px 4px; }
-  .panel-inv .inv-mpx       { width: 50px; min-height: 60px; }
+  .panel-inv .inv-mpx       { width: 78px; min-height: 60px; }
   .panel-inv .inv-mpx-bar   { top: 12px; }
   .panel-inv .inv-mpx-state { font-size: 0.75em; }
-  .panel-inv .inv-mid       { padding: 8px 16px; }
-  .panel-inv .inv-flow      { width: 16px; }
+  .panel-inv .inv-mid       { padding: 8px 12px; }
+  .panel-inv .inv-flow      { width: 12px; }
   .panel-inv .inv-port-hdr  { padding: 1px 0; font-size: 0.65em; }
   .panel-inv .inv-port-val  { padding: 2px 4px; font-size: 0.75em; }
   .panel-inv .inv-mains .inv-port-val { padding: 6px 4px; }
@@ -903,7 +903,7 @@ body {
   /* Vertical padding leaves a visible margin above and below the MPX so
      the body looks "inset" inside the panel instead of growing as tall
      as the stacked CARGA/BAT column on the right. */
-  padding: 14px 22px;
+  padding: 14px 16px;
 }
 
 .inv-mpx {
@@ -911,7 +911,7 @@ body {
   background: #0077c5;
   border: 1px solid #2b2b2b;
   border-radius: 2px;
-  width: 64px;
+  width: 96px;
   min-height: 88px;
   display: flex;
   flex-direction: column;
@@ -929,8 +929,13 @@ body {
   border-radius: 1px;
 }
 .inv-mpx-state {
-  font-size: 0.85em;
-  font-weight: 600;
+  font-size: 0.7em;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  padding: 0 2px;
 }
 
 /* Flow lines bridge MPX ↔ port edges.  Anchored to .inv-mid, they
@@ -941,7 +946,7 @@ body {
 .inv-flow {
   position: absolute;
   height: 3px;
-  width: 22px;       /* matches .inv-mid horizontal padding */
+  width: 16px;       /* matches .inv-mid horizontal padding */
   background: #aed7f2;
   opacity: 0.3;
   transition: opacity 0.3s ease;
