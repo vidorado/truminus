@@ -523,9 +523,9 @@ function applyMulti(d) {
         if (rm) rm.textContent = '--';
         if (rl) rl.textContent = '--';
         if (rb) rb.textContent = '--';
-        if (fm) fm.classList.remove('active');
-        if (fl) fl.classList.remove('active');
-        if (fb) fb.classList.remove('active');
+        if (fm) { fm.classList.remove('active', 'flow-r', 'flow-l'); }
+        if (fl) { fl.classList.remove('active', 'flow-r', 'flow-l'); }
+        if (fb) { fb.classList.remove('active', 'flow-r', 'flow-l'); }
         if (mp) mp.classList.remove('ac-on');
         if (lp) lp.classList.remove('load-on');
         if (bp) { bp.classList.remove('batt-chg'); bp.classList.remove('batt-dis'); }
@@ -540,9 +540,24 @@ function applyMulti(d) {
     if (rm) rm.textContent = inW;
     if (rl) rl.textContent = outW;
     if (rb) rb.textContent = battW;
-    if (fm) fm.classList.toggle('active', Math.abs(inW)  > 5);
-    if (fl) fl.classList.toggle('active', Math.abs(outW) > 5);
-    if (fb) fb.classList.toggle('active', Math.abs(battW) > 5);
+    if (fm) {
+        var fmOn = Math.abs(inW) > 5;
+        fm.classList.toggle('active', fmOn);
+        fm.classList.toggle('flow-r', fmOn && inW > 0);
+        fm.classList.toggle('flow-l', fmOn && inW < 0);
+    }
+    if (fl) {
+        var flOn = Math.abs(outW) > 5;
+        fl.classList.toggle('active', flOn);
+        fl.classList.toggle('flow-r', flOn);
+        fl.classList.remove('flow-l');
+    }
+    if (fb) {
+        var fbOn = Math.abs(battW) > 5;
+        fb.classList.toggle('active', fbOn);
+        fb.classList.toggle('flow-r', fbOn && battW > 0);
+        fb.classList.toggle('flow-l', fbOn && battW < 0);
+    }
 
     var acOn = (parseInt(d.ac_in_state) || 0) < 2;
     if (mp) {
@@ -583,7 +598,7 @@ function applyBatt(d) {
         if (fill) fill.style.height = '0%';
         if (bpw) bpw.textContent = '--';
         if (bpp) { bpp.classList.remove('batt-chg'); bpp.classList.remove('batt-dis'); }
-        if (bfl) bfl.classList.remove('active');
+        if (bfl) { bfl.classList.remove('active', 'flow-r', 'flow-l'); }
         return;
     }
     var soc = parseInt(d.soc) || 0;
@@ -602,18 +617,23 @@ function applyBatt(d) {
     var discharging = battW < -5;
 
     if (bpw) bpw.textContent = Math.abs(battW);
-    if (bfl) bfl.classList.toggle('active', Math.abs(battW) > 5);
+    if (bfl) {
+        var bfOn = Math.abs(battW) > 5;
+        bfl.classList.toggle('active', bfOn);
+        bfl.classList.toggle('flow-l', bfOn && charging);
+        bfl.classList.toggle('flow-r', bfOn && discharging);
+    }
     if (bpp) {
         bpp.classList.toggle('batt-chg', charging);
         bpp.classList.toggle('batt-dis', discharging);
     }
     if (bph) {
         if (charging)
-            bph.innerHTML = '<span class="fi"></span> ' + t('inv_load');
+            bph.innerHTML = '<span class="fi"></span> ' + t('batt_charge');
         else if (discharging)
-            bph.innerHTML = t('inv_discharge') + ' <span class="fi"></span>';
+            bph.innerHTML = t('batt_discharge') + ' <span class="fi"></span>';
         else
-            bph.textContent = t('inv_load');
+            bph.textContent = t('batt_charge');
     }
 }
 

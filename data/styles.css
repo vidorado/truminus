@@ -292,6 +292,8 @@ body {
   #dot-cloud .fi       { font-size: 0.95em; }
   .panel-inv .inv-port-hdr { padding: 3px 0; font-size: 0.75em; }
   .panel-inv .inv-port-val { padding: 6px 6px; font-size: 0.9em; }
+  .panel-inv .inv-mid  { padding: 14px 29px; }
+  .panel-inv .inv-flow { width: 29px; }
   .row .panel-inv { border-bottom: none; flex: 1; }
   .panel-inv .inv-diagram  { flex: 1; }
 }
@@ -308,6 +310,7 @@ body {
   .sb-msg         { font-size: 0.9em; }
   .sb-ip          { font-size: 0.85em; }
   .row1 { grid-template-columns: 30% 43.75% 26.25%; }
+  .row2 { grid-template-columns: 20% 16% 23% 41%; }
   .lcd  { height: calc(100vh - var(--bar-h) - var(--foot-h)); height: calc(100svh - var(--bar-h) - var(--foot-h)); min-height: 0; overflow: hidden; }
   .row  { flex: 1 1 0; min-height: 0; overflow: hidden; }
   .row .panel { min-height: 0; overflow: hidden; }
@@ -319,11 +322,12 @@ body {
   .panel-inv .inv-mpx       { width: 78px; min-height: 60px; }
   .panel-inv .inv-mpx-state { font-size: 0.7em; }
   .panel-inv .inv-mpx-top   { padding: 6px 4px; gap: 5px; }
-  .panel-inv .inv-mid       { padding: 8px 12px; }
-  .panel-inv .inv-flow      { width: 12px; }
-  .panel-inv .inv-port-hdr  { padding: 1px 0; font-size: 0.65em; }
-  .panel-inv .inv-port-val  { padding: 2px 4px; font-size: 0.75em; }
-  .panel-inv .inv-mains .inv-port-val { padding: 6px 4px; }
+  .panel-inv .inv-mid       { padding: 8px 0; overflow: visible; }
+  .panel-inv .inv-flow-left  { left: 0; right: calc(50% + 40px); width: auto; }
+  .panel-inv .inv-flow-right { right: 0; left: calc(50% + 40px); width: auto; }
+  .panel-inv .inv-port-hdr  { padding: 4px 0; font-size: 0.55em; }
+  .panel-inv .inv-port-val  { padding: 4px 2px; font-size: 0.65em; }
+  .panel-inv .inv-diagram   { grid-template-columns: 0.4fr auto 0.4fr; }
   .panel-inv .inv-btn       { padding: 2px 6px; font-size: 0.75em; }
   .panel-inv .inv-right     { gap: 4px; }
   .tbadge-ext               { margin-left: 20px; }
@@ -707,7 +711,7 @@ body {
 }
 .batt-flow {
   width: 32px;
-  height: 3px;
+  height: 6px;
   background: #aed7f2;
   opacity: 0.3;
   flex-shrink: 0;
@@ -715,14 +719,22 @@ body {
   margin-top: 31px;
   transition: opacity 0.3s ease;
 }
-.batt-flow.active { opacity: 1; }
+.batt-flow.active {
+  opacity: 1;
+  background: repeating-linear-gradient(90deg,
+    #aed7f2 0px, #aed7f2 4px,
+    transparent 4px, transparent 8px);
+  background-size: 8px 6px;
+}
+.batt-flow.flow-r { animation: flow-right 0.4s linear infinite; }
+.batt-flow.flow-l { animation: flow-left  0.4s linear infinite; }
 .batt-pwr-port {
   flex: 1;
   min-width: 0;
   margin-top: 31px;
 }
 .batt-pwr-port .inv-port-hdr { padding: 6px 0; }
-.batt-pwr-port .inv-port-val { padding: 8px 4px; }
+.batt-pwr-port .inv-port-val { padding: 8px 4px; font-size: 0.75em; }
 
 .solar-line {
   font-size: 0.95em;
@@ -920,6 +932,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.5px;
 }
+.inv-mains { align-self: center; height: 50%; }
 .inv-mains .inv-port-hdr { padding: 6px 0; }
 
 /* AC mains connected — green palette */
@@ -1036,14 +1049,25 @@ body {
    from the MPX edges.  18px = roughly half a column gap on the 800-px
    canvas; at narrower widths the columns shrink toward the MPX edges
    and the line still meets the port border without overlapping. */
+@keyframes flow-right { to { background-position-x: 8px; } }
+@keyframes flow-left  { to { background-position-x: -8px; } }
+
 .inv-flow {
   position: absolute;
-  height: 3px;
+  height: 6px;
   width: 16px;       /* matches .inv-mid horizontal padding */
   background: #aed7f2;
   opacity: 0.3;
   transition: opacity 0.3s ease;
 }
+.inv-flow.active {
+  background: repeating-linear-gradient(90deg,
+    #aed7f2 0px, #aed7f2 4px,
+    transparent 4px, transparent 8px);
+  background-size: 8px 6px;
+}
+.inv-flow.flow-r { animation: flow-right 0.4s linear infinite; }
+.inv-flow.flow-l { animation: flow-left  0.4s linear infinite; }
 /* Flow Y positions match the vertical centre of the port each line points
    at.  MAINS is the only port in the left column so its centre is 50 %;
    CARGA/BAT split the right column 50/50 with a 6 px gap, so their
