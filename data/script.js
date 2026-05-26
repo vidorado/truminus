@@ -514,6 +514,14 @@ function applyMulti(d) {
     var fm  = document.getElementById('flow_mains');
     var fl  = document.getElementById('flow_load');
     var fb  = document.getElementById('flow_batt');
+    var mp  = document.getElementById('inv_mains_port');
+    var lp  = document.getElementById('inv_load_port');
+    var bp  = document.getElementById('inv_batt_port');
+    // BATERÍA panel power port
+    var bpw = document.getElementById('batt_pwr_w');
+    var bpp = document.getElementById('batt_pwr_port');
+    var bph = document.getElementById('batt_pwr_hdr');
+    var bfl = document.getElementById('batt_flow');
 
     if (!d.valid) {
         if (st) st.textContent = '--';
@@ -523,6 +531,12 @@ function applyMulti(d) {
         if (fm) fm.classList.remove('active');
         if (fl) fl.classList.remove('active');
         if (fb) fb.classList.remove('active');
+        if (mp) mp.classList.remove('ac-on');
+        if (lp) lp.classList.remove('load-on');
+        if (bp) { bp.classList.remove('batt-chg'); bp.classList.remove('batt-dis'); }
+        if (bpw) bpw.textContent = '--';
+        if (bpp) { bpp.classList.remove('batt-chg'); bpp.classList.remove('batt-dis'); }
+        if (bfl) bfl.classList.remove('active');
         return;
     }
     if (st) st.textContent = t(MULTI_STATES[d.state] || 'inv_st_off');
@@ -537,6 +551,45 @@ function applyMulti(d) {
     if (fm) fm.classList.toggle('active', Math.abs(inW)  > 5);
     if (fl) fl.classList.toggle('active', Math.abs(outW) > 5);
     if (fb) fb.classList.toggle('active', Math.abs(battW) > 5);
+
+    var acOn = (parseInt(d.ac_in_state) || 0) < 2;
+    if (mp) {
+        mp.classList.toggle('ac-on', acOn);
+        var mh = mp.querySelector('.inv-port-hdr');
+        if (mh) mh.innerHTML = t('inv_mains') + (acOn ? ' <span class="fi">\ue55f</span>' : '');
+    }
+    var loadOn = Math.abs(outW) > 5;
+    if (lp) lp.classList.toggle('load-on', loadOn);
+    var charging = battW > 5;
+    var discharging = battW < -5;
+    if (bp) {
+        bp.classList.toggle('batt-chg', charging);
+        bp.classList.toggle('batt-dis', discharging);
+        var bh = bp.querySelector('.inv-port-hdr');
+        if (bh) {
+            if (charging)
+                bh.innerHTML = t('inv_batt') + ' <span class="fi">\uf178</span>';
+            else if (discharging)
+                bh.innerHTML = '<span class="fi">\uf177</span> ' + t('inv_batt');
+            else
+                bh.textContent = t('inv_batt');
+        }
+    }
+    /* BATER\u00cdA panel — mirror the power port */
+    if (bpw) bpw.textContent = Math.abs(battW);
+    if (bfl) bfl.classList.toggle('active', Math.abs(battW) > 5);
+    if (bpp) {
+        bpp.classList.toggle('batt-chg', charging);
+        bpp.classList.toggle('batt-dis', discharging);
+    }
+    if (bph) {
+        if (charging)
+            bph.innerHTML = t('inv_load') + ' <span class="fi">\uf178</span>';
+        else if (discharging)
+            bph.innerHTML = '<span class="fi">\uf177</span> ' + t('inv_load');
+        else
+            bph.textContent = t('inv_load');
+    }
 }
 
 function applyBatt(d) {

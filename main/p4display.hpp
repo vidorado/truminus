@@ -48,6 +48,7 @@ struct P4MultiData {
     float       battA;        // battery current [A] (positive = charging)
     uint8_t     soc;          // 0..100 %, 0xFF = no data
     uint8_t     alarm;        // 0..2; 3 = no data
+    uint8_t     acInState;    // 0=AC1, 1=AC2, 2=disconnected, 3=no data
 };
 
 struct P4DisplayData {

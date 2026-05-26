@@ -54,6 +54,9 @@ const P4Fonts* p4GetFonts() { return &s_fonts; }
 #define FA_SIGN_IN    "\xEF\x8B\xB6"   // U+F2F6 (right-to-bracket, outdoor temp arrow)
 #define FA_BLUETOOTH  "\xEF\x8A\x93"   // U+F293 (bluetooth brand icon, BLE status)
 #define FA_CLOUD      "\xEF\x83\x82"   // U+F0C2 (cloud, Serveo SSH tunnel status)
+#define FA_PLUG_BOLT  "\xEE\x95\x9F"   // U+E55F (plug-circle-bolt)
+#define FA_ARROW_L    "\xEF\x85\xB7"   // U+F177 (arrow-left-long)
+#define FA_ARROW_R    "\xEF\x85\xB8"   // U+F178 (arrow-right-long)
 
 // ── Layout (800×480 landscape) ────────────────────────────────────────────────
 static constexpr int W         = 800;
@@ -113,6 +116,13 @@ static constexpr int TANK_H_BATT   = 101;
 #define C_WATER_WARM  lv_color_hex(0xffaa00)
 #define C_WATER_HOT   lv_color_hex(0xff4444)
 #define C_BORDER_BAT  lv_color_hex(0x888888)
+// INVERSOR port dynamic colours (matching web styles.css)
+#define C_PORT_GREY_BODY lv_color_hex(0x6a727f)
+#define C_PORT_GREY_HDR  lv_color_hex(0x969ba3)
+#define C_PORT_GREEN_BODY lv_color_hex(0x2e7d32)
+#define C_PORT_GREEN_HDR  lv_color_hex(0x4caf50)
+#define C_PORT_RED_BODY   lv_color_hex(0x7a2a2a)
+#define C_PORT_RED_HDR    lv_color_hex(0xa34545)
 
 // ── Local UI state ────────────────────────────────────────────────────────────
 static struct {
@@ -176,6 +186,10 @@ static struct {
     lv_obj_t* flow_mains;          // arrow MAINS → INV
     lv_obj_t* flow_load;           // arrow INV → LOAD
     lv_obj_t* flow_batt;           // arrow INV ↔ BAT
+    // Port box/header refs for dynamic coloring
+    lv_obj_t* box_mains;  lv_obj_t* hdr_mains;  lv_obj_t* hdr_mains_lbl;
+    lv_obj_t* box_load;   lv_obj_t* hdr_load;
+    lv_obj_t* box_batt;   lv_obj_t* hdr_batt;   lv_obj_t* hdr_batt_lbl;
 
     // Status bar
     lv_obj_t* lbl_conn;
@@ -671,8 +685,9 @@ static void build_main_screen()
         make_btn_stub(148, "Apag.", C_BTN);
         make_btn_stub(213, "Enc.",  C_BTN_ACTIVE);
 
+        struct IoBoxOut { lv_obj_t* box; lv_obj_t* head; lv_obj_t* head_lbl; lv_obj_t* val; };
         auto make_io_box = [&](int x, int y, int w, int h,
-                               const char* hdr, lv_obj_t** out_val) {
+                               const char* hdr) -> IoBoxOut {
             lv_obj_t* box = lv_obj_create(p_inv);
             lv_obj_set_pos(box, x, y);
             lv_obj_set_size(box, w, h);
@@ -683,7 +698,6 @@ static void build_main_screen()
             lv_obj_set_style_pad_all(box, 0, 0);
             lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
-            // Header strip above the box.
             lv_obj_t* head = lv_obj_create(p_inv);
             lv_obj_set_pos(head, x - 5, y - 16);
             lv_obj_set_size(head, w - 4, 16);
@@ -699,18 +713,29 @@ static void build_main_screen()
             lv_obj_set_style_text_font(hl, s_font_18, 0);
             lv_obj_center(hl);
 
-            // Value label centred inside the box.
             lv_obj_t* v = lv_label_create(box);
             lv_label_set_text(v, "--");
             lv_obj_set_style_text_color(v, C_TEXT, 0);
             lv_obj_set_style_text_font(v, s_font_20, 0);
             lv_obj_center(v);
-            *out_val = v;
+            return {box, head, hl, v};
         };
 
-        make_io_box(15, 78, 68, 44, "RED",   &ui.lbl_inv_mains_w);
-        make_io_box(197, 66, 69, 47, "CARGA", &ui.lbl_inv_load_w);
-        make_io_box(197, 120, 69, 47, "BAT.",  &ui.lbl_inv_batt_w);
+        {
+            auto r = make_io_box(15, 78, 68, 44, "RED");
+            ui.lbl_inv_mains_w = r.val;
+            ui.box_mains = r.box; ui.hdr_mains = r.head; ui.hdr_mains_lbl = r.head_lbl;
+        }
+        {
+            auto r = make_io_box(197, 66, 69, 47, "CARGA");
+            ui.lbl_inv_load_w = r.val;
+            ui.box_load = r.box; ui.hdr_load = r.head;
+        }
+        {
+            auto r = make_io_box(197, 120, 69, 47, "BAT.");
+            ui.lbl_inv_batt_w = r.val;
+            ui.box_batt = r.box; ui.hdr_batt = r.head; ui.hdr_batt_lbl = r.head_lbl;
+        }
 
         // Multiplus icon — abstract block matching the EEZ silhouette
         // (rounded blue body with an orange decorative bar).  Kept simple
@@ -1394,6 +1419,11 @@ void p4DisplayUpdate(const P4DisplayData& d)
     // Multiplus / VE.Bus inverter — render mains / load / battery flow.
     {
         char tb[24];
+        auto set_port_color = [](lv_obj_t* box, lv_obj_t* hdr,
+                                 lv_color_t bc, lv_color_t hc) {
+            lv_obj_set_style_bg_color(box, bc, 0);
+            lv_obj_set_style_bg_color(hdr, hc, 0);
+        };
         if (d.multi.valid) {
             lv_label_set_text(ui.lbl_inv_state,
                 d.multi.stateName ? d.multi.stateName : "--");
@@ -1406,13 +1436,40 @@ void p4DisplayUpdate(const P4DisplayData& d)
             snprintf(tb, sizeof(tb), "%d W", battW);
             lv_label_set_text(ui.lbl_inv_batt_w, tb);
 
-            // Flow lines: bright when actively carrying power, dim when idle.
             auto flow_opa = [](int absW) {
                 return (absW > 5) ? LV_OPA_COVER : LV_OPA_30;
             };
             lv_obj_set_style_bg_opa(ui.flow_mains, flow_opa(abs(d.multi.acInW)),  0);
             lv_obj_set_style_bg_opa(ui.flow_load,  flow_opa(abs(d.multi.acOutW)), 0);
             lv_obj_set_style_bg_opa(ui.flow_batt,  flow_opa(abs(battW)),          0);
+
+            // RED: green when AC input connected (ac_in_state 0 or 1)
+            bool acOn = d.multi.acInState < 2;
+            set_port_color(ui.box_mains, ui.hdr_mains,
+                           acOn ? C_PORT_GREEN_BODY : C_PORT_GREY_BODY,
+                           acOn ? C_PORT_GREEN_HDR  : C_PORT_GREY_HDR);
+            lv_label_set_text(ui.hdr_mains_lbl, acOn ? "RED " FA_PLUG_BOLT : "RED");
+
+            // CARGA: red when delivering power, grey when idle
+            bool loadOn = abs(d.multi.acOutW) > 5;
+            set_port_color(ui.box_load, ui.hdr_load,
+                           loadOn ? C_PORT_RED_BODY : C_PORT_GREY_BODY,
+                           loadOn ? C_PORT_RED_HDR  : C_PORT_GREY_HDR);
+
+            // BAT: green+arrow-right when charging, red+arrow-left when discharging
+            if (battW > 5) {
+                set_port_color(ui.box_batt, ui.hdr_batt,
+                               C_PORT_GREEN_BODY, C_PORT_GREEN_HDR);
+                lv_label_set_text(ui.hdr_batt_lbl, "BAT. " FA_ARROW_R);
+            } else if (battW < -5) {
+                set_port_color(ui.box_batt, ui.hdr_batt,
+                               C_PORT_RED_BODY, C_PORT_RED_HDR);
+                lv_label_set_text(ui.hdr_batt_lbl, FA_ARROW_L " BAT.");
+            } else {
+                set_port_color(ui.box_batt, ui.hdr_batt,
+                               C_PORT_GREY_BODY, C_PORT_GREY_HDR);
+                lv_label_set_text(ui.hdr_batt_lbl, "BAT.");
+            }
         } else {
             lv_label_set_text(ui.lbl_inv_state, "--");
             lv_label_set_text(ui.lbl_inv_mains_w, "--");
@@ -1421,6 +1478,11 @@ void p4DisplayUpdate(const P4DisplayData& d)
             lv_obj_set_style_bg_opa(ui.flow_mains, LV_OPA_30, 0);
             lv_obj_set_style_bg_opa(ui.flow_load,  LV_OPA_30, 0);
             lv_obj_set_style_bg_opa(ui.flow_batt,  LV_OPA_30, 0);
+            set_port_color(ui.box_mains, ui.hdr_mains, C_PORT_GREY_BODY, C_PORT_GREY_HDR);
+            set_port_color(ui.box_load,  ui.hdr_load,  C_PORT_GREY_BODY, C_PORT_GREY_HDR);
+            set_port_color(ui.box_batt,  ui.hdr_batt,  C_PORT_GREY_BODY, C_PORT_GREY_HDR);
+            lv_label_set_text(ui.hdr_mains_lbl, "RED");
+            lv_label_set_text(ui.hdr_batt_lbl, "BAT.");
         }
     }
 

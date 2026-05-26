@@ -669,6 +669,7 @@ extern "C" void app_main(void)
         d.multi.battA       = mp.battA;
         d.multi.soc         = mp.soc;
         d.multi.alarm       = mp.alarm;
+        d.multi.acInState   = mp.acInState;
 
         // LIN snapshot → room/water temp + LIN-ok dot.
         TrumaLinSnapshot lin;
