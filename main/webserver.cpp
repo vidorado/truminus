@@ -14,6 +14,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_littlefs.h"
+#include "esp_heap_caps.h"
 
 // ── Globals ──────────────────────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ static const char* mimeOf(const char* path) {
     return "application/octet-stream";
 }
 
-// Serve a file from /littlefs/<rel>, streaming in 1 KB chunks to keep peak
+// Serve a file from /littlefs/<rel>, streaming in 4 KB chunks to keep peak
 // heap usage flat regardless of asset size.  Adds Cache-Control: immutable
 // to match the cache_bust.py querystring strategy.  If the asset is gzipped
 // on disk (a sibling .gz exists), the gzipped variant is preferred and
@@ -158,19 +159,24 @@ static esp_err_t serveFile(httpd_req_t* req, const char* relpath) {
         httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     }
 
-    // Stream in fixed-size chunks (smaller than IDF default 16 KB scratch).
-    static constexpr size_t CHUNK = 1024;
-    char buf[CHUNK];
+    static constexpr size_t CHUNK = 16384;
+    char* buf = (char*)heap_caps_malloc(CHUNK, MALLOC_CAP_SPIRAM);
+    if (!buf) {
+        fclose(f);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
     size_t n;
     esp_err_t err = ESP_OK;
-    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+    while ((n = fread(buf, 1, CHUNK, f)) > 0) {
         if (httpd_resp_send_chunk(req, buf, n) != ESP_OK) {
             err = ESP_FAIL;
             break;
         }
     }
     fclose(f);
-    httpd_resp_send_chunk(req, nullptr, 0);     // end of stream
+    heap_caps_free(buf);
+    httpd_resp_send_chunk(req, nullptr, 0);
     return err;
 }
 
