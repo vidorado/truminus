@@ -609,9 +609,9 @@ function applyBatt(d) {
     }
     if (bph) {
         if (charging)
-            bph.innerHTML = t('inv_load') + ' <span class="fi"></span>';
-        else if (discharging)
             bph.innerHTML = '<span class="fi"></span> ' + t('inv_load');
+        else if (discharging)
+            bph.innerHTML = t('inv_discharge') + ' <span class="fi"></span>';
         else
             bph.textContent = t('inv_load');
     }

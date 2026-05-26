@@ -209,7 +209,6 @@ body {
     flex-direction: column;
     padding-top: 0;
     padding-bottom: 0;
-    overflow: hidden;
   }
   .topbar {
     position: static !important;
@@ -259,15 +258,15 @@ body {
   /* Water panel: revert from 2-col grid to plain block flow on narrow screens. */
   .panel-water { display: flex; flex-direction: column; gap: var(--gap); }
   .panel-water > .water-temp-bar-wrap { width: 100%; max-width: none; align-items: flex-start; }
-  .btn-heat   { padding: 12px 10px; }
-  .btn-fan    { padding: 12px 6px; }
+  .btn-heat   { padding: 16px 10px; }
+  .btn-fan    { padding: 16px 6px; }
   /* HOT WATER buttons 1.5× taller than the rest in this layout — they're
      the primary touch target when the page is on a phone in portrait. */
   .btn-boiler { padding: 4px 6px; }
   /* −/+ setpoint buttons: keep them compact so the row doesn't overflow
      the heating panel on narrow phones (a 46 px square + the value label
      + 46 px square exceeded the column width on the tightest devices). */
-  .btn-step   { flex: 0 0 28px; width: 28px; height: 28px; min-height: 28px; font-size: 0.85em; }
+  .btn-step   { flex: 0 0 34px; width: 34px; height: 34px; min-height: 34px; font-size: 0.85em; }
   .sp-row     { gap: 8px; align-items: center; }
   .panel .sp-val { font-size: 1.1em; white-space: nowrap; }
   /* Tanks/batteries back to fixed pixel sizes — they no longer have a
@@ -318,8 +317,8 @@ body {
   .btn-heat    { padding: 4px 8px; }
   .btn-fan     { padding: 4px 4px; }
   .panel-inv .inv-mpx       { width: 78px; min-height: 60px; }
-  .panel-inv .inv-mpx-bar   { top: 12px; }
-  .panel-inv .inv-mpx-state { font-size: 0.75em; }
+  .panel-inv .inv-mpx-state { font-size: 0.7em; }
+  .panel-inv .inv-mpx-top   { padding: 6px 4px; gap: 5px; }
   .panel-inv .inv-mid       { padding: 8px 12px; }
   .panel-inv .inv-flow      { width: 12px; }
   .panel-inv .inv-port-hdr  { padding: 1px 0; font-size: 0.65em; }
@@ -722,7 +721,7 @@ body {
   min-width: 0;
   margin-top: 31px;
 }
-.batt-pwr-port .inv-port-hdr { padding: 5px 0; }
+.batt-pwr-port .inv-port-hdr { padding: 6px 0; }
 .batt-pwr-port .inv-port-val { padding: 8px 4px; }
 
 .solar-line {
@@ -842,11 +841,13 @@ body {
   background: #1a1a2e;
   position: relative;
   overflow: hidden;
+  padding: 2px;
 }
 
 .tank-fill {
   position: absolute;
-  bottom: 0; left: 0; right: 0;
+  bottom: 2px; left: 2px; right: 2px;
+  max-height: calc(100% - 4px);
   height: 0%;
   background: #4488ff;
   transition: height 0.4s ease, background 0.3s ease;
@@ -973,25 +974,52 @@ body {
 
 .inv-mpx {
   position: relative;
-  background: #0077c5;
-  border: 1px solid #2b2b2b;
-  border-radius: 2px;
+  border: 2px solid #3a3a4a;
+  border-radius: 3px;
   width: 96px;
   min-height: 88px;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  padding-bottom: 6px;
+  overflow: hidden;
   color: #ffffff;
 }
-.inv-mpx-bar {
+.inv-mpx-ear {
   position: absolute;
-  top: 18px; left: 8%;
+  top: -1px;
+  width: 22%;
+  height: 16px;
+  background: #1a1a2e;
+  z-index: 1;
+}
+.inv-mpx-ear-l { left: 0; }
+.inv-mpx-ear-r { right: 0; }
+.inv-mpx-top {
+  flex: 1;
+  background: #0077c5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 20px 6px 10px;
+}
+.inv-mpx-bar {
   width: 84%;
-  height: 4px;
+  height: 5px;
   background: #f96432;
   border-radius: 1px;
+}
+.inv-mpx-display {
+  width: 30%;
+  height: 12px;
+  background: #1a3a5c;
+  border-radius: 1px;
+  align-self: flex-start;
+  margin-left: 12%;
+}
+.inv-mpx-foot {
+  background: #1a1a2e;
+  height: 18%;
 }
 .inv-mpx-state {
   font-size: 0.7em;
