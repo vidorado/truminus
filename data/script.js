@@ -517,11 +517,6 @@ function applyMulti(d) {
     var mp  = document.getElementById('inv_mains_port');
     var lp  = document.getElementById('inv_load_port');
     var bp  = document.getElementById('inv_batt_port');
-    // BATERÍA panel power port
-    var bpw = document.getElementById('batt_pwr_w');
-    var bpp = document.getElementById('batt_pwr_port');
-    var bph = document.getElementById('batt_pwr_hdr');
-    var bfl = document.getElementById('batt_flow');
 
     if (!d.valid) {
         if (st) st.textContent = '--';
@@ -534,9 +529,6 @@ function applyMulti(d) {
         if (mp) mp.classList.remove('ac-on');
         if (lp) lp.classList.remove('load-on');
         if (bp) { bp.classList.remove('batt-chg'); bp.classList.remove('batt-dis'); }
-        if (bpw) bpw.textContent = '--';
-        if (bpp) { bpp.classList.remove('batt-chg'); bpp.classList.remove('batt-dis'); }
-        if (bfl) bfl.classList.remove('active');
         return;
     }
     if (st) st.textContent = t(MULTI_STATES[d.state] || 'inv_st_off');
@@ -575,31 +567,23 @@ function applyMulti(d) {
                 bh.textContent = t('inv_batt');
         }
     }
-    /* BATER\u00cdA panel — mirror the power port */
-    if (bpw) bpw.textContent = Math.abs(battW);
-    if (bfl) bfl.classList.toggle('active', Math.abs(battW) > 5);
-    if (bpp) {
-        bpp.classList.toggle('batt-chg', charging);
-        bpp.classList.toggle('batt-dis', discharging);
-    }
-    if (bph) {
-        if (charging)
-            bph.innerHTML = t('inv_load') + ' <span class="fi">\uf178</span>';
-        else if (discharging)
-            bph.innerHTML = '<span class="fi">\uf177</span> ' + t('inv_load');
-        else
-            bph.textContent = t('inv_load');
-    }
 }
 
 function applyBatt(d) {
     var socLbl = document.getElementById('batt_soc');
     var fill   = document.getElementById('batt_fill');
+    var bpw    = document.getElementById('batt_pwr_w');
+    var bpp    = document.getElementById('batt_pwr_port');
+    var bph    = document.getElementById('batt_pwr_hdr');
+    var bfl    = document.getElementById('batt_flow');
     if (!socLbl) return;
 
     if (!d.valid) {
         socLbl.textContent = '--%';
         if (fill) fill.style.height = '0%';
+        if (bpw) bpw.textContent = '--';
+        if (bpp) { bpp.classList.remove('batt-chg'); bpp.classList.remove('batt-dis'); }
+        if (bfl) bfl.classList.remove('active');
         return;
     }
     var soc = parseInt(d.soc) || 0;
@@ -609,6 +593,27 @@ function applyBatt(d) {
         fill.style.height = Math.min(100, Math.max(0, soc)) + '%';
         var col = soc >= 50 ? '#44bb44' : soc >= 20 ? '#ffbb00' : '#ff3333';
         fill.style.background = col;
+    }
+
+    var battV = parseFloat(d.battV) || 0;
+    var battA = parseFloat(d.battA) || 0;
+    var battW = Math.round(battV * battA);
+    var charging = battW > 5;
+    var discharging = battW < -5;
+
+    if (bpw) bpw.textContent = Math.abs(battW);
+    if (bfl) bfl.classList.toggle('active', Math.abs(battW) > 5);
+    if (bpp) {
+        bpp.classList.toggle('batt-chg', charging);
+        bpp.classList.toggle('batt-dis', discharging);
+    }
+    if (bph) {
+        if (charging)
+            bph.innerHTML = t('inv_load') + ' <span class="fi"></span>';
+        else if (discharging)
+            bph.innerHTML = '<span class="fi"></span> ' + t('inv_load');
+        else
+            bph.textContent = t('inv_load');
     }
 }
 

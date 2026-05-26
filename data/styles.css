@@ -930,11 +930,11 @@ body {
 .inv-load.load-on .inv-port-hdr { background: #a34545; }
 
 /* BAT charging — green palette */
-.inv-batt.batt-chg             { background: #2e7d32; }
-.inv-batt.batt-chg .inv-port-hdr { background: #4caf50; }
+.inv-batt.batt-chg, .batt-pwr-port.batt-chg             { background: #2e7d32; }
+.inv-batt.batt-chg .inv-port-hdr, .batt-pwr-port.batt-chg .inv-port-hdr { background: #4caf50; }
 /* BAT discharging — red palette */
-.inv-batt.batt-dis             { background: #7a2a2a; }
-.inv-batt.batt-dis .inv-port-hdr { background: #a34545; }
+.inv-batt.batt-dis, .batt-pwr-port.batt-dis             { background: #7a2a2a; }
+.inv-batt.batt-dis .inv-port-hdr, .batt-pwr-port.batt-dis .inv-port-hdr { background: #a34545; }
 .inv-port-val {
   flex: 1;
   min-height: 0;

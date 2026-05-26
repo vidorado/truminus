@@ -156,8 +156,8 @@ static void onWsConnected() {
 
     UltimatronData u = ultimatronGetData();
     snprintf(buf, sizeof(buf),
-             "{\"command\":\"batt\",\"valid\":%s,\"soc\":%u,\"battV\":%.2f}",
-             u.valid ? "true" : "false", (unsigned)u.soc, u.battV);
+             "{\"command\":\"batt\",\"valid\":%s,\"soc\":%u,\"battV\":%.2f,\"battA\":%.2f}",
+             u.valid ? "true" : "false", (unsigned)u.soc, u.battV, u.battA);
     wsQueueSend(buf);
 
     TankData tk = tankGetData();
@@ -325,11 +325,12 @@ static void broadcastBleData() {
     bool uChanged = !inited
                     || u.valid != prevU.valid
                     || (u.valid && (u.soc != prevU.soc
-                                    || fabsf(u.battV - prevU.battV) > 0.05f));
+                                    || fabsf(u.battV - prevU.battV) > 0.05f
+                                    || fabsf(u.battA - prevU.battA) > 0.05f));
     if (uChanged) {
         snprintf(buf, sizeof(buf),
-                 "{\"command\":\"batt\",\"valid\":%s,\"soc\":%u,\"battV\":%.2f}",
-                 u.valid ? "true" : "false", (unsigned)u.soc, u.battV);
+                 "{\"command\":\"batt\",\"valid\":%s,\"soc\":%u,\"battV\":%.2f,\"battA\":%.2f}",
+                 u.valid ? "true" : "false", (unsigned)u.soc, u.battV, u.battA);
         wsQueueSend(buf);
         prevU = u;
     }
