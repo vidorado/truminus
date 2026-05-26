@@ -1,0 +1,30 @@
+esp_lvgl_port: graceful I2C error handling in touchpad read
+
+The GT911 capacitive touch controller communicates over I2C.  Transient
+bus errors (noise, contention with other I2C devices) cause
+esp_lcd_touch_read_data() to return ESP_ERR_INVALID_RESPONSE.  The stock
+esp_lvgl_port wraps both read_data and get_data in ESP_ERROR_CHECK, which
+calls abort() on any non-OK return — a single I2C glitch kills the
+firmware.
+
+Fix: replace ESP_ERROR_CHECK with an early return that reports
+LV_INDEV_STATE_RELEASED (no touch).  The LVGL timer will retry on the
+next cycle (~30 ms later), so the touch recovers silently.
+
+--- a/src/lvgl9/esp_lvgl_port_touch.c
++++ b/src/lvgl9/esp_lvgl_port_touch.c
+@@ -124,10 +124,16 @@
+
+     /* Read data from touch controller into memory */
+-    ESP_ERROR_CHECK(esp_lcd_touch_read_data(touch_ctx->handle));
++    if (esp_lcd_touch_read_data(touch_ctx->handle) != ESP_OK) {
++        data->state = LV_INDEV_STATE_RELEASED;
++        return;
++    }
+
+     /* Read data from touch controller */
+-    ESP_ERROR_CHECK(esp_lcd_touch_get_data(touch_ctx->handle, touch_data, &touch_cnt, CONFIG_ESP_LCD_TOUCH_MAX_POINTS));
++    if (esp_lcd_touch_get_data(touch_ctx->handle, touch_data, &touch_cnt, CONFIG_ESP_LCD_TOUCH_MAX_POINTS) != ESP_OK) {
++        data->state = LV_INDEV_STATE_RELEASED;
++        return;
++    }

@@ -91,6 +91,38 @@ PATCHES = [
         ),
         "desc":   "PlatformIO espidf.py: add main/ld/ to bootloader linker-script include paths",
     },
+    # ── ESP-IDF component: esp_lvgl_port — GT911 I2C read crash ────────────
+    # A transient I2C error (noise, bus contention) makes
+    # esp_lcd_touch_read_data() return ESP_ERR_INVALID_RESPONSE.
+    # The stock code wraps it in ESP_ERROR_CHECK which aborts the firmware.
+    # Replace with a graceful return (report no-touch, retry next cycle).
+    # Patch: patches/esp_lvgl_port_touch_graceful.patch
+    {
+        "target": ROOT / "managed_components" / "espressif__esp_lvgl_port"
+                  / "src" / "lvgl9" / "esp_lvgl_port_touch.c",
+        "old": (
+            "    /* Read data from touch controller into memory */\n"
+            "    ESP_ERROR_CHECK(esp_lcd_touch_read_data(touch_ctx->handle));\n"
+            "\n"
+            "    /* Read data from touch controller */\n"
+            "    ESP_ERROR_CHECK(esp_lcd_touch_get_data(touch_ctx->handle, touch_data, &touch_cnt, CONFIG_ESP_LCD_TOUCH_MAX_POINTS));"
+        ),
+        "new": (
+            "    /* Read data from touch controller into memory */\n"
+            "    if (esp_lcd_touch_read_data(touch_ctx->handle) != ESP_OK) {\n"
+            "        data->state = LV_INDEV_STATE_RELEASED;\n"
+            "        return;\n"
+            "    }\n"
+            "\n"
+            "    /* Read data from touch controller */\n"
+            "    if (esp_lcd_touch_get_data(touch_ctx->handle, touch_data, &touch_cnt, CONFIG_ESP_LCD_TOUCH_MAX_POINTS) != ESP_OK) {\n"
+            "        data->state = LV_INDEV_STATE_RELEASED;\n"
+            "        return;\n"
+            "    }"
+        ),
+        "desc": "esp_lvgl_port: graceful I2C error handling in touchpad read",
+    },
+
     # Same patch for the versioned copy of the platform (if present).
     {
         "target": Path.home() / ".platformio" / "platforms"
