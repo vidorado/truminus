@@ -101,22 +101,29 @@ The "heating → at target" transition is computed from direct temperature compa
 
 ---
 
-## Solar and battery panels
+## Row 2 panels: FAN / SOLAR / BATERÍA / INVERSOR
+
+### SOLAR (compact)
+Status line + charge (A/W, no label) + yield (kWh, no label).  No voltage line.
+
+### BATERÍA (standalone panel)
+SOC % + vertical battery icon + horizontal flow line + CARGA power port.
+The port uses Ultimatron BMS data (`battV × battA`), NOT the Multiplus
+inverter data.  Port color: green when charging (`← CARGA`), red when
+discharging (`DESCARGA →`), grey at idle.
+
+### INVERSOR (Multiplus VE.Bus)
+Three I/O ports (RED / CARGAS / BAT.) flanking a Multiplus body icon.
+Dynamic port coloring: RED → green + plug-circle-bolt icon when AC
+connected; CARGAS → red when delivering power; BAT. → green (charging,
+right arrow) / red (discharging, left arrow).  Flow lines animate with
+a striped pattern moving in the direction of energy flow.
 
 ### LCD (JC4880-P4)
-Bottom-right of the content area (under the hot-water section). Occupies the full right column width (429 px) and splits into:
-- **Left column:** four solar data lines — Status (no label), Volt:, Load:, Yield: (label fonts subject to final layout in `p4display.cpp`).
-- **Vertical separator** (1 px).
-- **Right column:** SOC % label + vertical battery icon with proportional fill.
-
-### Web
-Four equal panels in landscape (`grid-template-columns: 1fr 1fr 1fr 1fr`), 2×2 in portrait. The solar panel shows:
-- Status (white)
-- Voltage (white)
-- Load A + W (light blue)
-- Daily yield kWh (yellow)
-
-The battery panel shows SOC % + an animated vertical battery icon.
+Same four panels with matching dynamic colors (`C_PORT_GREEN_*`,
+`C_PORT_RED_*`, `C_PORT_GREY_*`).  `P4MultiData.acInState` drives
+the RED port color; `make_io_box` returns box/header/label refs for
+runtime color changes.
 
 ---
 
@@ -187,9 +194,58 @@ flex layout overrides `lv_obj_center()`.
 
 ## Web asset build
 
-Files under `data/` are NOT served from LittleFS at runtime. `scripts/compress_fs.py`, invoked at cmake configure time by the root `CMakeLists.txt`, gzip-compresses each file into a `static const uint8_t` array inside `main/webfiles.h`. The firmware serves them straight from embedded flash.
+Files under `data/` are served from LittleFS (see CLAUDE.md §"Web assets
+are served from LittleFS").  `cache_bust.py` rewrites `?v=<sha1>` query
+strings in `index.html` on every build so browsers refetch changed assets.
+**When editing CSS/JS locally** (opening `data/index.html` directly in a
+browser), the `?v=` hash is stale — force a hard refresh (Ctrl+Shift+R)
+or the browser will show cached styles.
 
-**Implications:**
-- Any change to `data/` requires a **firmware rebuild and reflash** (`pio run --target upload`). There is no `uploadfs` target on this project.
-- Assets are served with `Cache-Control: max-age=31536000, immutable` to reduce ESP32 load.
-- Individual files larger than ~64 KB after gzip will break the build (C array + compression limit).
+---
+
+## CSS layout gotchas (hard-won lessons)
+
+### Column widths
+- Row 2 is a 4-column grid: `grid-template-columns: 22% 16% 22% 40%` (base).
+  Landscape overrides to `20% 16% 23% 41%`.  Portrait uses a 10-column
+  `.lcd` grid with `display: contents` on `.row` wrappers.
+- When changing column widths, always check all three breakpoints (base,
+  portrait ≤460px, landscape ≤500px height).
+
+### Portrait layout (≤460px)
+- Body is `display: flex; flex-direction: column; height: 100dvh`.
+  Topbar and statusbar are `position: static !important` (not fixed) so
+  they participate in the flex.  `.lcd` uses `flex: 1 1 0px` +
+  `min-height: 0 !important` to take the remaining space.
+- The grid uses `grid-template-rows: minmax(0, Xfr)` to distribute
+  height proportionally.  `minmax(0, ...)` is required — plain `Xfr`
+  won't shrink below content size and causes overflow.
+- `body { min-height: calc(100dvh + 1px) }` from the base must be
+  overridden with `!important` in portrait or it prevents flex shrinking.
+
+### Specificity traps
+- Rules inside `@media (max-width: 460px)` with `.panel-water { ... }`
+  lose to later base rules like `.panel-water { display: grid; ... }`.
+  Use `.row .panel-water` for higher specificity inside the media query.
+- Same applies to `.panel-batt`, `.panel-solar` — prefix with `.row`
+  when overriding base styles from within a media query.
+
+### INVERSOR flow lines
+- Flow lines are `position: absolute` inside `.inv-mid`.  Their `width`
+  must match the horizontal `padding` of `.inv-mid` exactly, otherwise
+  they disconnect from the ports.
+- In landscape, where columns are narrower (`0.4fr`), use
+  `left`/`right` + `calc(50% + half-mpx-width)` with `width: auto`
+  instead of fixed pixel widths — this makes them scale with the column.
+- The animated zebra stripe uses `repeating-linear-gradient` +
+  `background-position` animation.  `background-size` must match the
+  element height (e.g. `8px 6px` for a 6px-tall line).
+
+### Font icon subsets
+- Web icons: `data/fa-solid.woff` — regenerate with
+  `python3 scripts/gen_fa_subset.py` after adding glyphs.
+- LCD icons: `main/font_icons.ttf` — regenerate with
+  `python3 scripts/gen_icon_font.py`.
+- Both must be updated in tandem when adding new icons.
+- Define `#define FA_xxx` macros in `p4display.cpp` using the UTF-8
+  encoding of the codepoint.
