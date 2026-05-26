@@ -35,6 +35,9 @@ SOLID = [
     0xF2F6,  # right-to-bracket (outdoor-temp arrow on P4 LCD)
     0xF7E4,  # fire-flame-curved (heating indicator on P4 LCD)
     0xE3AF,  # house-chimney (room indicator on P4 LCD)
+    0xE55F,  # plug-circle-bolt (AC mains connected in INVERSOR panel)
+    0xF177,  # arrow-left-long  (BAT discharging in INVERSOR panel)
+    0xF178,  # arrow-right-long (BAT charging in INVERSOR panel)
 ]
 BRANDS = [
     0xF293,  # bluetooth-b
