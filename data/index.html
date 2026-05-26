@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="TruMinus" />
 <link rel="manifest" href="/icons/site.webmanifest" />
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=a59e0eb8">
+<link rel="stylesheet" href="styles.css?v=3ef9124f">
 </head>
 <body>
 
@@ -118,31 +118,34 @@
       </div>
     </section>
 
-    <!-- SOLAR panel (right/bottom) — grid: title over solar lines on the
-         left, battery column spans the full panel height on the right. -->
+    <!-- SOLAR panel (right/bottom) — compact: state + charge + yield -->
     <section class="panel panel-solar">
       <div class="p-title" data-i18n="solar">SOLAR</div>
-
       <div class="solar-col">
-        <div id="solar_state"    class="solar-line solar-status">--</div>
-        <div class="solar-line solar-volt">
-          <span data-i18n="solar_voltage">Volt.:</span>
-          <span id="solar_battV">--</span>&thinsp;V
-        </div>
+        <div id="solar_state" class="solar-line solar-status">--</div>
         <div class="solar-line solar-load">
-          <span data-i18n="solar_load">Carga:</span>
           <span id="solar_battA">--</span>&thinsp;A&ensp;/&ensp;<span id="solar_pvW">--</span>&thinsp;W
         </div>
         <div class="solar-line solar-prod">
-          <span data-i18n="solar_yield">Prod.:</span>
           <span id="solar_kWh">--</span>&thinsp;kWh
         </div>
       </div>
+    </section>
 
-      <div id="batt-col" class="batt-col">
-        <div id="batt_soc" class="batt-soc-lbl">--%</div>
-        <div class="batt-body">
-          <div id="batt_fill" class="batt-fill"></div>
+    <!-- BATERÍA panel — SOC bar + flow line + CARGA port -->
+    <section class="panel panel-batt">
+      <div class="p-title" data-i18n="battery">BATERÍA</div>
+      <div class="batt-layout">
+        <div class="batt-col">
+          <div id="batt_soc" class="batt-soc-lbl">--%</div>
+          <div class="batt-body">
+            <div id="batt_fill" class="batt-fill"></div>
+          </div>
+        </div>
+        <div id="batt_flow" class="batt-flow"></div>
+        <div id="batt_pwr_port" class="inv-port batt-pwr-port">
+          <div id="batt_pwr_hdr" class="inv-port-hdr" data-i18n="inv_load">CARGA</div>
+          <div class="inv-port-val"><span id="batt_pwr_w">--</span>&thinsp;W</div>
         </div>
       </div>
     </section>
@@ -153,20 +156,10 @@
          flank a central Multiplus icon; horizontal flow lines pulse when
          the corresponding port carries non-trivial power. -->
     <section class="panel panel-inv">
-      <div class="inv-header">
-        <div class="p-title" data-i18n="inverter">INVERSOR</div>
-        <div class="inv-toolbar">
-          <button class="inv-btn inv-btn-off" disabled title="VE.Bus GATT control not implemented">
-            <span data-i18n="inv_off">Apag.</span>
-          </button>
-          <button class="inv-btn inv-btn-on" disabled title="VE.Bus GATT control not implemented">
-            <span data-i18n="inv_on">Enc.</span>
-          </button>
-        </div>
-      </div>
+      <div class="p-title" data-i18n="inverter">INVERSOR</div>
 
       <div class="inv-diagram">
-        <div class="inv-port inv-mains">
+        <div id="inv_mains_port" class="inv-port inv-mains">
           <div class="inv-port-hdr" data-i18n="inv_mains">RED</div>
           <div class="inv-port-val"><span id="inv_mains_w">--</span>&thinsp;W</div>
         </div>
@@ -182,11 +175,11 @@
         </div>
 
         <div class="inv-right">
-          <div class="inv-port inv-load">
+          <div id="inv_load_port" class="inv-port inv-load">
             <div class="inv-port-hdr" data-i18n="inv_load">CARGA</div>
             <div class="inv-port-val"><span id="inv_load_w">--</span>&thinsp;W</div>
           </div>
-          <div class="inv-port inv-batt">
+          <div id="inv_batt_port" class="inv-port inv-batt">
             <div class="inv-port-hdr" data-i18n="inv_batt">BAT.</div>
             <div class="inv-port-val"><span id="inv_batt_w">--</span>&thinsp;W</div>
           </div>
@@ -220,6 +213,6 @@
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=ddd3f31a"></script>
 <script src="i18n.js?v=5b6a1c8f"></script>
-<script src="script.js?v=928dae63"></script>
+<script src="script.js?v=ff3d409d"></script>
 </body>
 </html>

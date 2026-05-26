@@ -3,14 +3,14 @@
    every UI glyph except Bluetooth, which is a brand icon (F293). */
 @font-face {
   font-family: 'fa6s';
-  src: url('fa-solid.woff?v=448bf80e') format('woff');
+  src: url('fa-solid.woff?v=1d5759df') format('woff');
   font-weight: 900;
   font-style: normal;
   font-display: block;
 }
 @font-face {
   font-family: 'fa6b';
-  src: url('fa-brands.woff?v=35af6248') format('woff');
+  src: url('fa-brands.woff?v=59222eb6') format('woff');
   font-weight: 400;
   font-style: normal;
   font-display: block;
@@ -179,10 +179,8 @@ body {
    = 37.625% / 43.75% / 18.625%.  AGUA L. (fresh-water tank) sits in the
    right-most slot. */
 .row1 { grid-template-columns: 37.625% 43.75%  18.625%; }
-/* Row 2 splits the 800-px canvas into FAN(213)/SOLAR/INVERSOR.
-   SOLAR narrowed (34%) to give INVERSOR (39.375%) more room for the
-   state label inside the Multiplus body. */
-.row2 { grid-template-columns: 26.625% 34.000% 39.375%; }
+/* Row 2: FAN / SOLAR / BATERÍA / INVERSOR — 4 columns. */
+.row2 { grid-template-columns: 22% 16% 22% 40%; }
 
 /* Stretch each panel to fill its row so the border-bottom of Row 1
    visually separates the rows along the entire width, not just under
@@ -203,7 +201,35 @@ body {
 @media (max-width: 460px) {
   /* Collapse .row wrappers so .lcd becomes the single grid parent and we
      can freely reorder the 6 panels across rows. */
-  .lcd { display: grid; grid-template-columns: repeat(10, 1fr); padding: 0; }
+  body {
+    min-height: 0 !important;
+    max-height: 100dvh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+  }
+  .topbar {
+    position: static !important;
+    flex-shrink: 0;
+  }
+  .statusbar {
+    position: static !important;
+    flex-shrink: 0;
+  }
+  .lcd {
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    grid-template-rows: minmax(0, 0.8fr) minmax(0, 0.85fr) minmax(0, 0.9fr) minmax(0, 1.05fr);
+    padding: 0;
+    min-height: 0 !important;
+    max-height: none;
+    height: 0;
+    flex: 1 1 0px;
+    overflow: hidden;
+  }
   .row { display: contents; }
   .row1, .row2 { border-bottom: none; }
   .row .panel { border-right: none; border-bottom: 1px solid var(--sep); }
@@ -211,13 +237,13 @@ body {
   .row .panel-heat { grid-column: 1 / 6; order: 1; border-right: 1px solid var(--sep); }
   .row .panel-fan  { grid-column: 6 / 11; order: 2; }
   .row .panel-water { border-top: none; }
-  /* HOT WATER, AGUA L., SOLAR, INVERSOR — full width, stacked */
-  .panel-water { grid-column: 1 / -1; order: 3; }
-  .row .panel-solar { grid-column: 1 / 7; order: 4; border-right: 1px solid var(--sep); }
-  .panel-tank  { grid-column: 7 / 11; order: 5; }
-  .row .panel-inv { grid-column: 1 / -1; order: 6; border-bottom: none; }
-  .panel-solar .solar-line { font-size: 0.85em; }
-  .panel-solar .batt-soc-lbl { font-size: 0.95em; }
+  /* HOT WATER, AGUA L., SOLAR+BAT, INVERSOR — full width, stacked */
+  .row .panel-water { grid-column: 1 / 7; order: 3; border-right: 1px solid var(--sep); }
+  .panel-tank  { grid-column: 7 / 11; order: 4; }
+  .row .panel-solar { grid-column: 1 / 5; order: 5; border-right: 1px solid var(--sep); }
+  .row .panel-batt  { grid-column: 5 / 11; order: 6; }
+  .row .panel-inv { grid-column: 1 / -1; order: 7; border-bottom: none; }
+  .panel-solar .solar-line { font-size: 0.95em; }
   /* On narrow screens the controls stack vertically and the proportional
      layout used at desktop sizes would clip content.  Revert every
      flex-based growth rule so each element sizes to its natural content
@@ -230,26 +256,24 @@ body {
     flex: 0 0 auto;
     min-height: 0;
   }
-  /* Water / Solar panels: revert from 2-col grid to plain block flow so
-     tank/battery sit below the boiler/lines on narrow screens. */
-  .panel-water, .panel-solar { display: flex; flex-direction: column; gap: var(--gap); }
-  .panel-water > .water-temp-bar-wrap,
-  .panel-solar > .batt-col   { width: 100%; max-width: none; align-items: flex-start; }
+  /* Water panel: revert from 2-col grid to plain block flow on narrow screens. */
+  .panel-water { display: flex; flex-direction: column; gap: var(--gap); }
+  .panel-water > .water-temp-bar-wrap { width: 100%; max-width: none; align-items: flex-start; }
   .btn-heat   { padding: 12px 10px; }
   .btn-fan    { padding: 12px 6px; }
   /* HOT WATER buttons 1.5× taller than the rest in this layout — they're
      the primary touch target when the page is on a phone in portrait. */
-  .btn-boiler { padding: 20px 6px; }
+  .btn-boiler { padding: 4px 6px; }
   /* −/+ setpoint buttons: keep them compact so the row doesn't overflow
      the heating panel on narrow phones (a 46 px square + the value label
      + 46 px square exceeded the column width on the tightest devices). */
-  .btn-step   { flex: 0 0 36px; width: 36px; height: 36px; min-height: 36px; font-size: 0.9em; }
+  .btn-step   { flex: 0 0 28px; width: 28px; height: 28px; min-height: 28px; font-size: 0.85em; }
   .sp-row     { gap: 8px; align-items: center; }
   .panel .sp-val { font-size: 1.1em; white-space: nowrap; }
   /* Tanks/batteries back to fixed pixel sizes — they no longer have a
      row height to fill on stacked layouts. */
   .water-temp-bar-wrap { width: 64px; max-width: none; min-width: 0; }
-  .water-temp-body     { width: 44px; height: 71px; flex: 0 0 auto; min-height: 0; }
+  .water-temp-body     { width: 44px; height: 50px; flex: 0 0 auto; min-height: 0; }
   .batt-col            { width: 64px; max-width: none; min-width: 0; }
   .batt-body           { width: 42px; height: 72px; flex: 0 0 auto; min-height: 0; }
   .boiler-grid         { grid-template-rows: auto auto; }
@@ -442,14 +466,14 @@ body {
      both axes. */
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  gap: 8px;
+  grid-template-rows: auto auto;
+  gap: 4px;
   min-height: 0;
 }
 
 .btn-boiler {
-  padding: 6px;
-  font-size: 1.05em;
+  padding: 2px 6px;
+  font-size: 0.9em;
   border: none;
   border-radius: var(--radius);
   cursor: pointer;
@@ -591,8 +615,6 @@ body {
    both rows). */
 .panel-water {
   display: grid;
-  grid-template-columns: 1fr 18%;   /* boiler area | tank — 18% mirrors
-                                       LCD ratio (64 px in 350 px panel) */
   grid-template-rows: auto 1fr;     /* title height | rest fills */
   column-gap: 8px;
   row-gap: var(--gap);
@@ -651,40 +673,67 @@ body {
    column 1, battery column spans both rows so it stretches to the full
    panel height (no gap under the title above the battery). */
 .panel-solar {
-  display: grid;
-  grid-template-columns: 1fr 21%;   /* 21% mirrors LCD ratio (64 px / 304) */
-  grid-template-rows: auto 1fr;
-  column-gap: 10px;
-  row-gap: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
 }
-.panel-solar > .p-title  { grid-column: 1; grid-row: 1; }
 .panel-solar > .solar-col {
-  grid-column: 1; grid-row: 2;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.panel-solar > .batt-col {
-  grid-column: 2; grid-row: 1 / span 2;
-  min-width: 48px;
-  max-width: 90px;
+
+/* BATERÍA panel — SOC bar + flow line + power port */
+.panel-batt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+.batt-layout {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-height: 0;
+}
+.batt-layout > .batt-col {
+  width: 56px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 3px;
+  align-self: stretch;
 }
+.batt-flow {
+  width: 32px;
+  height: 3px;
+  background: #aed7f2;
+  opacity: 0.3;
+  flex-shrink: 0;
+  margin-left: -8px;
+  margin-top: 31px;
+  transition: opacity 0.3s ease;
+}
+.batt-flow.active { opacity: 1; }
+.batt-pwr-port {
+  flex: 1;
+  min-width: 0;
+  margin-top: 31px;
+}
+.batt-pwr-port .inv-port-hdr { padding: 5px 0; }
+.batt-pwr-port .inv-port-val { padding: 8px 4px; }
 
 .solar-line {
-  font-size: 1em;
+  font-size: 0.95em;
   text-align: left;
   white-space: nowrap;
   line-height: 1.25;
 }
 
-/* Per-line colours mirror C_TEXT / C_CYAN / C_CYAN_BR / C_YELLOW. */
-.solar-line.solar-status { color: #ffffff; font-size: 1.05em; }
-.solar-line.solar-volt   { color: #aaccff; }   /* C_CYAN */
+/* Per-line colours mirror C_TEXT / C_CYAN_BR / C_YELLOW. */
+.solar-line.solar-status { color: #ffffff; font-size: 0.95em; }
 .solar-line.solar-load   { color: #88ccff; }   /* C_CYAN_BR */
 .solar-line.solar-prod   { color: #ffdd66; }   /* C_YELLOW */
 
@@ -698,7 +747,7 @@ body {
 /* Battery icon: outer body — width is a fraction of its column, height
    fills the remaining vertical space below the % label. */
 .batt-body {
-  width: 70%;
+  width: 75%;
   flex: 1;
   min-height: 0;
   border: 2px solid #8888aa;
@@ -710,7 +759,7 @@ body {
   justify-content: flex-end;
   padding: 2px;
   /* overflow: hidden REMOVED — nubs are positioned at top:-6px and get clipped */
-  margin-top: 4px;   /* space below the % label */
+  margin-top: 10px;   /* space below the % label */
   align-self: center; /* force horizontal center in flex column */
 }
 
@@ -870,6 +919,22 @@ body {
   font-weight: 700;
   letter-spacing: 0.5px;
 }
+.inv-mains .inv-port-hdr { padding: 6px 0; }
+
+/* AC mains connected — green palette */
+.inv-mains.ac-on             { background: #2e7d32; }
+.inv-mains.ac-on .inv-port-hdr { background: #4caf50; }
+
+/* CARGA (load) active — red palette */
+.inv-load.load-on             { background: #7a2a2a; }
+.inv-load.load-on .inv-port-hdr { background: #a34545; }
+
+/* BAT charging — green palette */
+.inv-batt.batt-chg             { background: #2e7d32; }
+.inv-batt.batt-chg .inv-port-hdr { background: #4caf50; }
+/* BAT discharging — red palette */
+.inv-batt.batt-dis             { background: #7a2a2a; }
+.inv-batt.batt-dis .inv-port-hdr { background: #a34545; }
 .inv-port-val {
   flex: 1;
   min-height: 0;
