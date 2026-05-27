@@ -20,11 +20,59 @@
 //   on both sides.
 
 import http from "node:http";
+import fs from "node:fs";
 import { WebSocketServer } from "ws";
 
 const PORT = Number(process.env.PORT) || 3000;
 const TOKEN = process.env.TUNNEL_TOKEN || "";
 const LOG = (...a) => console.log(new Date().toISOString(), ...a);
+
+// Dedicated log file for blocked vulnerability-scanner hits.  fail2ban tails
+// this file; one line per attempt, with a stable "BLOCKED <ip> <method> <path>"
+// shape so the filter regex stays trivial.  Defaults to a path under Plesk's
+// per-domain logs dir; override with BLOCK_LOG env if you run elsewhere.
+const BLOCK_LOG = process.env.BLOCK_LOG || "";
+function logBlocked(ip, line) {
+  const msg = `${new Date().toISOString()} BLOCKED ${ip} ${line}\n`;
+  process.stderr.write(msg);
+  if (BLOCK_LOG) fs.appendFile(BLOCK_LOG, msg, () => {});
+}
+
+// Known scanner targets.  Most are config / secret files for popular stacks
+// (PHP, WordPress, Node, Python, Rails, .NET) plus generic dotfiles and SCM
+// metadata.  Anchored to the start of the request line, so legitimate paths
+// that happen to contain "env" elsewhere are unaffected.
+const BLOCKED_PATH_RE = new RegExp(
+  "^(?:GET|POST|HEAD|PUT|OPTIONS|DELETE|PATCH) " +
+  "(\\/(?:" +
+    "\\.env|\\.git|\\.svn|\\.hg|\\.htaccess|\\.htpasswd|\\.aws|\\.ssh|" +
+    "\\.bash|\\.bashrc|\\.npmrc|\\.yarnrc|\\.pypirc|\\.docker|\\.vscode|" +
+    "\\.idea|\\.firebase|\\.gitlab-ci|\\.git-credentials|" +
+    "wp-|wp_|wordpress|phpmyadmin|pma|adminer|admin\\.php|xmlrpc\\.php|" +
+    "composer\\.(?:json|lock)|package(?:-lock)?\\.json|yarn\\.lock|" +
+    "appsettings|local\\.settings|" +
+    "application(?:-[\\w-]+)?\\.(?:yml|yaml|properties|json)|" +
+    "database\\.yml|secrets\\.yml|" +
+    "config(?:[\\w\\/.-]*)\\.(?:php|yml|yaml|json|ini|xml)|" +
+    "local_settings\\.py|settings(?:[\\w\\/.-]*)\\.py|" +
+    "next\\.config|nuxt\\.config|vite\\.config|" +
+    "firebase\\.json|amplify\\.yml|web\\.config|" +
+    "Dockerfile|docker-compose|Jenkinsfile|" +
+    "cgi-bin|cgi/|" +
+    "backup\\.sql|dump\\.sql|database\\.sql|db\\.sql|" +
+    "storage\\/logs|logs?\\/[\\w.-]+\\.log|var\\/log\\/" +
+  ")[\\S]*?) HTTP\\/", "i"
+);
+
+function parseClientIp(head, fallback) {
+  const m = /\r\nX-Forwarded-For:\s*([^,\r\n]+)/i.exec(head);
+  return m ? m[1].trim() : (fallback || "unknown");
+}
+
+function extractRequestLine(head) {
+  const m = /^([A-Z]+ \S+) HTTP\//.exec(head);
+  return m ? m[1] : "?";
+}
 
 if (!TOKEN) {
   console.error("FATAL: TUNNEL_TOKEN env var is required");
@@ -183,6 +231,15 @@ server.on("connection", socket => {
       socket.unshift(chunk);
       defaultConnectionListener.call(server, socket);
       socket.resume();
+      return;
+    }
+    // Short-circuit known vulnerability-scanner paths before they reach the
+    // ESP.  Logging the (IP, request-line) pair lets fail2ban ban repeaters.
+    const head = chunk.toString("ascii", 0, Math.min(chunk.length, HEAD_PEEK_BYTES));
+    if (BLOCKED_PATH_RE.test(head)) {
+      const ip = parseClientIp(head, socket.remoteAddress);
+      logBlocked(ip, extractRequestLine(head));
+      socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
       return;
     }
     attachStream(socket, chunk);
