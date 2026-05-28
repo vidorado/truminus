@@ -117,7 +117,20 @@ const CACHE_DIR        = process.env.CACHE_DIR || path.join(process.cwd(), "cach
 const CACHE_MAX_BYTES  = 2 * 1024 * 1024;      // per-response ceiling
 const CACHE_KEY_RE     = /\?v=[a-f0-9]+/i;     // require a cache-bust hash
 const CHUNK_TERMINATOR = Buffer.from("0\r\n\r\n");
-try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch {}
+
+// Surface mkdir/permission problems loudly: a silent failure here means
+// every request is a cache miss for the lifetime of the process, with no
+// log line on each miss to give the operator a clue.  Print the resolved
+// path on success too so deployments can sanity-check the location.
+let cacheEnabled = false;
+try {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  fs.accessSync(CACHE_DIR, fs.constants.W_OK);
+  cacheEnabled = true;
+  LOG(`cache enabled at ${CACHE_DIR}`);
+} catch (err) {
+  LOG(`cache DISABLED: cannot use ${CACHE_DIR}: ${err.message}`);
+}
 
 function cacheKey(method, url) {
   return crypto.createHash("sha256").update(`${method} ${url}`).digest("hex");
@@ -131,11 +144,11 @@ function parseRequestLine(chunk) {
 }
 
 function isCacheable(req) {
-  return req && req.method === "GET" && CACHE_KEY_RE.test(req.url);
+  return cacheEnabled && req && req.method === "GET" && CACHE_KEY_RE.test(req.url);
 }
 
 function tryServeFromCache(socket, req) {
-  if (!isCacheable(req)) return false;
+  if (!cacheEnabled || !isCacheable(req)) return false;
   let buf;
   try { buf = fs.readFileSync(cachePath(cacheKey(req.method, req.url))); }
   catch { return false; }
