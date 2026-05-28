@@ -30,15 +30,26 @@ const TOKEN = process.env.TUNNEL_TOKEN || "";
 
 // LOG_FILE lets the operator pin the application log to a known path that
 // survives Passenger restarts and isn't buried under Plesk's log layout.
-// We still write to stdout so Passenger's own log captures everything; the
-// file is a parallel, append-only mirror.
-const LOG_FILE = process.env.LOG_FILE || "";
-const logStream = LOG_FILE ? fs.createWriteStream(LOG_FILE, { flags: "a" }) : null;
+// Defaults to ./logs/server.log next to the app so operators don't have to
+// hunt for Plesk's Passenger log; override with LOG_FILE for an explicit
+// path.  Falls back to stdout-only if the chosen directory isn't writable
+// (same fallback shape as CACHE_DIR).  We still write to stdout in any
+// case so Passenger's own log captures everything; the file is a
+// parallel append-only mirror.
+const LOG_FILE = process.env.LOG_FILE || path.join(process.cwd(), "logs", "server.log");
+let logStream = null;
+try {
+  fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+  logStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
+} catch (err) {
+  console.log(new Date().toISOString(), `log file disabled: cannot use ${LOG_FILE}: ${err.message}`);
+}
 const LOG = (...a) => {
   const line = `${new Date().toISOString()} ${a.join(" ")}`;
   console.log(line);
   if (logStream) logStream.write(line + "\n");
 };
+if (logStream) LOG(`log file at ${LOG_FILE}`);
 
 // Dedicated log file for blocked vulnerability-scanner hits.  fail2ban tails
 // this file; one line per attempt, with a stable "BLOCKED <ip> <method> <path>"
