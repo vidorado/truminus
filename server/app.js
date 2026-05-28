@@ -21,6 +21,8 @@
 
 import http from "node:http";
 import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
 import { WebSocketServer } from "ws";
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -98,10 +100,71 @@ let nextId = 1;
 // where one congested send blocks every other loopback socket.  When
 // the cap is reached, new browser connections sit in a FIFO with their
 // TCP paused; the next active close drains the queue.
-const MAX_CONCURRENT       = 6;
+const MAX_CONCURRENT       = 3;
 const PENDING_TIMEOUT_MS   = 10000;
 const PENDING_QUEUE_LIMIT  = 64;
 const pendingQueue = [];   // { socket, firstChunk, timer, onClose }
+
+// --- Reverse asset cache -----------------------------------------------------
+// Static assets are served with cache-busting ?v=<sha1> querystrings, so the
+// URL itself is a content key — when bytes change, the URL changes.  We cache
+// the raw HTTP response (status line + headers + chunked body, exactly as the
+// ESP emitted it) keyed by sha256(METHOD + URL) and replay it byte-for-byte
+// on subsequent requests, bypassing the tunnel entirely.  Survives across
+// browser cache wipes, incognito, and most importantly Ctrl+F5 — the
+// scenario where every parallel asset request hits the ESP cold.
+const CACHE_DIR        = process.env.CACHE_DIR || path.join(process.cwd(), "cache");
+const CACHE_MAX_BYTES  = 2 * 1024 * 1024;      // per-response ceiling
+const CACHE_KEY_RE     = /\?v=[a-f0-9]+/i;     // require a cache-bust hash
+const CHUNK_TERMINATOR = Buffer.from("0\r\n\r\n");
+try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch {}
+
+function cacheKey(method, url) {
+  return crypto.createHash("sha256").update(`${method} ${url}`).digest("hex");
+}
+function cachePath(key) { return path.join(CACHE_DIR, `${key}.bin`); }
+
+function parseRequestLine(chunk) {
+  const head = chunk.toString("ascii", 0, Math.min(chunk.length, HEAD_PEEK_BYTES));
+  const m = /^([A-Z]+) (\S+) HTTP\/1\.[01]\r\n/.exec(head);
+  return m ? { method: m[1], url: m[2] } : null;
+}
+
+function isCacheable(req) {
+  return req && req.method === "GET" && CACHE_KEY_RE.test(req.url);
+}
+
+function tryServeFromCache(socket, req) {
+  if (!isCacheable(req)) return false;
+  let buf;
+  try { buf = fs.readFileSync(cachePath(cacheKey(req.method, req.url))); }
+  catch { return false; }
+  socket.end(buf);
+  LOG(`cache HIT ${req.url} (${buf.length}B)`);
+  return true;
+}
+
+// Validate a buffered response before persisting.  Must be HTTP 200, chunked
+// transfer (the ESP's exclusive framing for served files), and end with the
+// proper terminator chunk.  Anything else means partial/error response that
+// would poison the cache.
+function isCompleteOk200(buf) {
+  const hdrEnd = buf.indexOf("\r\n\r\n");
+  if (hdrEnd < 0) return false;
+  const headersStr = buf.slice(0, hdrEnd).toString("ascii");
+  if (!/^HTTP\/1\.[01] 200 /.test(headersStr)) return false;
+  if (!/\r\nTransfer-Encoding:\s*chunked/i.test(headersStr)) return false;
+  return buf.subarray(buf.length - CHUNK_TERMINATOR.length).equals(CHUNK_TERMINATOR);
+}
+
+function cacheCommit(req, buf) {
+  if (!isCompleteOk200(buf)) return;
+  const p = cachePath(cacheKey(req.method, req.url));
+  fs.writeFile(p, buf, err => {
+    if (err) LOG(`cache write failed ${req.url}: ${err.message}`);
+    else     LOG(`cache MISS→STORE ${req.url} (${buf.length}B)`);
+  });
+}
 
 function espAlive() { return esp && esp.readyState === 1; }
 function sendCtrl(msg) { if (espAlive()) esp.send(JSON.stringify(msg)); }
@@ -155,6 +218,11 @@ function teardownStreams(why) {
 }
 
 function attachStream(socket, firstChunk) {
+  // Cache hit: serve from disk, never wake the ESP.  Works even when the
+  // tunnel is offline — the static asset survives outages by definition.
+  const req = parseRequestLine(firstChunk);
+  if (tryServeFromCache(socket, req)) return;
+
   if (!espAlive()) {
     socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\ntunnel offline\n");
     return;
@@ -165,7 +233,7 @@ function attachStream(socket, firstChunk) {
       return;
     }
     socket.pause();
-    const item = { socket, firstChunk, timer: null, onClose: null };
+    const item = { socket, firstChunk, req, timer: null, onClose: null };
     item.timer = setTimeout(() => {
       const i = pendingQueue.indexOf(item);
       if (i < 0) return;
@@ -185,12 +253,22 @@ function attachStream(socket, firstChunk) {
     pendingQueue.push(item);
     return;
   }
-  attachStreamNow(socket, firstChunk);
+  attachStreamNow(socket, firstChunk, req);
 }
 
-function attachStreamNow(socket, firstChunk) {
+function attachStreamNow(socket, firstChunk, req) {
   const id = nextId++;
-  streams.set(id, { socket });
+  const cacheable = isCacheable(req);
+  const stream = {
+    socket,
+    req,
+    // When the response qualifies for caching we accumulate every byte the
+    // ESP sends back; on stream close we validate and persist.  Setting
+    // `buf` to null disables capture (response too big, or non-cacheable).
+    buf: cacheable ? [] : null,
+    bufLen: 0,
+  };
+  streams.set(id, stream);
   sendCtrl({ type: "open", id });
   if (firstChunk && firstChunk.length) sendData(id, firstChunk);
 
@@ -223,7 +301,18 @@ function handleEsp(ws) {
       const id = raw.readUInt32BE(0);
       const s = streams.get(id);
       if (!s) return;
-      s.socket.write(raw.subarray(4));
+      const payload = raw.subarray(4);
+      s.socket.write(payload);
+      // Accumulate for the reverse cache.  Disable capture if the response
+      // exceeds the per-entry ceiling so a runaway upload can't blow heap.
+      if (s.buf !== null) {
+        if (s.bufLen + payload.length > CACHE_MAX_BYTES) {
+          s.buf = null;
+        } else {
+          s.buf.push(Buffer.from(payload));
+          s.bufLen += payload.length;
+        }
+      }
       return;
     }
     // Text frame: JSON control message.
@@ -245,6 +334,10 @@ function handleEsp(ws) {
         s.socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nupstream closed\n");
       } else {
         s.socket.end();
+      }
+      // Persist a complete-looking response before we drop the buffer.
+      if (s.buf !== null && s.bufLen > 0) {
+        cacheCommit(s.req, Buffer.concat(s.buf, s.bufLen));
       }
       streams.delete(m.id);
       drainPendingQueue();
