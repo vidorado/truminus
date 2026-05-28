@@ -27,3 +27,7 @@ data/*.gz
 
 # C6 co-processor slave firmware binary (built by 'make build-c6')
 main/slave_fw/*.bin
+
+# Windows NTFS Alternate Data Stream metadata that WSL surfaces as a
+# sibling file when copying/downloading on a Windows host.  Never source.
+*:Zone.Identifier
