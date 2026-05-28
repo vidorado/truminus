@@ -45,12 +45,27 @@ try {
 } catch (err) {
   console.log(new Date().toISOString(), `log file disabled: cannot use ${LOG_FILE}: ${err.message}`);
 }
-const LOG = (...a) => {
-  const line = `${new Date().toISOString()} ${a.join(" ")}`;
+
+// Verbosity control.  Default WARN — only abnormal events.  Bump to INFO
+// for boot/state changes (ESP connect/disconnect, tunnel listening,
+// keepalive enabled) and to DEBUG for every per-request forward/done
+// and cache hit/miss/store line — those flood the log under normal
+// browsing and are only useful when actively diagnosing.
+const LOG_LEVELS = { ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 };
+const LOG_LEVEL  = LOG_LEVELS[(process.env.LOG_LEVEL || "").toUpperCase()] ?? LOG_LEVELS.WARN;
+function emit(level, label, args) {
+  if (LOG_LEVELS[label] > LOG_LEVEL) return;
+  const line = `${new Date().toISOString()} [${label}] ${args.join(" ")}`;
   console.log(line);
   if (logStream) logStream.write(line + "\n");
-};
-if (logStream) LOG(`log file at ${LOG_FILE}`);
+}
+const LOG = (...a) => emit("WARN", "WARN", a);   // bare call defaults to WARN
+LOG.error = (...a) => emit("ERROR", "ERROR", a);
+LOG.warn  = (...a) => emit("WARN",  "WARN",  a);
+LOG.info  = (...a) => emit("INFO",  "INFO",  a);
+LOG.debug = (...a) => emit("DEBUG", "DEBUG", a);
+if (logStream) LOG.info(`log file at ${LOG_FILE}`);
+LOG.info(`log level: ${Object.keys(LOG_LEVELS)[LOG_LEVEL]}`);
 
 // Dedicated log file for blocked vulnerability-scanner hits.  fail2ban tails
 // this file; one line per attempt, with a stable "BLOCKED <ip> <method> <path>"
@@ -156,9 +171,9 @@ try {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
   fs.accessSync(CACHE_DIR, fs.constants.W_OK);
   cacheEnabled = true;
-  LOG(`cache enabled at ${CACHE_DIR}`);
+  LOG.info(`cache enabled at ${CACHE_DIR}`);
 } catch (err) {
-  LOG(`cache DISABLED: cannot use ${CACHE_DIR}: ${err.message}`);
+  LOG.warn(`cache DISABLED: cannot use ${CACHE_DIR}: ${err.message}`);
 }
 
 function cacheKey(method, url) {
@@ -182,7 +197,7 @@ function tryServeFromCache(socket, req) {
   try { buf = fs.readFileSync(cachePath(cacheKey(req.method, req.url))); }
   catch { return false; }
   socket.end(buf);
-  LOG(`cache HIT ${req.url} (${buf.length}B)`);
+  LOG.debug(`cache HIT ${req.url} (${buf.length}B)`);
   return true;
 }
 
@@ -202,16 +217,16 @@ function isCompleteOk200(buf) {
 function cacheCommit(req, buf) {
   try {
     if (!isCompleteOk200(buf)) {
-      LOG(`cache SKIP ${req.url} (${buf.length}B, not a complete 200 chunked)`);
+      LOG.debug(`cache SKIP ${req.url} (${buf.length}B, not a complete 200 chunked)`);
       return;
     }
     const p = cachePath(cacheKey(req.method, req.url));
     fs.writeFile(p, buf, err => {
-      if (err) LOG(`cache write failed ${req.url}: ${err.message}`);
-      else     LOG(`cache MISS→STORE ${req.url} (${buf.length}B)`);
+      if (err) LOG.error(`cache write failed ${req.url}: ${err.message}`);
+      else     LOG.debug(`cache MISS→STORE ${req.url} (${buf.length}B)`);
     });
   } catch (err) {
-    LOG(`cache commit error: ${err.message}`);
+    LOG.error(`cache commit error: ${err.message}`);
   }
 }
 
@@ -328,7 +343,7 @@ function attachStreamNow(socket, firstChunk, req) {
     startedAt: Date.now(),
   };
   streams.set(id, stream);
-  if (req) LOG(`forward → ESP id=${id} ${req.method} ${req.url}${cacheable ? " [cacheable]" : ""}${isWs ? " [ws]" : ""} (slots=${streams.size}/${MAX_CONCURRENT}, queue=${pendingQueue.length})`);
+  if (req) LOG.debug(`forward → ESP id=${id} ${req.method} ${req.url}${cacheable ? " [cacheable]" : ""}${isWs ? " [ws]" : ""} (slots=${streams.size}/${MAX_CONCURRENT}, queue=${pendingQueue.length})`);
   sendCtrl({ type: "open", id });
   if (firstChunk && firstChunk.length) sendData(id, firstChunk);
 
@@ -340,7 +355,7 @@ function attachStreamNow(socket, firstChunk, req) {
         cacheCommit(stream.req, Buffer.concat(stream.buf, stream.bufLen));
         stream.buf = null;
       }
-      LOG(`browser-close id=${id} (slots=${streams.size}/${MAX_CONCURRENT}, queue=${pendingQueue.length})`);
+      LOG.debug(`browser-close id=${id} (slots=${streams.size}/${MAX_CONCURRENT}, queue=${pendingQueue.length})`);
       drainPendingQueue();
     }
   });
@@ -360,7 +375,7 @@ setInterval(() => {
     if (s.isWs) continue;                            // /ws stays open forever
     if (!s.startedAt) s.startedAt = now;            // backfill for first sweep
     if (now - s.startedAt < STREAM_IDLE_MAX_MS) continue;
-    LOG(`reaping idle stream id=${id} (age=${now - s.startedAt}ms)`);
+    LOG.warn(`reaping idle stream id=${id} (age=${now - s.startedAt}ms)`);
     try { s.socket.end(); } catch {}
     sendCtrl({ type: "close", id });
     streams.delete(id);
@@ -385,15 +400,15 @@ function startKeepalive() {
   if (keepaliveTimer || !keepaliveOrigin) return;
   let urlObj;
   try { urlObj = new URL(keepaliveOrigin.replace(/\/+$/, "") + "/__keepalive__"); }
-  catch (err) { LOG(`keepalive: bad origin ${keepaliveOrigin}: ${err.message}`); return; }
+  catch (err) { LOG.error(`keepalive: bad origin ${keepaliveOrigin}: ${err.message}`); return; }
   const lib = urlObj.protocol === "https:" ? https : http;
   keepaliveTimer = setInterval(() => {
     const req = lib.get(urlObj, res => { res.resume(); });
     req.setTimeout(15000, () => req.destroy());
-    req.on("error", err => LOG(`keepalive ping error: ${err.message}`));
+    req.on("error", err => LOG.warn(`keepalive ping error: ${err.message}`));
   }, KEEPALIVE_INTERVAL_MS);
   keepaliveTimer.unref();
-  LOG(`keepalive enabled: ${urlObj.href} every ${KEEPALIVE_INTERVAL_MS/1000}s`);
+  LOG.info(`keepalive enabled: ${urlObj.href} every ${KEEPALIVE_INTERVAL_MS/1000}s`);
 }
 
 // Sniff the Host header out of a request's head buffer to latch the public
@@ -415,13 +430,13 @@ if (keepaliveOrigin) startKeepalive();
 function handleEsp(ws) {
   // Reject if another ESP was already connected.
   if (esp && esp.readyState === 1) {
-    LOG("tunnel: replacing previous ESP connection");
+    LOG.warn("tunnel: replacing previous ESP connection");
     try { esp.close(4000, "superseded"); } catch {}
     // Tear down all in-flight streams since their other end is gone.
     teardownStreams("ESP replaced");
   }
   esp = ws;
-  LOG("tunnel: ESP connected");
+  LOG.info("tunnel: ESP connected");
 
   ws.on("message", (raw, isBinary) => {
     if (isBinary) {
@@ -465,11 +480,11 @@ function handleEsp(ws) {
           sendCtrl({ type: "close", id });
           try { s.socket.end(); } catch {}
           streams.delete(id);
-          LOG(`done   ← ESP id=${id}${s.req ? " " + s.req.url : ""} (slots=${streams.size}/${MAX_CONCURRENT}, queue=${pendingQueue.length})`);
+          LOG.debug(`done   ← ESP id=${id}${s.req ? " " + s.req.url : ""} (slots=${streams.size}/${MAX_CONCURRENT}, queue=${pendingQueue.length})`);
           drainPendingQueue();
         }
       } catch (err) {
-        LOG(`stream ${id} capture error: ${err.message}`);
+        LOG.error(`stream ${id} capture error: ${err.message}`);
         s.buf = null;
       }
       return;
@@ -479,7 +494,7 @@ function handleEsp(ws) {
     try { m = JSON.parse(raw.toString()); } catch { return; }
     if (!m || typeof m.id !== "number") {
       if (m && m.type === "hello") {
-        LOG(`tunnel: hello node=${m.node}`);
+        LOG.info(`tunnel: hello node=${m.node}`);
       }
       return;
     }
@@ -507,12 +522,12 @@ function handleEsp(ws) {
   ws.on("close", () => {
     if (esp === ws) {
       esp = null;
-      LOG("tunnel: ESP disconnected");
+      LOG.warn("tunnel: ESP disconnected");
       teardownStreams("ESP disconnected");
     }
   });
 
-  ws.on("error", err => LOG("tunnel: ESP ws error:", err.message));
+  ws.on("error", err => LOG.warn("tunnel: ESP ws error:", err.message));
 }
 
 // --- Public HTTP server -------------------------------------------------------
@@ -586,12 +601,12 @@ server.on("connection", socket => {
 });
 
 server.listen(PORT, () => {
-  LOG(`tunnel: listening on :${PORT}`);
+  LOG.info(`tunnel: listening on :${PORT}`);
 });
 
 // --- graceful shutdown -------------------------------------------------------
 function shutdown(sig) {
-  LOG(`tunnel: ${sig} received, closing`);
+  LOG.info(`tunnel: ${sig} received, closing`);
   try { esp?.close(1001, "shutdown"); } catch {}
   for (const [, s] of streams) s.socket.destroy();
   server.close(() => process.exit(0));
