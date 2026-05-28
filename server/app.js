@@ -60,7 +60,14 @@ const BLOCKED_PATH_RE = new RegExp(
     "Dockerfile|docker-compose|Jenkinsfile|" +
     "cgi-bin|cgi/|" +
     "backup\\.sql|dump\\.sql|database\\.sql|db\\.sql|" +
-    "storage\\/logs|logs?\\/[\\w.-]+\\.log|var\\/log\\/" +
+    "storage\\/logs|logs?\\/[\\w.-]+\\.log|var\\/log\\/|" +
+    // Spring Boot / Actuator probes
+    "actuator(?:\\/|$)|" +
+    // Framework-tree probes for stacks we don't ship
+    "_next\\/|_nuxt\\/|static\\/js\\/main|" +
+    // Quote-injection probes: any path starting with %22 (URL-encoded ")
+    // is a scanner trying to fingerprint a vulnerable parser.
+    "%22|%27" +
   ")[\\S]*?) HTTP\\/", "i"
 );
 
