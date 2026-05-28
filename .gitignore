@@ -31,3 +31,7 @@ main/slave_fw/*.bin
 # Windows NTFS Alternate Data Stream metadata that WSL surfaces as a
 # sibling file when copying/downloading on a Windows host.  Never source.
 *:Zone.Identifier
+
+# EEZ Studio per-machine editor state — viewport position, zoom, which
+# tab is open, which object is selected.  Doesn't affect generated UI.
+*.eez-project-ui-state
