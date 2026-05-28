@@ -22,6 +22,7 @@ extern const uint8_t font_icons_ttf_start[]   asm("_binary_font_icons_ttf_start"
 extern const uint8_t font_icons_ttf_end[]     asm("_binary_font_icons_ttf_end");
 
 // Runtime-loaded fonts (Tiny TTF supports full Unicode → Latin chars work).
+static lv_font_t* s_font_14      = nullptr;
 static lv_font_t* s_font_18      = nullptr;
 static lv_font_t* s_font_20      = nullptr;
 static lv_font_t* s_font_22      = nullptr;
@@ -30,6 +31,7 @@ static lv_font_t* s_font_28      = nullptr;
 static lv_font_t* s_font_title   = nullptr;  // bold 26
 static lv_font_t* s_font_logo    = nullptr;  // bold 28
 static lv_font_t* s_font_splash  = nullptr;  // bold 52 — splash title only
+static lv_font_t* s_font_icons14 = nullptr;  // FontAwesome 4.x @ 14 (port headers)
 static lv_font_t* s_font_icons22 = nullptr;  // FontAwesome 4.x @ 22
 static lv_font_t* s_font_icons24 = nullptr;  // FontAwesome 4.x @ 24
 static lv_font_t* s_font_icons36 = nullptr;  // FontAwesome 4.x @ 36 (settings menu)
@@ -77,13 +79,14 @@ static constexpr int WATER_X = 301;
 static constexpr int WATER_W = 350;
 
 // Row 2: Fan | Solar | INVERTER
-static constexpr int FAN_W   = 213;
-static constexpr int SOLAR_X = 213;
-static constexpr int SOLAR_W = 304;
-// INVERSOR panel — right slot of ROW 2 (was empty), 283 × ROW2_H.
+static constexpr int FAN_W   = 195;
+static constexpr int SOLAR_X = 195;
+static constexpr int SOLAR_W = 250;
+// INVERSOR panel — right slot of ROW 2 (was empty), wider after SOLAR/FAN
+// were narrowed (SOLAR lost its "Volt:/Carga:/Prod:" prefix labels).
 // Layout copied from ui/truminus_ui.eez-project ("INVERTER" panel).
-static constexpr int INV_X   = 517;
-static constexpr int INV_W   = 283;
+static constexpr int INV_X   = 445;
+static constexpr int INV_W   = 355;
 // "AGUA L." panel — right-most slot of ROW 1 (next to AGUA CALIENTE).
 // 149 × ROW1_H, flush against the right edge.  Layout matches
 // ui/truminus_ui.eez-project (EMPTY 1 / SOLAR_1 panel).
@@ -183,9 +186,16 @@ static struct {
     lv_obj_t* lbl_inv_mains_w;     // shore power
     lv_obj_t* lbl_inv_load_w;      // AC out power
     lv_obj_t* lbl_inv_batt_w;      // computed battery W (V*A)
-    lv_obj_t* flow_mains;          // arrow MAINS → INV
-    lv_obj_t* flow_load;           // arrow INV → LOAD
-    lv_obj_t* flow_batt;           // arrow INV ↔ BAT
+    lv_obj_t* flow_mains;          // ghost line MAINS → INV
+    lv_obj_t* flow_load;           // ghost line INV → LOAD
+    lv_obj_t* flow_batt;           // ghost line INV ↔ BATT
+    // Zebra-stripe overlays (animated when power is flowing).
+    lv_obj_t* flow_mains_str;
+    lv_obj_t* flow_load_str;
+    lv_obj_t* flow_batt_str;
+    int8_t    flow_mains_dir;      // 0=idle, +1=right, -1=left
+    int8_t    flow_load_dir;
+    int8_t    flow_batt_dir;
     // Port box/header refs for dynamic coloring
     lv_obj_t* box_mains;  lv_obj_t* hdr_mains;  lv_obj_t* hdr_mains_lbl;
     lv_obj_t* box_load;   lv_obj_t* hdr_load;
@@ -214,6 +224,7 @@ static void load_fonts()
     const size_t reg_sz  = font_regular_ttf_end - font_regular_ttf_start;
     const size_t bold_sz = font_bold_ttf_end    - font_bold_ttf_start;
     const size_t ico_sz  = font_icons_ttf_end   - font_icons_ttf_start;
+    s_font_14    = lv_tiny_ttf_create_data(font_regular_ttf_start, reg_sz, 14);
     s_font_18    = lv_tiny_ttf_create_data(font_regular_ttf_start, reg_sz, 18);
     s_font_20    = lv_tiny_ttf_create_data(font_regular_ttf_start, reg_sz, 20);
     s_font_22    = lv_tiny_ttf_create_data(font_regular_ttf_start, reg_sz, 22);
@@ -222,12 +233,14 @@ static void load_fonts()
     s_font_title  = lv_tiny_ttf_create_data(font_bold_ttf_start,    bold_sz, 26);
     s_font_logo   = lv_tiny_ttf_create_data(font_bold_ttf_start,    bold_sz, 28);
     s_font_splash = lv_tiny_ttf_create_data(font_bold_ttf_start,    bold_sz, 52);
+    s_font_icons14 = lv_tiny_ttf_create_data(font_icons_ttf_start, ico_sz, 14);
     s_font_icons22 = lv_tiny_ttf_create_data(font_icons_ttf_start, ico_sz, 22);
     s_font_icons24 = lv_tiny_ttf_create_data(font_icons_ttf_start, ico_sz, 24);
     s_font_icons36 = lv_tiny_ttf_create_data(font_icons_ttf_start, ico_sz, 36);
 
     // Set the icon font as fallback so labels can mix Latin text + FA glyphs
     // (e.g. "FA_COG  Conf." renders correctly in a single label).
+    if (s_font_14)    s_font_14->fallback    = s_font_icons14;
     if (s_font_18)    s_font_18->fallback    = s_font_icons22;
     if (s_font_20)    s_font_20->fallback    = s_font_icons22;
     if (s_font_22)    s_font_22->fallback    = s_font_icons22;
@@ -538,7 +551,7 @@ static void build_main_screen()
     // Fan level: −/+ buttons replace old slider
     ui.btn_fan_dn = lv_button_create(p_fan);
     lv_obj_set_size(ui.btn_fan_dn, 53, 50);
-    lv_obj_set_pos(ui.btn_fan_dn, 14, 109);
+    lv_obj_set_pos(ui.btn_fan_dn, 5, 109);
     style_button(ui.btn_fan_dn);
     lv_obj_t* l_fdn = lv_label_create(ui.btn_fan_dn);
     lv_label_set_text(l_fdn, FA_CARET_D);
@@ -546,13 +559,13 @@ static void build_main_screen()
     lv_obj_center(l_fdn);
     lv_obj_add_event_cb(ui.btn_fan_dn, on_fan_dn, LV_EVENT_CLICKED, NULL);
 
-    ui.lbl_fan_lvl = make_label(p_fan, "5", s_font_28, C_TEXT, 80, 117);
+    ui.lbl_fan_lvl = make_label(p_fan, "5", s_font_28, C_TEXT, 71, 117);
     lv_obj_set_width(ui.lbl_fan_lvl, 50);
     lv_obj_set_style_text_align(ui.lbl_fan_lvl, LV_TEXT_ALIGN_CENTER, 0);
 
     ui.btn_fan_up = lv_button_create(p_fan);
     lv_obj_set_size(ui.btn_fan_up, 53, 50);
-    lv_obj_set_pos(ui.btn_fan_up, 145, 109);
+    lv_obj_set_pos(ui.btn_fan_up, 136, 109);
     style_button(ui.btn_fan_up);
     lv_obj_t* l_fup = lv_label_create(ui.btn_fan_up);
     lv_label_set_text(l_fup, FA_CARET_U);
@@ -604,7 +617,7 @@ static void build_main_screen()
     // ── SOLAR panel (col2 row2) ───────────────────────────────────────────────
     lv_obj_t* p_sol = make_section(scr, SOLAR_X, ROW2_Y, SOLAR_W, ROW2_H);
 
-    static constexpr int BATT_X = 215;
+    static constexpr int BATT_X = 165;
     static constexpr int BATT_Y = 58;
     static constexpr int NUB_W  = 12, NUB_H = 7;
 
@@ -618,16 +631,10 @@ static void build_main_screen()
     lv_obj_set_width(ui.lbl_batt_soc, TANK_W);
     lv_obj_set_style_text_align(ui.lbl_batt_soc, LV_TEXT_ALIGN_CENTER, 0);
 
-    {
-        char tb[28];
-        ui.lbl_solar_status = make_label(p_sol, "--", s_font_22, C_TEXT, 12, 52);
-        snprintf(tb, sizeof(tb), "%s --", t(TK::SOLAR_VOLT));
-        ui.lbl_solar_volts = make_label(p_sol, tb, s_font_20, C_CYAN, 12, 82);
-        snprintf(tb, sizeof(tb), "%s --", t(TK::SOLAR_LOAD));
-        ui.lbl_solar_current = make_label(p_sol, tb, s_font_20, C_CYAN_BR, 12, 111);
-        snprintf(tb, sizeof(tb), "%s --", t(TK::SOLAR_PROD));
-        ui.lbl_solar_power = make_label(p_sol, tb, s_font_20, C_YELLOW, 12, 140);
-    }
+    ui.lbl_solar_status  = make_label(p_sol, "--", s_font_22, C_TEXT,    12,  52);
+    ui.lbl_solar_volts   = make_label(p_sol, "--", s_font_20, C_CYAN,    12,  82);
+    ui.lbl_solar_current = make_label(p_sol, "--", s_font_20, C_CYAN_BR, 12, 111);
+    ui.lbl_solar_power   = make_label(p_sol, "--", s_font_20, C_YELLOW,  12, 140);
 
     auto make_nub = [&](int x) {
         lv_obj_t* n = lv_obj_create(p_sol);
@@ -667,27 +674,9 @@ static void build_main_screen()
         make_label(p_inv, "INVERSOR", s_font_title, C_DIM, 10, 12);
 
         // ON / OFF placeholder buttons.  They render so the panel looks
-        // complete, but they're disabled until VE.Bus GATT control lands.
-        auto make_btn_stub = [&](int x, const char* txt, lv_color_t bg) {
-            lv_obj_t* b = lv_button_create(p_inv);
-            lv_obj_set_pos(b, x, 12);
-            lv_obj_set_size(b, 60, 36);
-            lv_obj_set_style_bg_color(b, bg, 0);
-            lv_obj_set_style_radius(b, 5, 0);
-            lv_obj_set_style_border_width(b, 0, 0);
-            lv_obj_add_state(b, LV_STATE_DISABLED);
-            lv_obj_t* l = lv_label_create(b);
-            lv_label_set_text(l, txt);
-            lv_obj_set_style_text_color(l, C_TEXT, 0);
-            lv_obj_set_style_text_font(l, s_font_20, 0);
-            lv_obj_center(l);
-        };
-        make_btn_stub(148, "Apag.", C_BTN);
-        make_btn_stub(213, "Enc.",  C_BTN_ACTIVE);
-
         struct IoBoxOut { lv_obj_t* box; lv_obj_t* head; lv_obj_t* head_lbl; lv_obj_t* val; };
         auto make_io_box = [&](int x, int y, int w, int h,
-                               const char* hdr) -> IoBoxOut {
+                               const char* hdr, int hdr_h = 16) -> IoBoxOut {
             lv_obj_t* box = lv_obj_create(p_inv);
             lv_obj_set_pos(box, x, y);
             lv_obj_set_size(box, w, h);
@@ -699,8 +688,8 @@ static void build_main_screen()
             lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
             lv_obj_t* head = lv_obj_create(p_inv);
-            lv_obj_set_pos(head, x - 5, y - 16);
-            lv_obj_set_size(head, w - 4, 16);
+            lv_obj_set_pos(head, x, y - hdr_h);
+            lv_obj_set_size(head, w, hdr_h);
             lv_obj_set_style_bg_color(head, lv_color_hex(0x969ba3), 0);
             lv_obj_set_style_bg_opa(head, LV_OPA_COVER, 0);
             lv_obj_set_style_border_width(head, 0, 0);
@@ -710,7 +699,7 @@ static void build_main_screen()
             lv_obj_t* hl = lv_label_create(head);
             lv_label_set_text(hl, hdr);
             lv_obj_set_style_text_color(hl, C_TEXT, 0);
-            lv_obj_set_style_text_font(hl, s_font_18, 0);
+            lv_obj_set_style_text_font(hl, s_font_14, 0);
             lv_obj_center(hl);
 
             lv_obj_t* v = lv_label_create(box);
@@ -722,66 +711,148 @@ static void build_main_screen()
         };
 
         {
-            auto r = make_io_box(15, 78, 68, 44, "RED");
+            auto r = make_io_box(15, 78, 95, 44, "RED", 22);
             ui.lbl_inv_mains_w = r.val;
             ui.box_mains = r.box; ui.hdr_mains = r.head; ui.hdr_mains_lbl = r.head_lbl;
         }
         {
-            auto r = make_io_box(197, 66, 69, 47, "CARGA");
+            auto r = make_io_box(248, 66, 90, 47, "CARGAS");
             ui.lbl_inv_load_w = r.val;
             ui.box_load = r.box; ui.hdr_load = r.head;
         }
         {
-            auto r = make_io_box(197, 120, 69, 47, "BAT.");
+            auto r = make_io_box(248, 120, 90, 47, "BAT.");
             ui.lbl_inv_batt_w = r.val;
             ui.box_batt = r.box; ui.hdr_batt = r.head; ui.hdr_batt_lbl = r.head_lbl;
         }
 
-        // Multiplus icon — abstract block matching the EEZ silhouette
-        // (rounded blue body with an orange decorative bar).  Kept simple
-        // because the EEZ used many overlapping panels for ornament; the
-        // user mostly needs MAINS/CARGA/BAT/state to be readable.
+        // Multiplus body — matches the web redesign: blue body with corner
+        // ears, centered orange bar, dark display window, dark foot trim.
+        constexpr int MPX_X = 140, MPX_Y = 60, MPX_W = 78, MPX_H = 96;
+        constexpr int FOOT_H = (int)(MPX_H * 0.18f);
+        constexpr int BLUE_H = MPX_H - FOOT_H;
+
         lv_obj_t* mp = lv_obj_create(p_inv);
-        lv_obj_set_pos(mp, 111, 65);
-        lv_obj_set_size(mp, 58, 88);
+        lv_obj_set_pos(mp, MPX_X, MPX_Y);
+        lv_obj_set_size(mp, MPX_W, MPX_H);
         lv_obj_set_style_bg_color(mp, lv_color_hex(0x0077c5), 0);
         lv_obj_set_style_bg_opa(mp, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(mp, lv_color_hex(0x2b2b2b), 0);
-        lv_obj_set_style_border_width(mp, 1, 0);
-        lv_obj_set_style_radius(mp, 2, 0);
+        lv_obj_set_style_border_color(mp, lv_color_hex(0x3a3a4a), 0);
+        lv_obj_set_style_border_width(mp, 2, 0);
+        lv_obj_set_style_radius(mp, 3, 0);
         lv_obj_set_style_pad_all(mp, 0, 0);
         lv_obj_clear_flag(mp, LV_OBJ_FLAG_SCROLLABLE);
-        // Orange accent strip (LED bar look)
+
+        // Corner ears (dark rectangles at top-left and top-right)
+        auto make_ear = [&](int x) {
+            lv_obj_t* e = lv_obj_create(mp);
+            lv_obj_set_pos(e, x, 0);
+            lv_obj_set_size(e, (int)(MPX_W * 0.22f), 8);
+            lv_obj_set_style_bg_color(e, C_BG, 0);
+            lv_obj_set_style_bg_opa(e, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(e, 0, 0);
+            lv_obj_set_style_radius(e, 0, 0);
+            lv_obj_clear_flag(e, LV_OBJ_FLAG_SCROLLABLE);
+        };
+        make_ear(0);
+        make_ear(MPX_W - (int)(MPX_W * 0.22f));
+
+        // Orange accent bar (centered in the blue area)
         lv_obj_t* ob = lv_obj_create(mp);
-        lv_obj_set_pos(ob, 4, 18);
-        lv_obj_set_size(ob, 50, 4);
+        int barW = (int)(MPX_W * 0.84f);
+        lv_obj_set_pos(ob, (MPX_W - barW) / 2, BLUE_H / 2 - 8);
+        lv_obj_set_size(ob, barW, 5);
         lv_obj_set_style_bg_color(ob, lv_color_hex(0xf96432), 0);
         lv_obj_set_style_bg_opa(ob, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(ob, 0, 0);
         lv_obj_set_style_radius(ob, 1, 0);
         lv_obj_clear_flag(ob, LV_OBJ_FLAG_SCROLLABLE);
-        // State label inside the body
+
+        // Dark display window (below the bar, left-aligned)
+        lv_obj_t* dw = lv_obj_create(mp);
+        lv_obj_set_pos(dw, (int)(MPX_W * 0.12f), BLUE_H / 2 + 2);
+        lv_obj_set_size(dw, (int)(MPX_W * 0.30f), 8);
+        lv_obj_set_style_bg_color(dw, lv_color_hex(0x1a3a5c), 0);
+        lv_obj_set_style_bg_opa(dw, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(dw, 0, 0);
+        lv_obj_set_style_radius(dw, 1, 0);
+        lv_obj_clear_flag(dw, LV_OBJ_FLAG_SCROLLABLE);
+
+        // Dark foot trim (bottom ~18%)
+        lv_obj_t* ft = lv_obj_create(mp);
+        lv_obj_set_pos(ft, 0, BLUE_H);
+        lv_obj_set_size(ft, MPX_W, FOOT_H);
+        lv_obj_set_style_bg_color(ft, C_BG, 0);
+        lv_obj_set_style_bg_opa(ft, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(ft, 0, 0);
+        lv_obj_set_style_radius(ft, 0, 0);
+        lv_obj_clear_flag(ft, LV_OBJ_FLAG_SCROLLABLE);
+
+        // State label in the blue area (bottom, above foot)
         ui.lbl_inv_state = lv_label_create(mp);
         lv_label_set_text(ui.lbl_inv_state, "--");
         lv_obj_set_style_text_color(ui.lbl_inv_state, C_TEXT, 0);
-        lv_obj_set_style_text_font(ui.lbl_inv_state, s_font_18, 0);
-        lv_obj_align(ui.lbl_inv_state, LV_ALIGN_BOTTOM_MID, 0, -4);
+        lv_obj_set_style_text_font(ui.lbl_inv_state, s_font_14, 0);
+        lv_obj_set_pos(ui.lbl_inv_state, 0, BLUE_H - 16);
+        lv_obj_set_width(ui.lbl_inv_state, MPX_W);
+        lv_obj_set_style_text_align(ui.lbl_inv_state, LV_TEXT_ALIGN_CENTER, 0);
 
-        auto make_flow = [&](int x, int y, lv_obj_t** out) {
+        auto make_flow = [&](int x, int y, int w,
+                             lv_obj_t** out, lv_obj_t** stripes_out) {
             lv_obj_t* f = lv_obj_create(p_inv);
             lv_obj_set_pos(f, x, y);
-            lv_obj_set_size(f, 32, 3);
+            lv_obj_set_size(f, w, 5);
             lv_obj_set_style_bg_color(f, lv_color_hex(0xaed7f2), 0);
-            lv_obj_set_style_bg_opa(f, LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_opa(f, LV_OPA_30, 0);
             lv_obj_set_style_border_width(f, 0, 0);
             lv_obj_set_style_radius(f, 0, 0);
             lv_obj_set_style_pad_all(f, 0, 0);
             lv_obj_clear_flag(f, LV_OBJ_FLAG_SCROLLABLE);
             *out = f;
+
+            // Stripe overlay used to animate the flow when power is moving.
+            // Children anchored every 8 px (4 px stripe + 4 px gap); a global
+            // LVGL timer translates the container by phase = 0..7 each tick.
+            lv_obj_t* s = lv_obj_create(p_inv);
+            lv_obj_set_pos(s, x, y);
+            lv_obj_set_size(s, w, 5);
+            lv_obj_set_style_bg_opa(s, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(s, 0, 0);
+            lv_obj_set_style_pad_all(s, 0, 0);
+            lv_obj_clear_flag(s, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_add_flag(s, LV_OBJ_FLAG_HIDDEN);
+            for (int sx = -8; sx <= w; sx += 8) {
+                lv_obj_t* r = lv_obj_create(s);
+                lv_obj_set_pos(r, sx, 0);
+                lv_obj_set_size(r, 4, 5);
+                lv_obj_set_style_bg_color(r, lv_color_hex(0xaed7f2), 0);
+                lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+                lv_obj_set_style_border_width(r, 0, 0);
+                lv_obj_set_style_radius(r, 0, 0);
+                lv_obj_set_style_pad_all(r, 0, 0);
+                lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE);
+            }
+            *stripes_out = s;
         };
-        make_flow(81,  107, &ui.flow_mains);   // MAINS → INV
-        make_flow(167,  91, &ui.flow_load);    // INV → LOAD
-        make_flow(167, 138, &ui.flow_batt);    // INV → BAT
+        // MAINS box ends at x=110, MPX starts at MPX_X=140 → gap 30px
+        make_flow(110, 98,  30, &ui.flow_mains, &ui.flow_mains_str);
+        // MPX ends at MPX_X+MPX_W=218, LOAD/BATT boxes start at x=248 → gap 30px
+        make_flow(218, 88,  30, &ui.flow_load,  &ui.flow_load_str);
+        make_flow(218, 141, 30, &ui.flow_batt,  &ui.flow_batt_str);
+
+        // Zebra animation driver — translates each active stripe container
+        // by phase px on every tick.  Period 60 ms × 8 phases = 480 ms / cycle.
+        lv_timer_create([](lv_timer_t*) {
+            static uint8_t phase = 0;
+            phase = (phase + 1) & 7;
+            auto step = [](lv_obj_t* s, int8_t dir) {
+                if (!s || dir == 0) return;
+                lv_obj_set_style_translate_x(s, dir > 0 ? phase : -(int)phase, 0);
+            };
+            step(ui.flow_mains_str, ui.flow_mains_dir);
+            step(ui.flow_load_str,  ui.flow_load_dir);
+            step(ui.flow_batt_str,  ui.flow_batt_dir);
+        }, 60, nullptr);
     }
 
     // ── AGUA L. panel (fresh-water tank, BTHome) ──────────────────────────────
@@ -1317,6 +1388,26 @@ static const char* translate_solar_status(const char* s)
     return s;
 }
 
+static const char* translate_multi_state(uint8_t mode)
+{
+    switch (mode) {
+        case 0:   return t(TK::SOL_STATUS_OFF);
+        case 1:   return t(TK::SOL_STATUS_LOW_POWER);
+        case 2:   return t(TK::SOL_STATUS_FAULT);
+        case 3:   return t(TK::SOL_STATUS_BULK);
+        case 4:   return t(TK::SOL_STATUS_ABSORB);
+        case 5:   return t(TK::SOL_STATUS_FLOAT);
+        case 6:   return t(TK::MULTI_STATE_STORAGE);
+        case 7:   return t(TK::MULTI_STATE_EQUALIZE);
+        case 8:   return t(TK::MULTI_STATE_PASSTHRU);
+        case 9:   return t(TK::MULTI_STATE_INVERTING);
+        case 10:  return t(TK::MULTI_STATE_ASSIST);
+        case 11:  return t(TK::MULTI_STATE_SUPPLY);
+        case 252: return t(TK::MULTI_STATE_EXT_CTRL);
+        default:  return "--";
+    }
+}
+
 void p4DisplayUpdate(const P4DisplayData& d)
 {
     static char buf[40];
@@ -1386,20 +1477,17 @@ void p4DisplayUpdate(const P4DisplayData& d)
     // Solar data — when invalid show "--" everywhere
     if (d.solar.valid) {
         lv_label_set_text(ui.lbl_solar_status, translate_solar_status(d.solar.status));
-        snprintf(buf, sizeof(buf), "%s %.1f V", t(TK::SOLAR_VOLT), d.solar.voltageV);
+        snprintf(buf, sizeof(buf), "%.1f V", d.solar.voltageV);
         lv_label_set_text(ui.lbl_solar_volts, buf);
-        snprintf(buf, sizeof(buf), "%s %.1f A / %d W", t(TK::SOLAR_LOAD), d.solar.currentA, d.solar.powerW);
+        snprintf(buf, sizeof(buf), "%.1f A / %d W", d.solar.currentA, d.solar.powerW);
         lv_label_set_text(ui.lbl_solar_current, buf);
-        snprintf(buf, sizeof(buf), "%s %d W", t(TK::SOLAR_PROD), d.solar.powerW);
+        snprintf(buf, sizeof(buf), "%d W", d.solar.powerW);
         lv_label_set_text(ui.lbl_solar_power, buf);
     } else {
-        lv_label_set_text(ui.lbl_solar_status, "--");
-        snprintf(buf, sizeof(buf), "%s --", t(TK::SOLAR_VOLT));
-        lv_label_set_text(ui.lbl_solar_volts, buf);
-        snprintf(buf, sizeof(buf), "%s --", t(TK::SOLAR_LOAD));
-        lv_label_set_text(ui.lbl_solar_current, buf);
-        snprintf(buf, sizeof(buf), "%s --", t(TK::SOLAR_PROD));
-        lv_label_set_text(ui.lbl_solar_power, buf);
+        lv_label_set_text(ui.lbl_solar_status,  "--");
+        lv_label_set_text(ui.lbl_solar_volts,   "--");
+        lv_label_set_text(ui.lbl_solar_current, "--");
+        lv_label_set_text(ui.lbl_solar_power,   "--");
     }
 
     // Battery
@@ -1425,8 +1513,7 @@ void p4DisplayUpdate(const P4DisplayData& d)
             lv_obj_set_style_bg_color(hdr, hc, 0);
         };
         if (d.multi.valid) {
-            lv_label_set_text(ui.lbl_inv_state,
-                d.multi.stateName ? d.multi.stateName : "--");
+            lv_label_set_text(ui.lbl_inv_state, translate_multi_state(d.multi.deviceState));
             snprintf(tb, sizeof(tb), "%d W", (int)d.multi.acInW);
             lv_label_set_text(ui.lbl_inv_mains_w, tb);
             snprintf(tb, sizeof(tb), "%d W", (int)d.multi.acOutW);
@@ -1436,12 +1523,18 @@ void p4DisplayUpdate(const P4DisplayData& d)
             snprintf(tb, sizeof(tb), "%d W", battW);
             lv_label_set_text(ui.lbl_inv_batt_w, tb);
 
-            auto flow_opa = [](int absW) {
-                return (absW > 5) ? LV_OPA_COVER : LV_OPA_30;
+            // Drive the zebra-stripe animation.  Positive direction = flow
+            // away from MPX (right) for mains/load; for batt, positive =
+            // charging (MPX → BATT), negative = discharging (BATT → MPX).
+            auto drive_flow = [](lv_obj_t* stripes, int8_t* dir_out, int signedW) {
+                int8_t dir = (signedW > 5) ? 1 : (signedW < -5 ? -1 : 0);
+                *dir_out = dir;
+                if (dir != 0) lv_obj_clear_flag(stripes, LV_OBJ_FLAG_HIDDEN);
+                else          lv_obj_add_flag(stripes,   LV_OBJ_FLAG_HIDDEN);
             };
-            lv_obj_set_style_bg_opa(ui.flow_mains, flow_opa(abs(d.multi.acInW)),  0);
-            lv_obj_set_style_bg_opa(ui.flow_load,  flow_opa(abs(d.multi.acOutW)), 0);
-            lv_obj_set_style_bg_opa(ui.flow_batt,  flow_opa(abs(battW)),          0);
+            drive_flow(ui.flow_mains_str, &ui.flow_mains_dir, d.multi.acInW);
+            drive_flow(ui.flow_load_str,  &ui.flow_load_dir,  d.multi.acOutW);
+            drive_flow(ui.flow_batt_str,  &ui.flow_batt_dir,  battW);
 
             // RED: green when AC input connected (ac_in_state 0 or 1)
             bool acOn = d.multi.acInState < 2;
@@ -1475,9 +1568,10 @@ void p4DisplayUpdate(const P4DisplayData& d)
             lv_label_set_text(ui.lbl_inv_mains_w, "--");
             lv_label_set_text(ui.lbl_inv_load_w,  "--");
             lv_label_set_text(ui.lbl_inv_batt_w,  "--");
-            lv_obj_set_style_bg_opa(ui.flow_mains, LV_OPA_30, 0);
-            lv_obj_set_style_bg_opa(ui.flow_load,  LV_OPA_30, 0);
-            lv_obj_set_style_bg_opa(ui.flow_batt,  LV_OPA_30, 0);
+            ui.flow_mains_dir = ui.flow_load_dir = ui.flow_batt_dir = 0;
+            lv_obj_add_flag(ui.flow_mains_str, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(ui.flow_load_str,  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(ui.flow_batt_str,  LV_OBJ_FLAG_HIDDEN);
             set_port_color(ui.box_mains, ui.hdr_mains, C_PORT_GREY_BODY, C_PORT_GREY_HDR);
             set_port_color(ui.box_load,  ui.hdr_load,  C_PORT_GREY_BODY, C_PORT_GREY_HDR);
             set_port_color(ui.box_batt,  ui.hdr_batt,  C_PORT_GREY_BODY, C_PORT_GREY_HDR);

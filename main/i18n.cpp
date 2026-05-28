@@ -15,8 +15,8 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Eco",                      // FAN_ECO
     "Alto",                     // FAN_HIGH
     "Apag.",                    // FAN_OFF
-    "On",                       // ON
-    "Off",                      // OFF
+    "Enc.",                     // ON
+    "Apag.",                    // OFF
     "AGUA CALIENTE",            // HOT_WATER
     "ENERGIA",                  // ENERGY
     "CONFIGURACI\xC3\x93N",     // SETTINGS
@@ -105,6 +105,14 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Carga",
     "Absorci\xC3\xB3n",
     "Flotaci\xC3\xB3n",
+    // Multiplus / VE.Bus
+    "Almac.",                       // MULTI_STATE_STORAGE
+    "Ecualiz.",                     // MULTI_STATE_EQUALIZE
+    "Bypass",                       // MULTI_STATE_PASSTHRU
+    "Invirtiendo",                  // MULTI_STATE_INVERTING
+    "Asist. red",                   // MULTI_STATE_ASSIST
+    "Suministro",                   // MULTI_STATE_SUPPLY
+    "Ctrl ext.",                    // MULTI_STATE_EXT_CTRL
     // Tunnel WSS
     "T\xC3\xBAnel",                                                  // TUNNEL_CFG
     "TruMinus - T\xC3\xBAnel WS",                                    // TUNNEL_TITLE
@@ -127,8 +135,8 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Eco",
     "High",
     "Off.",
-    "On",
-    "Off",
+    "On.",
+    "Off.",
     "HOT WATER",
     "ENERGY",
     "SETTINGS",
@@ -217,6 +225,14 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Bulk",
     "Absorption",
     "Float",
+    // Multiplus / VE.Bus
+    "Storage",                      // MULTI_STATE_STORAGE
+    "Equalize",                     // MULTI_STATE_EQUALIZE
+    "Passthru",                     // MULTI_STATE_PASSTHRU
+    "Inverting",                    // MULTI_STATE_INVERTING
+    "Power Assist",                 // MULTI_STATE_ASSIST
+    "Power Supply",                 // MULTI_STATE_SUPPLY
+    "External Ctrl",                // MULTI_STATE_EXT_CTRL
     // Tunnel WSS
     "Tunnel",                                                        // TUNNEL_CFG
     "TruMinus - WS Tunnel",                                          // TUNNEL_TITLE

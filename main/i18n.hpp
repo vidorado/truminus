@@ -108,6 +108,14 @@ enum class TK : uint8_t {
     SOL_STATUS_BULK,       // "Carga"             / "Bulk"
     SOL_STATUS_ABSORB,     // "Absorci\xC3\xB3n"  / "Absorption"
     SOL_STATUS_FLOAT,      // "Flotaci\xC3\xB3n"  / "Float"
+    // ── Multiplus / VE.Bus operation modes ──────────────────────────────────
+    MULTI_STATE_STORAGE,    // "Almac." / "Storage"
+    MULTI_STATE_EQUALIZE,   // "Ecualiz." / "Equalize"
+    MULTI_STATE_PASSTHRU,   // "Bypass" / "Passthru"
+    MULTI_STATE_INVERTING,  // "Invirtiendo" / "Inverting"
+    MULTI_STATE_ASSIST,     // "Asist. red" / "Power Assist"
+    MULTI_STATE_SUPPLY,     // "Suministro" / "Power Supply"
+    MULTI_STATE_EXT_CTRL,   // "Ctrl ext." / "External Ctrl"
     // ── WebSocket reverse tunnel ───────────────────────────────────────────
     TUNNEL_CFG,            // settings menu: "T\xC3\xBAnel" / "Tunnel"
     TUNNEL_TITLE,
