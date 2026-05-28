@@ -463,14 +463,12 @@ function applySolar(d) {
         stateLbl.textContent = '--';
         document.getElementById('solar_pvW').textContent  = '--';
         document.getElementById('solar_kWh').textContent  = '--';
-        document.getElementById('solar_battV').textContent = '--';
         document.getElementById('solar_battA').textContent = '--';
         return;
     }
     stateLbl.textContent = t(SOLAR_STATES[d.state] || 'sol_off');
     document.getElementById('solar_pvW').textContent   = d.pvW;
     document.getElementById('solar_kWh').textContent   = d.kWh;
-    document.getElementById('solar_battV').textContent = d.battV;
     document.getElementById('solar_battA').textContent = d.battA;
 }
 
