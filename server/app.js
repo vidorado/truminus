@@ -307,12 +307,15 @@ function attachStream(socket, firstChunk) {
 function attachStreamNow(socket, firstChunk, req) {
   const id = nextId++;
   const cacheable = isCacheable(req);
+  // WebSocket sessions to /ws stay open for the lifetime of the browser
+  // session.  They must be exempted from both the chunked-terminator
+  // proactive close and the idle reaper, otherwise the live LCD data
+  // pipe gets killed every 30 s.
+  const isWs = !!(req && /^\/ws(?:\?|\/|$)/.test(req.url));
   const stream = {
     socket,
     req,
-    // When the response qualifies for caching we accumulate every byte the
-    // ESP sends back; on stream close we validate and persist.  Setting
-    // `buf` to null disables capture (response too big, or non-cacheable).
+    isWs,
     buf: cacheable ? [] : null,
     bufLen: 0,
     // Rolling tail of the last bytes we forwarded to the browser, used to
@@ -324,7 +327,7 @@ function attachStreamNow(socket, firstChunk, req) {
     startedAt: Date.now(),
   };
   streams.set(id, stream);
-  if (req) LOG(`forward → ESP id=${id} ${req.method} ${req.url}${cacheable ? " [cacheable]" : ""} (slots=${streams.size}/${MAX_CONCURRENT}, queue=${pendingQueue.length})`);
+  if (req) LOG(`forward → ESP id=${id} ${req.method} ${req.url}${cacheable ? " [cacheable]" : ""}${isWs ? " [ws]" : ""} (slots=${streams.size}/${MAX_CONCURRENT}, queue=${pendingQueue.length})`);
   sendCtrl({ type: "open", id });
   if (firstChunk && firstChunk.length) sendData(id, firstChunk);
 
@@ -353,6 +356,7 @@ setInterval(() => {
   if (streams.size === 0) return;
   const now = Date.now();
   for (const [id, s] of streams) {
+    if (s.isWs) continue;                            // /ws stays open forever
     if (!s.startedAt) s.startedAt = now;            // backfill for first sweep
     if (now - s.startedAt < STREAM_IDLE_MAX_MS) continue;
     LOG(`reaping idle stream id=${id} (age=${now - s.startedAt}ms)`);
@@ -383,6 +387,8 @@ function handleEsp(ws) {
       if (!s || s.done) return;
       const payload = raw.subarray(4);
       s.socket.write(payload);
+      // WS streams: just forward, no terminator detection, no caching.
+      if (s.isWs) return;
       try {
         if (s.buf !== null) {
           if (s.bufLen + payload.length > CACHE_MAX_BYTES) {
