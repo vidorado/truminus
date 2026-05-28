@@ -236,11 +236,13 @@ connecting (500 ms cadence via an LVGL timer), solid `rgb(70,131,210)`
 when up, red after 3 consecutive disconnects without a successful
 connect.
 
-The **bridge** lives under `server/` (in this monorepo for now,
-planned to split into its own repo).  See `server/README.md` for
-deploy steps and `server/.claude/skills/tunnel-bridge/SKILL.md` for
-its operational design — cache, queue, Passenger gotchas, nginx
-config.  Both sides must agree on the wire protocol documented there.
+The **bridge** lives in its own repo at
+[`vidorado/truminus-cloud-server`](https://github.com/vidorado/truminus-cloud-server)
+(checked out as a sibling directory `../truminus-cloud-server/`).  See
+its `README.md` for deploy steps and
+`.claude/skills/tunnel-bridge/SKILL.md` for its operational design —
+cache, queue, Passenger gotchas, nginx config.  Both sides must agree
+on the wire protocol documented there.
 
 ### Local httpd is split into two instances
 `pick_local_port()` in `wstunnel.cpp` sniffs the first request bytes
@@ -307,4 +309,4 @@ rationale.
 - **`.claude/skills/multiplusble/SKILL.md`** — Victron VE.Bus / Multiplus Instant Readout (record 0x0C) — envelope, bit-stream layout, operation-mode enum.
 - **`.claude/skills/ultimatronble/SKILL.md`** — Ultimatron BMS GATT protocol.
 - **`.claude/skills/ui-interfaces/SKILL.md`** — coordination between LCD touch UI and the WebSocket web UI (single source of truth in `settings.cpp`).
-- **`.claude/skills/wss-tunnel/SKILL.md`** — WSS reverse tunnel, firmware side: two-httpd split, Nagle on loopback, LRU eviction of WS, mbedtls/PSA heap.  The bridge side lives at `server/.claude/skills/tunnel-bridge/SKILL.md` (will travel with the server when it splits into its own repo).
+- **`.claude/skills/wss-tunnel/SKILL.md`** — WSS reverse tunnel, firmware side: two-httpd split, Nagle on loopback, LRU eviction of WS, mbedtls/PSA heap.  The bridge side lives in the companion repo [`vidorado/truminus-cloud-server`](https://github.com/vidorado/truminus-cloud-server) at `.claude/skills/tunnel-bridge/SKILL.md`.
