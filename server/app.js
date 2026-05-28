@@ -91,6 +91,18 @@ let esp = null;                                  // the one connected device
 const streams = new Map();                       // id -> { socket }
 let nextId = 1;
 
+// Cap concurrent in-flight tunneled streams toward the ESP.  The ESP's
+// pump task services streams sequentially and a congested TLS send can
+// stall all of them; capping below the firmware's MAX_STREAMS=12 leaves
+// headroom for the long-lived /ws session and prevents the cascade
+// where one congested send blocks every other loopback socket.  When
+// the cap is reached, new browser connections sit in a FIFO with their
+// TCP paused; the next active close drains the queue.
+const MAX_CONCURRENT       = 6;
+const PENDING_TIMEOUT_MS   = 10000;
+const PENDING_QUEUE_LIMIT  = 64;
+const pendingQueue = [];   // { socket, firstChunk, timer, onClose }
+
 function espAlive() { return esp && esp.readyState === 1; }
 function sendCtrl(msg) { if (espAlive()) esp.send(JSON.stringify(msg)); }
 function sendData(id, buf) {
@@ -100,6 +112,27 @@ function sendData(id, buf) {
   out.writeUInt32BE(id >>> 0, 0);
   buf.copy(out, 4);
   esp.send(out, { binary: true });
+}
+
+function drainPendingQueue() {
+  while (streams.size < MAX_CONCURRENT && pendingQueue.length > 0) {
+    const item = pendingQueue.shift();
+    clearTimeout(item.timer);
+    item.socket.removeListener("close", item.onClose);
+    if (item.socket.destroyed || item.socket.writableEnded) continue;
+    attachStreamNow(item.socket, item.firstChunk);
+  }
+}
+
+function clearPendingQueue(why) {
+  while (pendingQueue.length > 0) {
+    const item = pendingQueue.shift();
+    clearTimeout(item.timer);
+    item.socket.removeListener("close", item.onClose);
+    if (!item.socket.destroyed && !item.socket.writableEnded) {
+      item.socket.end(`HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n${why}\n`);
+    }
+  }
 }
 
 // Cleanly close every in-flight tunneled stream. If a stream hasn't sent
@@ -118,6 +151,7 @@ function teardownStreams(why) {
     }
   }
   streams.clear();
+  clearPendingQueue(why);
 }
 
 function attachStream(socket, firstChunk) {
@@ -125,6 +159,36 @@ function attachStream(socket, firstChunk) {
     socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\ntunnel offline\n");
     return;
   }
+  if (streams.size >= MAX_CONCURRENT) {
+    if (pendingQueue.length >= PENDING_QUEUE_LIMIT) {
+      socket.end("HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nRetry-After: 1\r\nConnection: close\r\n\r\ntunnel queue full\n");
+      return;
+    }
+    socket.pause();
+    const item = { socket, firstChunk, timer: null, onClose: null };
+    item.timer = setTimeout(() => {
+      const i = pendingQueue.indexOf(item);
+      if (i < 0) return;
+      pendingQueue.splice(i, 1);
+      socket.removeListener("close", item.onClose);
+      if (!socket.destroyed && !socket.writableEnded) {
+        socket.end("HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nRetry-After: 1\r\nConnection: close\r\n\r\ntunnel busy\n");
+      }
+    }, PENDING_TIMEOUT_MS);
+    item.onClose = () => {
+      const i = pendingQueue.indexOf(item);
+      if (i < 0) return;
+      pendingQueue.splice(i, 1);
+      clearTimeout(item.timer);
+    };
+    socket.once("close", item.onClose);
+    pendingQueue.push(item);
+    return;
+  }
+  attachStreamNow(socket, firstChunk);
+}
+
+function attachStreamNow(socket, firstChunk) {
   const id = nextId++;
   streams.set(id, { socket });
   sendCtrl({ type: "open", id });
@@ -132,9 +196,13 @@ function attachStream(socket, firstChunk) {
 
   socket.on("data", buf => sendData(id, buf));
   socket.on("close", () => {
-    if (streams.delete(id)) sendCtrl({ type: "close", id });
+    if (streams.delete(id)) {
+      sendCtrl({ type: "close", id });
+      drainPendingQueue();
+    }
   });
   socket.on("error", () => socket.destroy());
+  socket.resume();
 }
 
 function handleEsp(ws) {
@@ -179,6 +247,7 @@ function handleEsp(ws) {
         s.socket.end();
       }
       streams.delete(m.id);
+      drainPendingQueue();
     }
   });
 
