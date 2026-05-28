@@ -20,6 +20,7 @@
 //   on both sides.
 
 import http from "node:http";
+import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -367,6 +368,50 @@ setInterval(() => {
   if (pendingQueue.length > 0) drainPendingQueue();
 }, 5000).unref();
 
+// Passenger idle-kills workers whose only traffic is raw TCP after a WS
+// upgrade — it doesn't count the post-upgrade byte stream as "activity".
+// Default passenger_pool_idle_time is 300 s, after which our worker dies
+// and the ESP has to reconnect (with all in-flight queued items 502'd).
+// passenger_pool_idle_time has to live in nginx's http context which
+// Plesk doesn't expose per-domain, so we feed Passenger a real HTTP
+// request every 60 s.  We latch the public origin from the first inbound
+// request's Host header so no env var is needed; KEEPALIVE_URL can still
+// override (useful for testing or if the latch never warms up).
+const KEEPALIVE_INTERVAL_MS = 60000;
+let keepaliveOrigin = process.env.KEEPALIVE_URL || "";   // e.g. https://truminus.victordorado.es
+let keepaliveTimer = null;
+
+function startKeepalive() {
+  if (keepaliveTimer || !keepaliveOrigin) return;
+  let urlObj;
+  try { urlObj = new URL(keepaliveOrigin.replace(/\/+$/, "") + "/__keepalive__"); }
+  catch (err) { LOG(`keepalive: bad origin ${keepaliveOrigin}: ${err.message}`); return; }
+  const lib = urlObj.protocol === "https:" ? https : http;
+  keepaliveTimer = setInterval(() => {
+    const req = lib.get(urlObj, res => { res.resume(); });
+    req.setTimeout(15000, () => req.destroy());
+    req.on("error", err => LOG(`keepalive ping error: ${err.message}`));
+  }, KEEPALIVE_INTERVAL_MS);
+  keepaliveTimer.unref();
+  LOG(`keepalive enabled: ${urlObj.href} every ${KEEPALIVE_INTERVAL_MS/1000}s`);
+}
+
+// Sniff the Host header out of a request's head buffer to latch the public
+// origin.  X-Forwarded-Proto from Plesk's front nginx tells us whether the
+// browser hit https or http.  Falls back to https since that's the only
+// realistic deployment (Plesk Let's Encrypt is default-on).
+function latchKeepaliveFromHead(head) {
+  if (keepaliveOrigin) return;
+  const hostM  = /\r\nHost:\s*([^\r\n]+)/i.exec(head);
+  if (!hostM) return;
+  const protoM = /\r\nX-Forwarded-Proto:\s*([^\r\n]+)/i.exec(head);
+  const scheme = (protoM && /^https?$/i.test(protoM[1].trim())) ? protoM[1].trim().toLowerCase() : "https";
+  keepaliveOrigin = `${scheme}://${hostM[1].trim()}`;
+  startKeepalive();
+}
+
+if (keepaliveOrigin) startKeepalive();
+
 function handleEsp(ws) {
   // Reject if another ESP was already connected.
   if (esp && esp.readyState === 1) {
@@ -520,10 +565,18 @@ server.on("connection", socket => {
     // Short-circuit known vulnerability-scanner paths before they reach the
     // ESP.  Logging the (IP, request-line) pair lets fail2ban ban repeaters.
     const head = chunk.toString("ascii", 0, Math.min(chunk.length, HEAD_PEEK_BYTES));
+    latchKeepaliveFromHead(head);
     if (BLOCKED_PATH_RE.test(head)) {
       const ip = parseClientIp(head, socket.remoteAddress);
       logBlocked(ip, extractRequestLine(head));
       socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      return;
+    }
+    // Self-ping endpoint used by our own setInterval to feed Passenger
+    // legitimate HTTP traffic and prevent idle-kill.  Answer directly,
+    // never forward to the ESP.
+    if (/^GET \/__keepalive__ HTTP\/1\.[01]\r\n/.test(head)) {
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
       return;
     }
     attachStream(socket, chunk);
