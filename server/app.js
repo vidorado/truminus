@@ -289,6 +289,17 @@ function attachStreamNow(socket, firstChunk, req) {
   socket.on("close", () => {
     if (streams.delete(id)) {
       sendCtrl({ type: "close", id });
+      // Browser-side close: also try to persist.  When the ESP is
+      // congested its `close` ctrl frame can drop (ws-client mutex
+      // timeout), so relying solely on the ESP-close branch loses
+      // every cache write under load — exactly when we need it most.
+      // The browser closes as soon as it sees the chunked terminator,
+      // so by this point we usually have the full response buffered.
+      // isCompleteOk200 guards against partial / non-200 captures.
+      if (stream.buf !== null && stream.bufLen > 0) {
+        cacheCommit(stream.req, Buffer.concat(stream.buf, stream.bufLen));
+        stream.buf = null;
+      }
       drainPendingQueue();
     }
   });
@@ -351,6 +362,7 @@ function handleEsp(ws) {
       // Persist a complete-looking response before we drop the buffer.
       if (s.buf !== null && s.bufLen > 0) {
         cacheCommit(s.req, Buffer.concat(s.buf, s.bufLen));
+        s.buf = null;
       }
       streams.delete(m.id);
       drainPendingQueue();
