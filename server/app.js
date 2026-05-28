@@ -315,9 +315,16 @@ function attachStreamNow(socket, firstChunk, req) {
     // `buf` to null disables capture (response too big, or non-cacheable).
     buf: cacheable ? [] : null,
     bufLen: 0,
+    // Rolling tail of the last bytes we forwarded to the browser, used to
+    // detect the chunked terminator (0\r\n\r\n) that marks end-of-response.
+    // Without this, keep-alive TCPs from nginx/browser never close on their
+    // own and our stream slot stays occupied forever, starving the queue.
+    tail: Buffer.alloc(0),
+    done: false,
+    startedAt: Date.now(),
   };
   streams.set(id, stream);
-  if (req) LOG(`forward → ESP id=${id} ${req.method} ${req.url}${cacheable ? " [cacheable]" : ""}`);
+  if (req) LOG(`forward → ESP id=${id} ${req.method} ${req.url}${cacheable ? " [cacheable]" : ""} (slots=${streams.size}/${MAX_CONCURRENT}, queue=${pendingQueue.length})`);
   sendCtrl({ type: "open", id });
   if (firstChunk && firstChunk.length) sendData(id, firstChunk);
 
@@ -325,23 +332,36 @@ function attachStreamNow(socket, firstChunk, req) {
   socket.on("close", () => {
     if (streams.delete(id)) {
       sendCtrl({ type: "close", id });
-      // Browser-side close: also try to persist.  When the ESP is
-      // congested its `close` ctrl frame can drop (ws-client mutex
-      // timeout), so relying solely on the ESP-close branch loses
-      // every cache write under load — exactly when we need it most.
-      // The browser closes as soon as it sees the chunked terminator,
-      // so by this point we usually have the full response buffered.
-      // isCompleteOk200 guards against partial / non-200 captures.
       if (stream.buf !== null && stream.bufLen > 0) {
         cacheCommit(stream.req, Buffer.concat(stream.buf, stream.bufLen));
         stream.buf = null;
       }
+      LOG(`browser-close id=${id} (slots=${streams.size}/${MAX_CONCURRENT}, queue=${pendingQueue.length})`);
       drainPendingQueue();
     }
   });
   socket.on("error", () => socket.destroy());
   socket.resume();
 }
+
+// Safety net: if a stream survives 30 s without traffic (the chunked
+// terminator never arrived, the browser never closed, etc.) reap it so
+// the slot doesn't leak.  Catches buggy edge cases — the proactive
+// terminator detection handles the common path.
+const STREAM_IDLE_MAX_MS = 30000;
+setInterval(() => {
+  if (streams.size === 0) return;
+  const now = Date.now();
+  for (const [id, s] of streams) {
+    if (!s.startedAt) s.startedAt = now;            // backfill for first sweep
+    if (now - s.startedAt < STREAM_IDLE_MAX_MS) continue;
+    LOG(`reaping idle stream id=${id} (age=${now - s.startedAt}ms)`);
+    try { s.socket.end(); } catch {}
+    sendCtrl({ type: "close", id });
+    streams.delete(id);
+  }
+  if (pendingQueue.length > 0) drainPendingQueue();
+}, 5000).unref();
 
 function handleEsp(ws) {
   // Reject if another ESP was already connected.
@@ -360,13 +380,9 @@ function handleEsp(ws) {
       if (raw.length < 4) return;
       const id = raw.readUInt32BE(0);
       const s = streams.get(id);
-      if (!s) return;
+      if (!s || s.done) return;
       const payload = raw.subarray(4);
       s.socket.write(payload);
-      // Accumulate for the reverse cache.  Disable capture if the response
-      // exceeds the per-entry ceiling so a runaway upload can't blow heap.
-      // Any unexpected error here (OOM on Buffer.from, etc.) must NOT kill
-      // the ws message handler — that would tear the ESP tunnel down.
       try {
         if (s.buf !== null) {
           if (s.bufLen + payload.length > CACHE_MAX_BYTES) {
@@ -376,8 +392,33 @@ function handleEsp(ws) {
             s.bufLen += payload.length;
           }
         }
+        // Rolling 5-byte tail to spot the chunked-terminator across frame
+        // boundaries.  If we see "0\r\n\r\n" the response is complete; close
+        // the stream ourselves so its slot frees immediately instead of
+        // waiting for nginx/browser keep-alive to eventually time out.
+        const merged = s.tail.length
+          ? Buffer.concat([s.tail, payload], s.tail.length + payload.length)
+          : payload;
+        s.tail = merged.length > CHUNK_TERMINATOR.length
+          ? Buffer.from(merged.subarray(merged.length - CHUNK_TERMINATOR.length))
+          : Buffer.from(merged);
+        if (s.tail.length === CHUNK_TERMINATOR.length && s.tail.equals(CHUNK_TERMINATOR)) {
+          s.done = true;
+          if (s.buf !== null && s.bufLen > 0) {
+            cacheCommit(s.req, Buffer.concat(s.buf, s.bufLen));
+            s.buf = null;
+          }
+          // Tell the ESP we're done so it can free its loopback slot, then
+          // end the browser TCP gracefully (FIN).  Free our slot and pull
+          // the next queued item.
+          sendCtrl({ type: "close", id });
+          try { s.socket.end(); } catch {}
+          streams.delete(id);
+          LOG(`done   ← ESP id=${id}${s.req ? " " + s.req.url : ""} (slots=${streams.size}/${MAX_CONCURRENT}, queue=${pendingQueue.length})`);
+          drainPendingQueue();
+        }
       } catch (err) {
-        LOG(`cache capture error: ${err.message}`);
+        LOG(`stream ${id} capture error: ${err.message}`);
         s.buf = null;
       }
       return;
