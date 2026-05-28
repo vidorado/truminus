@@ -281,16 +281,21 @@ static uint16_t pick_local_port(const uint8_t* data, size_t len)
 // ── Outbound: send a control / data frame to the server ───────────────────────
 
 // Returns false if the send was dropped — caller should treat the stream
-// as dead and tell the server to close it.  We pass a long timeout
-// (10 s) so the call blocks until TLS finishes the previous record
-// instead of silently losing bytes; that turns the WS pipe into a
-// backpressure point against the pump task, which is what we actually
-// want when several streams contend for the single socket.
-static bool send_text(const char* json)
+// as dead and tell the server to close it.
+//
+// Control frames (close, hello) are tiny (~26 B) and use a short timeout
+// (1 s): if TLS can't flush 26 bytes in 1 s the connection is stalled
+// and blocking longer just cascades into other streams (the pump task
+// is single-threaded).  Data frames are larger and tolerate more TLS
+// backpressure (5 s), but still cap at half the old 10 s to limit how
+// long the pump loop freezes when the remote is slow.
+static constexpr TickType_t SEND_CTRL_TICKS = pdMS_TO_TICKS(1000);
+static constexpr TickType_t SEND_DATA_TICKS = pdMS_TO_TICKS(5000);
+
+static bool send_text(const char* json, TickType_t timeout = SEND_CTRL_TICKS)
 {
     if (!s_client || !esp_websocket_client_is_connected(s_client)) return false;
-    int n = esp_websocket_client_send_text(s_client, json, strlen(json),
-                                           pdMS_TO_TICKS(10000));
+    int n = esp_websocket_client_send_text(s_client, json, strlen(json), timeout);
     if (n < 0) {
         ESP_LOGW(TAG, "ws send dropped (n=%d, len=%u)", n, (unsigned)strlen(json));
         return false;
@@ -302,7 +307,7 @@ static bool send_ctrl(const char* type, uint32_t id)
 {
     char buf[64];
     snprintf(buf, sizeof(buf), "{\"type\":\"%s\",\"id\":%u}", type, (unsigned)id);
-    return send_text(buf);
+    return send_text(buf, SEND_CTRL_TICKS);
 }
 
 // Binary WS frame: 4-byte BE stream id || payload bytes.  Skips base64
@@ -327,7 +332,7 @@ static bool send_data(uint32_t id, const uint8_t* bytes, size_t len)
     s_send_frame[3] = (uint8_t)(id      );
     memcpy(s_send_frame + 4, bytes, len);
     int n = esp_websocket_client_send_bin(s_client, (const char*)s_send_frame, 4 + len,
-                                          pdMS_TO_TICKS(10000));
+                                          SEND_DATA_TICKS);
     if (n < 0) {
         ESP_LOGW(TAG, "ws send_bin dropped (n=%d, len=%u)", n, (unsigned)(4 + len));
         return false;
@@ -721,36 +726,51 @@ static void pump_task(void*)
                 // If the WS send fails the stream is doomed — tear it down
                 // immediately so we don't half-flush gzip/HTTP content to
                 // the browser (manifests as ERR_CONTENT_DECODING_FAILED).
+                // Also break out of the loop: if TLS can't flush one frame,
+                // trying more streams just piles up timeouts and starves
+                // every loopback socket in the table.
                 if (!send_data(snaps[i].id, buf, (size_t)r)) {
+                    bool was_active = false;
                     xSemaphoreTake(s_lock, portMAX_DELAY);
                     Stream* s2 = find_stream_locked(snaps[i].id);
-                    if (s2) free_stream_locked(*s2);
+                    if (s2 && s2->sock == snaps[i].sock) {
+                        free_stream_locked(*s2);
+                        was_active = true;
+                    }
                     xSemaphoreGive(s_lock);
-                    send_ctrl("close", snaps[i].id);
-                    continue;
+                    if (was_active) send_ctrl("close", snaps[i].id);
+                    break;
                 }
                 any = true;
-            } else if (r == 0) {
-                // local end closed → tell server, free slot.  If we get
-                // here BEFORE the stream wrote any bytes back, the server
-                // will surface this to the browser as "upstream closed"
-                // (502).  That means esp_http_server closed the loopback
-                // socket without responding — request mis-parse, header
-                // overflow, or the connection was evicted via lru_purge.
-                ESP_LOGI(TAG, "stream %u: local EOF, closing (no response)",
-                         (unsigned)snaps[i].id);
+            } else if (r == 0 || (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
+                // Local end closed or unreadable.  Distinguish three cases
+                // under the lock:
+                //  (a) stream still has our snapshotted fd → normal close
+                //      path (EOF / ENOTCONN / write-side error).
+                //  (b) stream gone or fd reassigned → another path
+                //      (handle_close, handle_data write-fail) already
+                //      tore it down and possibly recycled the fd; skip
+                //      silently so we don't double-send a close, and
+                //      certainly don't act on a stranger's fd.
+                //  (c) EBADF specifically means our fd was closed
+                //      already — never log loud; (a)/(b) below decide.
+                bool already_gone = false;
                 xSemaphoreTake(s_lock, portMAX_DELAY);
                 Stream* s2 = find_stream_locked(snaps[i].id);
-                if (s2) free_stream_locked(*s2);
+                if (s2 && s2->sock == snaps[i].sock) {
+                    free_stream_locked(*s2);
+                } else {
+                    already_gone = true;
+                }
                 xSemaphoreGive(s_lock);
-                send_ctrl("close", snaps[i].id);
-            } else if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                ESP_LOGW(TAG, "stream %u: local read errno=%d, closing",
-                         (unsigned)snaps[i].id, errno);
-                xSemaphoreTake(s_lock, portMAX_DELAY);
-                Stream* s2 = find_stream_locked(snaps[i].id);
-                if (s2) free_stream_locked(*s2);
-                xSemaphoreGive(s_lock);
+                if (already_gone) continue;
+                if (r == 0 || (r < 0 && (errno == ENOTCONN || errno == EBADF))) {
+                    ESP_LOGD(TAG, "stream %u: local closed (r=%d errno=%d)",
+                             (unsigned)snaps[i].id, (int)r, (int)errno);
+                } else {
+                    ESP_LOGW(TAG, "stream %u: local read errno=%d, closing",
+                             (unsigned)snaps[i].id, errno);
+                }
                 send_ctrl("close", snaps[i].id);
             }
         }
