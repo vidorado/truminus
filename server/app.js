@@ -27,7 +27,18 @@ import { WebSocketServer } from "ws";
 
 const PORT = Number(process.env.PORT) || 3000;
 const TOKEN = process.env.TUNNEL_TOKEN || "";
-const LOG = (...a) => console.log(new Date().toISOString(), ...a);
+
+// LOG_FILE lets the operator pin the application log to a known path that
+// survives Passenger restarts and isn't buried under Plesk's log layout.
+// We still write to stdout so Passenger's own log captures everything; the
+// file is a parallel, append-only mirror.
+const LOG_FILE = process.env.LOG_FILE || "";
+const logStream = LOG_FILE ? fs.createWriteStream(LOG_FILE, { flags: "a" }) : null;
+const LOG = (...a) => {
+  const line = `${new Date().toISOString()} ${a.join(" ")}`;
+  console.log(line);
+  if (logStream) logStream.write(line + "\n");
+};
 
 // Dedicated log file for blocked vulnerability-scanner hits.  fail2ban tails
 // this file; one line per attempt, with a stable "BLOCKED <ip> <method> <path>"
@@ -101,7 +112,13 @@ let nextId = 1;
 // the cap is reached, new browser connections sit in a FIFO with their
 // TCP paused; the next active close drains the queue.
 const MAX_CONCURRENT       = 3;
-const PENDING_TIMEOUT_MS   = 10000;
+// 90 s is long enough for the first cold load to drain even when the ESP
+// only manages ~5 s per stream over the WSS tunnel (≈15 assets × 5 s ÷ 3
+// cap = 25 s).  With the old 10 s window the queue tail timed out before
+// the ESP could process it, so the reverse cache never got populated and
+// every reload looked equally broken.  Browsers' own connection timeout
+// (~60–90 s) terminates abandoned items if the user navigates away.
+const PENDING_TIMEOUT_MS   = 90000;
 const PENDING_QUEUE_LIMIT  = 64;
 const pendingQueue = [];   // { socket, firstChunk, timer, onClose }
 
