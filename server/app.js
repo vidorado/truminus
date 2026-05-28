@@ -171,12 +171,19 @@ function isCompleteOk200(buf) {
 }
 
 function cacheCommit(req, buf) {
-  if (!isCompleteOk200(buf)) return;
-  const p = cachePath(cacheKey(req.method, req.url));
-  fs.writeFile(p, buf, err => {
-    if (err) LOG(`cache write failed ${req.url}: ${err.message}`);
-    else     LOG(`cache MISS→STORE ${req.url} (${buf.length}B)`);
-  });
+  try {
+    if (!isCompleteOk200(buf)) {
+      LOG(`cache SKIP ${req.url} (${buf.length}B, not a complete 200 chunked)`);
+      return;
+    }
+    const p = cachePath(cacheKey(req.method, req.url));
+    fs.writeFile(p, buf, err => {
+      if (err) LOG(`cache write failed ${req.url}: ${err.message}`);
+      else     LOG(`cache MISS→STORE ${req.url} (${buf.length}B)`);
+    });
+  } catch (err) {
+    LOG(`cache commit error: ${err.message}`);
+  }
 }
 
 function espAlive() { return esp && esp.readyState === 1; }
@@ -196,7 +203,7 @@ function drainPendingQueue() {
     clearTimeout(item.timer);
     item.socket.removeListener("close", item.onClose);
     if (item.socket.destroyed || item.socket.writableEnded) continue;
-    attachStreamNow(item.socket, item.firstChunk);
+    attachStreamNow(item.socket, item.firstChunk, item.req);
   }
 }
 
@@ -282,6 +289,7 @@ function attachStreamNow(socket, firstChunk, req) {
     bufLen: 0,
   };
   streams.set(id, stream);
+  if (req) LOG(`forward → ESP id=${id} ${req.method} ${req.url}${cacheable ? " [cacheable]" : ""}`);
   sendCtrl({ type: "open", id });
   if (firstChunk && firstChunk.length) sendData(id, firstChunk);
 
@@ -329,13 +337,20 @@ function handleEsp(ws) {
       s.socket.write(payload);
       // Accumulate for the reverse cache.  Disable capture if the response
       // exceeds the per-entry ceiling so a runaway upload can't blow heap.
-      if (s.buf !== null) {
-        if (s.bufLen + payload.length > CACHE_MAX_BYTES) {
-          s.buf = null;
-        } else {
-          s.buf.push(Buffer.from(payload));
-          s.bufLen += payload.length;
+      // Any unexpected error here (OOM on Buffer.from, etc.) must NOT kill
+      // the ws message handler — that would tear the ESP tunnel down.
+      try {
+        if (s.buf !== null) {
+          if (s.bufLen + payload.length > CACHE_MAX_BYTES) {
+            s.buf = null;
+          } else {
+            s.buf.push(Buffer.from(payload));
+            s.bufLen += payload.length;
+          }
         }
+      } catch (err) {
+        LOG(`cache capture error: ${err.message}`);
+        s.buf = null;
       }
       return;
     }
