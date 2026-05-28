@@ -224,36 +224,30 @@ Settings screens that need to block use the navigation-request pattern: an LVGL 
 
 ---
 
-## WSS reverse tunnel — Plesk bridge
+## WSS reverse tunnel — firmware side
 
-`main/wstunnel.cpp/.hpp` dials out to a Plesk-hosted Node.js bridge
-(`server/app.js`) over WSS and multiplexes browser ↔ ESP TCP streams as
-binary WS frames so the local `esp_http_server` is reachable through
-CGNAT.  Settings screen ("Túnel" in the menu) takes only a domain and a
-shared token; the firmware composes `wss://<domain>/tunnel?token=<token>`
-itself.  A cloud icon in the topbar reflects state: blinking blue while
+`main/wstunnel.cpp/.hpp` dials out to a public Node.js bridge over WSS
+and multiplexes browser ↔ ESP TCP streams as binary WS frames so the
+local `esp_http_server` is reachable through CGNAT.  Settings screen
+("Túnel" in the menu) takes only a domain and a shared token; the
+firmware composes `wss://<domain>/tunnel?token=<token>` itself.  A
+cloud icon in the topbar reflects state: blinking blue while
 connecting (500 ms cadence via an LVGL timer), solid `rgb(70,131,210)`
 when up, red after 3 consecutive disconnects without a successful
 connect.
 
-Wire protocol — control frames are text JSON, bulk data is binary:
-
-```
-ESP   → srv  {"type":"hello","node":"truminus","token":"<shared>"}   text
-srv   → ESP  {"type":"open", "id":<n>}                                text
-both         <4-byte BE id><payload bytes…>                          binary
-both         {"type":"close","id":<n>}                                text
-```
-
-Binary data frames save ~33 % bandwidth and a parse/format roundtrip
-vs. the JSON+base64 phase-1 protocol; both sides must match.
+The **bridge** lives under `server/` (in this monorepo for now,
+planned to split into its own repo).  See `server/README.md` for
+deploy steps and `server/.claude/skills/tunnel-bridge/SKILL.md` for
+its operational design — cache, queue, Passenger gotchas, nginx
+config.  Both sides must agree on the wire protocol documented there.
 
 ### Local httpd is split into two instances
-`pick_local_port()` in `wstunnel.cpp` sniffs the first request bytes and
-routes `GET /ws` to the WS-dedicated httpd at `127.0.0.1:81`,
-everything else to the asset httpd at `127.0.0.1:80`.  The split exists
-to isolate WebSocket sessions from `lru_purge_enable` eviction during
-asset stampedes — see `.claude/skills/wss-tunnel/SKILL.md` for the full
+`pick_local_port()` in `wstunnel.cpp` sniffs the first request bytes
+and routes `GET /ws` to the WS-dedicated httpd at `127.0.0.1:81`,
+everything else to the asset httpd at `127.0.0.1:80`.  Isolates
+WebSocket sessions from `lru_purge_enable` eviction during asset
+stampedes — see `.claude/skills/wss-tunnel/SKILL.md` for the full
 rationale.
 
 ### Gating, retries, pending queue
@@ -262,25 +256,23 @@ rationale.
 - `esp_websocket_client` auto-reconnects (5 s).  We count consecutive
   `WEBSOCKET_EVENT_DISCONNECTED` and flip the icon red after 3.
 - Each tunneled stream consumes 1 local LWIP fd (our client to
-  `127.0.0.1:80` or `:81`) + 1 httpd-accepted fd, and 2 TCP PCBs.  When
-  all 12 stream slots are busy, new `open` frames go to a pending queue
-  with per-id buffer for any `data` bytes that arrive before the open
-  materialises (the server pushes the GET line right after the open, so
-  we must not drop those bytes).  5 s timeout per pending entry.
-- `evict_idle_locked()` reclaims the least-recently-active non-WS stream
-  when the table is full, so browser keep-alive zombies cannot starve
-  new opens.  WS streams are exempt (`Stream::is_ws`).
-- `send_text` / `send_bin` wait up to 10 s on the ws-client internal
-  lock — long enough that TLS write backpressure flows back into the
-  pump task rather than dropping bytes.  On real failure (peer gone) the
-  stream is closed cleanly and the server synthesises a 502 to the
-  browser.
+  `127.0.0.1:80` or `:81`) + 1 httpd-accepted fd, and 2 TCP PCBs.
+  When all 12 stream slots are busy, new `open` frames go to a
+  pending queue with per-id buffer for any `data` bytes that arrive
+  before the open materialises.  5 s timeout per pending entry.
+- `evict_idle_locked()` reclaims the least-recently-active non-WS
+  stream when the table is full, so browser keep-alive zombies
+  cannot starve new opens.  WS streams are exempt (`Stream::is_ws`).
+- `send_ctrl` waits 1 s on the ws-client mutex (`SEND_CTRL_TICKS`),
+  `send_data` 5 s (`SEND_DATA_TICKS`).  After a data-send failure
+  the pump `break`s its iteration so one congested write doesn't
+  cascade into ENOTCONN across the slot table.
 - Loopback sockets carry `TCP_NODELAY=1` — Nagle adds multi-second
   latency for the small WS frames that flow ESP→browser through the
   tunnel.  See the skill for the failure mode.
 - The wsReaper task in `webserver.cpp` sends a real WS PING (opcode
   0x9) every 20 s to every WS fd across both httpd instances, so
-  Plesk's 60 s `proxy_read_timeout` never kills an idle WS.
+  the bridge's `proxy_read_timeout` never kills an idle WS.
 
 ### Capacity dials
 - `MAX_STREAMS=12`, `PENDING_QUEUE_SIZE=16`, `IO_CHUNK=4096`
@@ -300,22 +292,11 @@ rationale.
 
 ### NVS namespace `tunnel`
 - `enabled` (u8) — 0/1
-- `server` (str) — bare domain, e.g. `truminus.victordorado.es`.  The
+- `server` (str) — bare domain, e.g. `tunnel.example.com`.  The
   firmware strips any `wss://…/path?…` the user might paste, then
   rebuilds the URL with the canonical `/tunnel` path and `?token=…`.
 - `token` (str) — shared secret matching `TUNNEL_TOKEN` env on the
-  server.
-
-### Server side (`server/app.js`)
-Single Node.js app on Plesk → Node.js.  Uses `http.createServer()` (so
-Phusion Passenger's `listen()` hook fires and the spawn doesn't time
-out), then replaces the default `connection` listener with a sniffer:
-`GET /tunnel … Upgrade: websocket` is routed back through Node's HTTP
-parser so the `WebSocketServer` can complete the handshake;
-everything else is muxed as opaque bytes through the device control
-channel.  When the device disconnects, in-flight tunneled sockets are
-closed with a synthetic 502 instead of `socket.destroy()` so Passenger
-doesn't surface "Incomplete response received from application".
+  bridge.
 
 ## Related skills
 
@@ -326,4 +307,4 @@ doesn't surface "Incomplete response received from application".
 - **`.claude/skills/multiplusble/SKILL.md`** — Victron VE.Bus / Multiplus Instant Readout (record 0x0C) — envelope, bit-stream layout, operation-mode enum.
 - **`.claude/skills/ultimatronble/SKILL.md`** — Ultimatron BMS GATT protocol.
 - **`.claude/skills/ui-interfaces/SKILL.md`** — coordination between LCD touch UI and the WebSocket web UI (single source of truth in `settings.cpp`).
-- **`.claude/skills/wss-tunnel/SKILL.md`** — WSS reverse-tunnel operational design, sizing dials, and a troubleshooting quick-reference for tunnel-only failures (Nagle on loopback, LRU eviction of WS, mbedtls/PSA heap, …).
+- **`.claude/skills/wss-tunnel/SKILL.md`** — WSS reverse tunnel, firmware side: two-httpd split, Nagle on loopback, LRU eviction of WS, mbedtls/PSA heap.  The bridge side lives at `server/.claude/skills/tunnel-bridge/SKILL.md` (will travel with the server when it splits into its own repo).

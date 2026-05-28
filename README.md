@@ -143,121 +143,17 @@ Build system notes and known gotchas are in
 
 The ESP sits behind home/RV CGNAT in most installs, so it isn't reachable
 from the outside.  `server/app.js` is a small Node.js bridge you run on
-any public-IP server.  The firmware dials out to it over WSS and the
-bridge muxes browser HTTP/WS traffic back to the device's local
-`esp_http_server`.  See [`CLAUDE.md`](CLAUDE.md#wss-reverse-tunnel--plesk-bridge)
-for the wire protocol.
+any public-IP server (a VPS, a Plesk-managed subdomain, etc.).  The
+firmware dials out to it over WSS and the bridge muxes browser HTTP/WS
+traffic back to the device's local `esp_http_server`.
 
-### What you need
-- A public domain (e.g. `tunnel.example.com`) pointing at your server.
-- TLS — Let's Encrypt is fine.
-- **Node.js ≥ 18**.
-- A shared secret for `TUNNEL_TOKEN`.  Generate one with:
-  ```bash
-  openssl rand -hex 8
-  ```
-
-### Install on Plesk
-
-1. **Domain & SSL.** Create the (sub)domain in Plesk and issue a Let's
-   Encrypt certificate (Plesk → *SSL/TLS Certificates*).  Enable
-   "Redirect from HTTP to HTTPS".
-2. **Node.js component.** Plesk → *Tools & Settings → Updates → Add/Remove
-   Components* → install **Node.js support** if not already there.
-3. **Deploy the code.** Pull the repo on the server, or upload just the
-   `server/` folder.  The simplest path is Plesk's *Git* extension:
-   - *Add Repository* → point at this repo, deploy to e.g. `/httpdocs`.
-   - *Repository Settings* leaves no extra deploy actions needed —
-     after the first pull, click **NPM install** in the Node.js panel
-     (Plesk's bundled `npm`; using `npm` directly from SSH fails because
-     it isn't on the deploy shell's PATH).
-4. **Enable Node.js.**  Plesk → your domain → *Node.js*:
-
-   | Field | Value |
-   |---|---|
-   | Node.js version | 18.x or newer |
-   | Application Mode | `production` |
-   | Application Root | `/httpdocs/server` (where `app.js` lives) |
-   | Application Startup File | `app.js` |
-   | Document Root | `/httpdocs` (Plesk requires it; runtime ignores it) |
-
-   Click **Enable Node.js**.
-5. **Env vars.**  Same screen, *Custom environment variables*:
-
-   | Variable | Value |
-   |---|---|
-   | `TUNNEL_TOKEN` | the secret from above |
-   | `NODE_ENV` | `production` |
-
-   `PORT` is injected by Passenger automatically — don't set it.  Click
-   **Restart App** after saving.
-6. **Verify.**  From outside:
-   ```bash
-   curl -i https://tunnel.example.com/
-   # HTTP/2 502   tunnel offline    ← good: server is up, no ESP yet
-   ```
-   Plesk → *Node.js → Show logs* should print `tunnel: listening on :<PORT>`.
-
-### Install on a plain Linux server (systemd)
-
-```bash
-git clone https://github.com/<your-fork>/TruMinus.git /opt/truminus
-cd /opt/truminus/server
-npm ci --omit=dev
-```
-
-Put a unit file at `/etc/systemd/system/truminus-tunnel.service`:
-
-```ini
-[Unit]
-Description=TruMinus WSS reverse tunnel bridge
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=truminus
-WorkingDirectory=/opt/truminus/server
-Environment=NODE_ENV=production
-Environment=PORT=3000
-Environment=TUNNEL_TOKEN=<paste-secret-here>
-ExecStart=/usr/bin/node app.js
-Restart=on-failure
-RestartSec=5
-# Hardening — adjust to taste
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then:
-
-```bash
-sudo useradd --system --home /opt/truminus --shell /usr/sbin/nologin truminus
-sudo chown -R truminus:truminus /opt/truminus/server
-sudo systemctl daemon-reload
-sudo systemctl enable --now truminus-tunnel
-sudo journalctl -u truminus-tunnel -f
-```
-
-The app listens on `$PORT` over plain HTTP; terminate TLS in front of it
-with nginx/Caddy/Traefik and add the standard WebSocket upgrade headers.
-Example nginx block:
-
-```nginx
-location / {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
-    proxy_set_header Host $host;
-    proxy_read_timeout 1h;          # keep the ESP control WS alive
-}
-```
+> **The bridge is a companion project** with its own README, env vars,
+> and operational quirks (reverse cache, queue, Passenger keepalive).
+> For setup — Unix bare or Plesk Node.js — see [`server/README.md`](server/README.md).
+> The wire protocol lives in [`.claude/skills/wss-tunnel/SKILL.md`](.claude/skills/wss-tunnel/SKILL.md)
+> (firmware side) and `server/.claude/skills/tunnel-bridge/SKILL.md`
+> (server side).  The plan is to split `server/` into its own repo
+> once it stabilises.
 
 ### Configure the device
 
