@@ -73,12 +73,13 @@ static constexpr int ROW1_H  = 185;
 static constexpr int ROW2_Y  = CONTENT_Y + ROW1_H;       // 240
 static constexpr int ROW2_H  = CONTENT_H - ROW1_H;       // 176
 
-// Row 1: CALEFACCIÓN | AGUA CALIENTE | AGUA LIMPIA.  CALEFACCIÓN shrank
-// from 301 to 236 to feed AGUA LIMPIA, which grew from 149 to 214 (~44 %).
-// AGUA CALIENTE keeps its 350 px width; only AGUA LIMPIA absorbs the slack.
-static constexpr int HEAT_W  = 236;
-static constexpr int WATER_X = 236;
-static constexpr int WATER_W = 350;
+// Row 1: CALEFACCIÓN | AGUA CALIENTE | AGUA LIMPIA.  CALEFACCIÓN was bumped
+// back to 256 (giving the setpoint reading more breathing room) at the
+// expense of AGUA CALIENTE (350 → 330); the latter's button matrix is
+// narrowed by the same 20 px so the boiler drawing stays full-size.
+static constexpr int HEAT_W  = 256;
+static constexpr int WATER_X = 256;
+static constexpr int WATER_W = 330;
 
 // Row 2: VENTILADOR | SOLAR | INVERSOR
 static constexpr int FAN_W   = 203;
@@ -550,13 +551,15 @@ static void build_main_screen()
     lv_obj_add_event_cb(ui.btnmx_fan_heat, on_fan_heat_changed, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_add_flag(ui.btnmx_fan_heat, LV_OBJ_FLAG_HIDDEN);
 
-    // Fan level: −/+ buttons replace old slider
+    // Fan level: −/+ buttons replace old slider.  Anchored so the left edge
+    // of fan_dn matches "Apag." and the right edge of fan_up matches "Enc.":
+    //   btnmx_fan_off lives at x=12, w=FAN_W−24=179 → right edge x=191.
     ui.btn_fan_dn = lv_button_create(p_fan);
     lv_obj_set_size(ui.btn_fan_dn, 53, 50);
-    lv_obj_set_pos(ui.btn_fan_dn, 5, 109);
+    lv_obj_set_pos(ui.btn_fan_dn, 12, 109);
     style_button(ui.btn_fan_dn);
     lv_obj_t* l_fdn = lv_label_create(ui.btn_fan_dn);
-    lv_label_set_text(l_fdn, FA_CARET_D);
+    lv_label_set_text(l_fdn, FA_CARET_U);
     lv_obj_set_style_text_font(l_fdn, s_font_icons24, 0);
     lv_obj_center(l_fdn);
     lv_obj_add_event_cb(ui.btn_fan_dn, on_fan_dn, LV_EVENT_CLICKED, NULL);
@@ -567,10 +570,10 @@ static void build_main_screen()
 
     ui.btn_fan_up = lv_button_create(p_fan);
     lv_obj_set_size(ui.btn_fan_up, 53, 50);
-    lv_obj_set_pos(ui.btn_fan_up, 136, 109);
+    lv_obj_set_pos(ui.btn_fan_up, 138, 109);   // 191 (Enc. right) − 53 = 138
     style_button(ui.btn_fan_up);
     lv_obj_t* l_fup = lv_label_create(ui.btn_fan_up);
-    lv_label_set_text(l_fup, FA_CARET_U);
+    lv_label_set_text(l_fup, FA_CARET_D);
     lv_obj_set_style_text_font(l_fup, s_font_icons24, 0);
     lv_obj_center(l_fup);
     lv_obj_add_event_cb(ui.btn_fan_up, on_fan_up, LV_EVENT_CLICKED, NULL);
@@ -588,12 +591,12 @@ static void build_main_screen()
     lv_label_set_text(ui.lbl_water_temp, "--°C");
     lv_obj_set_style_text_font(ui.lbl_water_temp, s_font_22, 0);
     lv_obj_set_style_text_color(ui.lbl_water_temp, C_TEXT, 0);
-    lv_obj_set_pos(ui.lbl_water_temp, 267, 15);
+    lv_obj_set_pos(ui.lbl_water_temp, 247, 15);
     lv_obj_set_width(ui.lbl_water_temp, TANK_W);
     lv_obj_set_style_text_align(ui.lbl_water_temp, LV_TEXT_ALIGN_CENTER, 0);
 
     ui.bar_water = lv_bar_create(p_water);
-    lv_obj_set_pos(ui.bar_water, 267, 49);
+    lv_obj_set_pos(ui.bar_water, 247, 49);
     lv_obj_set_size(ui.bar_water, TANK_W, TANK_H_WATER);
     lv_bar_set_range(ui.bar_water, 0, 70);
     lv_bar_set_value(ui.bar_water, 0, LV_ANIM_OFF);
@@ -608,7 +611,7 @@ static void build_main_screen()
 
     ui.btnmx_boiler = lv_buttonmatrix_create(p_water);
     lv_obj_set_pos(ui.btnmx_boiler, 12, 53);
-    lv_obj_set_size(ui.btnmx_boiler, 234, 116);
+    lv_obj_set_size(ui.btnmx_boiler, 214, 116);
     lv_buttonmatrix_set_map(ui.btnmx_boiler, s_boiler_map);
     lv_buttonmatrix_set_button_ctrl_all(ui.btnmx_boiler, LV_BUTTONMATRIX_CTRL_CHECKABLE);
     lv_buttonmatrix_set_one_checked(ui.btnmx_boiler, true);
@@ -726,7 +729,7 @@ static void build_main_screen()
         };
 
         {
-            auto r = make_io_box(15, 78, 95, 29, "RED");
+            auto r = make_io_box(15, 103, 95, 29, "RED");
             ui.lbl_inv_mains_w = r.val;
             ui.box_mains = r.box; ui.hdr_mains = r.head; ui.hdr_mains_lbl = r.head_lbl;
         }
@@ -762,15 +765,22 @@ static void build_main_screen()
         auto make_ear = [&](int x) {
             lv_obj_t* e = lv_obj_create(mp);
             lv_obj_set_pos(e, x, 0);
-            lv_obj_set_size(e, (int)(MPX_W * 0.22f), 12);
+            lv_obj_set_size(e, (int)(MPX_W * 0.22f), 12);  // EAR_W
             lv_obj_set_style_bg_color(e, C_BG, 0);
             lv_obj_set_style_bg_opa(e, LV_OPA_COVER, 0);
             lv_obj_set_style_border_width(e, 0, 0);
             lv_obj_set_style_radius(e, 0, 0);
             lv_obj_clear_flag(e, LV_OBJ_FLAG_SCROLLABLE);
         };
+        // mp has border_width=2 + pad_all=0, so the content area is
+        // (MPX_W − 4) px wide.  Placing the right ear at MPX_W − ear_w would
+        // overflow the content box by 4 px and LVGL clips that excess, making
+        // the right ear render visibly narrower than the left.  Subtract the
+        // two border widths (4 px) so the right edge sits on the content
+        // boundary and the two ears measure the same on screen.
+        constexpr int EAR_W = (int)(MPX_W * 0.22f);
         make_ear(0);
-        make_ear(MPX_W - (int)(MPX_W * 0.22f));
+        make_ear(MPX_W - 4 - EAR_W);
 
         // Orange accent bar (centered in the blue area)
         lv_obj_t* ob = lv_obj_create(mp);
@@ -857,7 +867,7 @@ static void build_main_screen()
             *stripes_out = s;
         };
         // MAINS box ends at x=110, MPX starts at MPX_X=140 → gap 30px
-        make_flow(110, 91,  30, &ui.flow_mains, &ui.flow_mains_str);
+        make_flow(110, 106, 30, &ui.flow_mains, &ui.flow_mains_str);
         // MPX ends at MPX_X+MPX_W=218, LOAD/BATT boxes start at x=248 → gap 30px
         make_flow(218, 69,  30, &ui.flow_load,  &ui.flow_load_str);
         make_flow(218, 132, 30, &ui.flow_batt,  &ui.flow_batt_str);
