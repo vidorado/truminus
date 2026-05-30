@@ -7,7 +7,7 @@
     "fstream": "cpp"
   },
   "idf.customExtraVars": {},
-  "idf.port": "/dev/ttyACM1",
+  "idf.port": "/dev/ttyACM0",
   "idf.flashType": "UART",
   "idf.currentSetup": "/home/victor/esp/esp-idf",
 
