@@ -309,7 +309,7 @@ static void bleSupervisorTask(void* /*arg*/) {
         }
 
         constexpr uint32_t SCAN_MS = 5000;
-        if (s_configured && s_bleScan) {
+        if ((s_configured || tankIsConfigured() || multiplusIsConfigured()) && s_bleScan) {
             s_bleScan->clearResults();
             s_supervisorInScan = true;
             // NimBLE 2.x: start() is non-blocking — it returns once the GAP
@@ -427,7 +427,12 @@ void bleSupervisorStart() {
     LOG_BLE_PF("[ble] NimBLE up    free=%u\n",
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
-    if (s_configured) {
+    // Create the scan handle whenever any passive-scan source is bound:
+    // Victron, the BTHome tank, or Multiplus.  The tank and multiplus
+    // receivers piggyback on VictronScanCb, so gating this on Victron alone
+    // left a tank-only setup with s_bleScan == nullptr and no scanning at all.
+    // Ultimatron is polled over GATT (not scanned), so it does not count.
+    if (s_configured || tankIsConfigured() || multiplusIsConfigured()) {
         s_bleScan = NimBLEDevice::getScan();
         s_bleScan->setScanCallbacks(new VictronScanCb(), true);
         s_bleScan->setActiveScan(true);
