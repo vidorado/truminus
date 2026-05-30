@@ -48,9 +48,6 @@ enum class TK : uint8_t {
     SOLAR_VOLT,        // solar panel label: "Volt.:" / "Volt.:"
     SOLAR_LOAD,        // solar panel label: "Carga:" / "Load:"
     SOLAR_PROD,        // solar panel label: "Prod.:" / "Yield:"
-    // ── Touch calibration ──────────────────────────────────────────────────
-    TOUCH_CAL_INSTR,   // "Toca lo mas cerca del centro del simbolo +" / "Tap as close as possible to the center of the + symbol"
-    TOUCH_CAL_DONE,    // "Calibracion completada!" / "Calibration complete!"
     // ── WiFi setup ─────────────────────────────────────────────────────────
     WIFI_TITLE,        // "TruMinus - Configuracion WiFi" / "TruMinus - WiFi Setup"
     WIFI_NETWORK,      // "Red WiFi:" / "WiFi Network:"
@@ -87,8 +84,7 @@ enum class TK : uint8_t {
     SCANNING,          // "Buscando... 8 s" / "Scanning... 8 s"
     NO_BLE_DEVS,       // "No se encontraron dispositivos BLE" / "No BLE devices found"
     SEARCH,            // scan button: "Buscar" / "Search"
-    // ── Touch calibration / WiFi scan / status messages ───────────────────
-    TOUCH_CAL_STEP_FMT,    // "%d/3  Toca el centro de la cruz" / "%d/3  Tap the center of the cross"
+    // ── WiFi scan / status messages ────────────────────────────────────────
     WIFI_SCANNING,         // "Buscando redes WiFi..." / "Scanning WiFi networks..."
     WIFI_NO_NETS,          // "No se encontraron redes." / "No networks found."
     CONNECTING_TO_FMT,     // "Conectando a %s..." / "Connecting to %s..."

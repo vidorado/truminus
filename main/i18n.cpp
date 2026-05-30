@@ -52,8 +52,6 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Volt.:",                   // SOLAR_VOLT
     "Carga:",                   // SOLAR_LOAD
     "Prod.:",                   // SOLAR_PROD
-    "Toca lo m\xC3\xA1s cerca del centro del s\xC3\xADmbolo +",
-    "Calibraci\xC3\xB3n completada!",
     "TruMinus - Config. WiFi",
     "Red WiFi:",
     "Contrase\xC3\xB1" "a:",
@@ -86,7 +84,6 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Buscando... 8 s",
     "No se encontraron dispositivos BLE",
     "Buscar",
-    "%d/3  Toca el centro de la cruz",
     "Buscando redes WiFi...",
     "No se encontraron redes.",
     "Conectando a %s...",
@@ -172,8 +169,6 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Volt.:",
     "Charge:",
     "Yield:",
-    "Tap as close as possible to the center of the + symbol",
-    "Calibration complete!",
     "TruMinus - WiFi Setup",
     "WiFi Network:",
     "Password:",
@@ -206,7 +201,6 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Scanning... 8 s",
     "No BLE devices found",
     "Search",
-    "%d/3  Tap the center of the cross",
     "Scanning WiFi networks...",
     "No networks found.",
     "Connecting to %s...",

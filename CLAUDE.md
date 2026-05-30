@@ -204,7 +204,6 @@ void lvglUnlock();
 |-----------|------|---------|
 | `wifi` | `ssid`, `pass` | WiFi credentials |
 | `mqtt` | `host`, `port`, `user`, `pass` | MQTT broker config |
-| `touchcal` | `data` | Touch calibration matrix (GT911 is factory-calibrated; this key may go unused on P4) |
 | `display` | `timeout_idx`, `lang` | Screen timeout option index, language (0=ES, 1=EN) |
 | `solar` | `addr`, `key` | Victron BLE MAC + encryption key |
 | `batt` | `addr` | Ultimatron BLE MAC |
