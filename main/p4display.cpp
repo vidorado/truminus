@@ -73,25 +73,27 @@ static constexpr int ROW1_H  = 185;
 static constexpr int ROW2_Y  = CONTENT_Y + ROW1_H;       // 240
 static constexpr int ROW2_H  = CONTENT_H - ROW1_H;       // 176
 
-// Row 1: Heating | Water | (battery stub)
-static constexpr int HEAT_W  = 301;
-static constexpr int WATER_X = 301;
+// Row 1: CALEFACCIÓN | AGUA CALIENTE | AGUA LIMPIA.  CALEFACCIÓN shrank
+// from 301 to 236 to feed AGUA LIMPIA, which grew from 149 to 214 (~44 %).
+// AGUA CALIENTE keeps its 350 px width; only AGUA LIMPIA absorbs the slack.
+static constexpr int HEAT_W  = 236;
+static constexpr int WATER_X = 236;
 static constexpr int WATER_W = 350;
 
-// Row 2: Fan | Solar | INVERTER
-static constexpr int FAN_W   = 195;
-static constexpr int SOLAR_X = 195;
-static constexpr int SOLAR_W = 250;
+// Row 2: VENTILADOR | SOLAR | INVERSOR
+static constexpr int FAN_W   = 203;
+static constexpr int SOLAR_X = 203;
+static constexpr int SOLAR_W = 242;
 // INVERSOR panel — right slot of ROW 2 (was empty), wider after SOLAR/FAN
 // were narrowed (SOLAR lost its "Volt:/Carga:/Prod:" prefix labels).
 // Layout copied from ui/truminus_ui.eez-project ("INVERTER" panel).
 static constexpr int INV_X   = 445;
 static constexpr int INV_W   = 355;
-// "AGUA L." panel — right-most slot of ROW 1 (next to AGUA CALIENTE).
-// 149 × ROW1_H, flush against the right edge.  Layout matches
+// "AGUA LIMPIA" panel — right-most slot of ROW 1 (next to AGUA CALIENTE).
+// 214 × ROW1_H, flush against the right edge.  Layout matches
 // ui/truminus_ui.eez-project (EMPTY 1 / SOLAR_1 panel).
-static constexpr int AGUA_X  = 651;
-static constexpr int AGUA_W  = 149;
+static constexpr int AGUA_X  = 586;
+static constexpr int AGUA_W  = 214;
 
 // Vertical bar dimensions
 static constexpr int TANK_W        = 64;
@@ -149,7 +151,7 @@ static struct {
     lv_obj_t* icon_flame;  // heating status indicator
     lv_obj_t* btn_conf;
 
-    // HEATING panel
+    // CALEFACCIÓN panel
     lv_obj_t* lbl_room_sp;
     lv_obj_t* btn_sp_dn;
     lv_obj_t* btn_sp_up;
@@ -157,14 +159,14 @@ static struct {
     lv_obj_t* lbl_btn_heat;
     lv_obj_t* row_sp;
 
-    // FAN panel
+    // VENTILADOR panel
     lv_obj_t* btnmx_fan_heat;
     lv_obj_t* btnmx_fan_off;
     lv_obj_t* btn_fan_dn;
     lv_obj_t* btn_fan_up;
     lv_obj_t* lbl_fan_lvl;
 
-    // HOT WATER panel
+    // AGUA CALIENTE panel
     lv_obj_t* lbl_water_temp;
     lv_obj_t* bar_water;
     lv_obj_t* btnmx_boiler;
@@ -177,7 +179,7 @@ static struct {
     lv_obj_t* bar_batt;
     lv_obj_t* lbl_batt_soc;
 
-    // AGUA L. panel (fresh-water tank, BTHome)
+    // AGUA LIMPIA panel (fresh-water tank, BTHome)
     lv_obj_t* bar_tank;
     lv_obj_t* lbl_tank_pct;
 
@@ -471,7 +473,7 @@ static void build_main_screen()
     lv_obj_center(lbl_conf);
     lv_obj_add_event_cb(ui.btn_conf, on_conf_clicked, LV_EVENT_CLICKED, NULL);
 
-    // ── HEATING panel (col1 row1) ─────────────────────────────────────────────
+    // ── CALEFACCIÓN panel (col1 row1) ─────────────────────────────────────────
     lv_obj_t* p_heat = make_section(scr, 0, CONTENT_Y, HEAT_W, ROW1_H);
 
     make_label(p_heat, t(TK::HEATING), s_font_title, C_DIM, 12, 8);
@@ -495,11 +497,11 @@ static void build_main_screen()
     lv_obj_clear_flag(ui.row_sp, LV_OBJ_FLAG_SCROLLABLE);
 
     ui.btn_sp_dn = lv_button_create(ui.row_sp);
-    lv_obj_set_size(ui.btn_sp_dn, 70, 60);
+    lv_obj_set_size(ui.btn_sp_dn, 58, 60);
     lv_obj_set_pos(ui.btn_sp_dn, 0, 0);
     style_button(ui.btn_sp_dn);
     lv_obj_t* l_dn = lv_label_create(ui.btn_sp_dn);
-    lv_label_set_text(l_dn, FA_CARET_D);
+    lv_label_set_text(l_dn, FA_CARET_U);
     lv_obj_set_style_text_font(l_dn, s_font_icons24, 0);
     lv_obj_center(l_dn);
     lv_obj_add_event_cb(ui.btn_sp_dn, on_sp_dn, LV_EVENT_CLICKED, NULL);
@@ -511,18 +513,18 @@ static void build_main_screen()
     lv_obj_align(ui.lbl_room_sp, LV_ALIGN_CENTER, 0, 0);
 
     ui.btn_sp_up = lv_button_create(ui.row_sp);
-    lv_obj_set_size(ui.btn_sp_up, 70, 60);
-    lv_obj_set_pos(ui.btn_sp_up, HEAT_W - 24 - 70, 0);
+    lv_obj_set_size(ui.btn_sp_up, 58, 60);
+    lv_obj_set_pos(ui.btn_sp_up, HEAT_W - 24 - 58, 0);
     style_button(ui.btn_sp_up);
     lv_obj_t* l_up = lv_label_create(ui.btn_sp_up);
-    lv_label_set_text(l_up, FA_CARET_U);
+    lv_label_set_text(l_up, FA_CARET_D);
     lv_obj_set_style_text_font(l_up, s_font_icons24, 0);
     lv_obj_center(l_up);
     lv_obj_add_event_cb(ui.btn_sp_up, on_sp_up, LV_EVENT_CLICKED, NULL);
 
     lv_obj_add_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
 
-    // ── FAN panel (col1 row2) ─────────────────────────────────────────────────
+    // ── VENTILADOR panel (col1 row2) ──────────────────────────────────────────
     lv_obj_t* p_fan = make_section(scr, 0, ROW2_Y, FAN_W, ROW2_H);
 
     make_label(p_fan, t(TK::FAN), s_font_title, C_DIM, 12, 12);
@@ -577,7 +579,7 @@ static void build_main_screen()
     lv_obj_add_flag(ui.btn_fan_up,  LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(ui.lbl_fan_lvl, LV_OBJ_FLAG_HIDDEN);
 
-    // ── HOT WATER panel (col2 row1) ───────────────────────────────────────────
+    // ── AGUA CALIENTE panel (col2 row1) ───────────────────────────────────────
     lv_obj_t* p_water = make_section(scr, WATER_X, CONTENT_Y, WATER_W, ROW1_H);
 
     make_label(p_water, t(TK::HOT_WATER), s_font_title, C_DIM, 12, 8);
@@ -676,19 +678,22 @@ static void build_main_screen()
         // ON / OFF placeholder buttons.  They render so the panel looks
         struct IoBoxOut { lv_obj_t* box; lv_obj_t* head; lv_obj_t* head_lbl; lv_obj_t* val; };
         auto make_io_box = [&](int x, int y, int w, int h,
-                               const char* hdr, int hdr_h = 16) -> IoBoxOut {
-            lv_obj_t* box = lv_obj_create(p_inv);
-            lv_obj_set_pos(box, x, y);
-            lv_obj_set_size(box, w, h);
-            lv_obj_set_style_bg_color(box, lv_color_hex(0x6a727f), 0);
-            lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
-            lv_obj_set_style_border_width(box, 0, 0);
-            lv_obj_set_style_radius(box, 5, 0);
-            lv_obj_set_style_pad_all(box, 0, 0);
-            lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+                               const char* hdr, int hdr_h = 22) -> IoBoxOut {
+            // Wrapper with clip_corner provides the rounded outline shared
+            // by head (top corners) and box (bottom corners) — LVGL has no
+            // per-corner radius so we round the parent and let it clip.
+            lv_obj_t* wrap = lv_obj_create(p_inv);
+            lv_obj_set_pos(wrap, x, y - hdr_h);
+            lv_obj_set_size(wrap, w, hdr_h + h);
+            lv_obj_set_style_bg_opa(wrap, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(wrap, 0, 0);
+            lv_obj_set_style_radius(wrap, 5, 0);
+            lv_obj_set_style_pad_all(wrap, 0, 0);
+            lv_obj_set_style_clip_corner(wrap, true, 0);
+            lv_obj_clear_flag(wrap, LV_OBJ_FLAG_SCROLLABLE);
 
-            lv_obj_t* head = lv_obj_create(p_inv);
-            lv_obj_set_pos(head, x, y - hdr_h);
+            lv_obj_t* head = lv_obj_create(wrap);
+            lv_obj_set_pos(head, 0, 0);
             lv_obj_set_size(head, w, hdr_h);
             lv_obj_set_style_bg_color(head, lv_color_hex(0x969ba3), 0);
             lv_obj_set_style_bg_opa(head, LV_OPA_COVER, 0);
@@ -702,6 +707,16 @@ static void build_main_screen()
             lv_obj_set_style_text_font(hl, s_font_14, 0);
             lv_obj_center(hl);
 
+            lv_obj_t* box = lv_obj_create(wrap);
+            lv_obj_set_pos(box, 0, hdr_h);
+            lv_obj_set_size(box, w, h);
+            lv_obj_set_style_bg_color(box, lv_color_hex(0x6a727f), 0);
+            lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(box, 0, 0);
+            lv_obj_set_style_radius(box, 0, 0);
+            lv_obj_set_style_pad_all(box, 0, 0);
+            lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
             lv_obj_t* v = lv_label_create(box);
             lv_label_set_text(v, "--");
             lv_obj_set_style_text_color(v, C_TEXT, 0);
@@ -711,17 +726,17 @@ static void build_main_screen()
         };
 
         {
-            auto r = make_io_box(15, 78, 95, 44, "RED", 22);
+            auto r = make_io_box(15, 78, 95, 29, "RED");
             ui.lbl_inv_mains_w = r.val;
             ui.box_mains = r.box; ui.hdr_mains = r.head; ui.hdr_mains_lbl = r.head_lbl;
         }
         {
-            auto r = make_io_box(248, 66, 90, 47, "CARGAS");
+            auto r = make_io_box(248, 56, 90, 29, "CARGAS");
             ui.lbl_inv_load_w = r.val;
             ui.box_load = r.box; ui.hdr_load = r.head;
         }
         {
-            auto r = make_io_box(248, 120, 90, 47, "BAT.");
+            auto r = make_io_box(248, 120, 90, 29, "BAT.");
             ui.lbl_inv_batt_w = r.val;
             ui.box_batt = r.box; ui.hdr_batt = r.head; ui.hdr_batt_lbl = r.head_lbl;
         }
@@ -747,7 +762,7 @@ static void build_main_screen()
         auto make_ear = [&](int x) {
             lv_obj_t* e = lv_obj_create(mp);
             lv_obj_set_pos(e, x, 0);
-            lv_obj_set_size(e, (int)(MPX_W * 0.22f), 8);
+            lv_obj_set_size(e, (int)(MPX_W * 0.22f), 12);
             lv_obj_set_style_bg_color(e, C_BG, 0);
             lv_obj_set_style_bg_opa(e, LV_OPA_COVER, 0);
             lv_obj_set_style_border_width(e, 0, 0);
@@ -760,7 +775,7 @@ static void build_main_screen()
         // Orange accent bar (centered in the blue area)
         lv_obj_t* ob = lv_obj_create(mp);
         int barW = (int)(MPX_W * 0.84f);
-        lv_obj_set_pos(ob, (MPX_W - barW) / 2, BLUE_H / 2 - 8);
+        lv_obj_set_pos(ob, (MPX_W - barW) / 2 - 1, BLUE_H / 2 - 8);
         lv_obj_set_size(ob, barW, 5);
         lv_obj_set_style_bg_color(ob, lv_color_hex(0xf96432), 0);
         lv_obj_set_style_bg_opa(ob, LV_OPA_COVER, 0);
@@ -788,14 +803,21 @@ static void build_main_screen()
         lv_obj_set_style_radius(ft, 0, 0);
         lv_obj_clear_flag(ft, LV_OBJ_FLAG_SCROLLABLE);
 
-        // State label in the blue area (bottom, above foot)
+        // State label centered in the empty band below the dark display
+        // window and above the foot trim — the visual "dead space" inside
+        // the blue body where the value reads most clearly.
         ui.lbl_inv_state = lv_label_create(mp);
         lv_label_set_text(ui.lbl_inv_state, "--");
         lv_obj_set_style_text_color(ui.lbl_inv_state, C_TEXT, 0);
         lv_obj_set_style_text_font(ui.lbl_inv_state, s_font_14, 0);
-        lv_obj_set_pos(ui.lbl_inv_state, 0, BLUE_H - 16);
-        lv_obj_set_width(ui.lbl_inv_state, MPX_W);
-        lv_obj_set_style_text_align(ui.lbl_inv_state, LV_TEXT_ALIGN_CENTER, 0);
+        constexpr int DW_BOTTOM = BLUE_H / 2 + 2 + 8;     // dark display window bottom
+        constexpr int STATE_H   = 14;                     // ~ s_font_14 height
+        // LV_ALIGN_TOP_MID centers the label horizontally against the
+        // parent's geometric center (border-aware), which a plain x=0 +
+        // width=MPX_W + TEXT_ALIGN_CENTER would not, since the 2 px
+        // border shifts the visible interior.
+        lv_obj_align(ui.lbl_inv_state, LV_ALIGN_TOP_MID, 0,
+                     DW_BOTTOM + (BLUE_H - DW_BOTTOM - STATE_H) / 2);
 
         auto make_flow = [&](int x, int y, int w,
                              lv_obj_t** out, lv_obj_t** stripes_out) {
@@ -835,10 +857,10 @@ static void build_main_screen()
             *stripes_out = s;
         };
         // MAINS box ends at x=110, MPX starts at MPX_X=140 → gap 30px
-        make_flow(110, 98,  30, &ui.flow_mains, &ui.flow_mains_str);
+        make_flow(110, 91,  30, &ui.flow_mains, &ui.flow_mains_str);
         // MPX ends at MPX_X+MPX_W=218, LOAD/BATT boxes start at x=248 → gap 30px
-        make_flow(218, 88,  30, &ui.flow_load,  &ui.flow_load_str);
-        make_flow(218, 141, 30, &ui.flow_batt,  &ui.flow_batt_str);
+        make_flow(218, 69,  30, &ui.flow_load,  &ui.flow_load_str);
+        make_flow(218, 132, 30, &ui.flow_batt,  &ui.flow_batt_str);
 
         // Zebra animation driver — translates each active stripe container
         // by phase px on every tick.  Period 60 ms × 8 phases = 480 ms / cycle.
@@ -855,24 +877,21 @@ static void build_main_screen()
         }, 60, nullptr);
     }
 
-    // ── AGUA L. panel (fresh-water tank, BTHome) ──────────────────────────────
-    // Layout mirrors ui/truminus_ui.eez-project (SOLAR_1 child inside EMPTY 1):
-    //   - title "AGUA L." at (19,12)
-    //   - percent label at (31,59)
-    //   - tank body 106×71 at (21,96) — horizontal jug silhouette
-    //   - neck cap 17×6 at (103,92) — small spout on top-right of the body
-    // Fill grows from bottom up using lv_bar in vertical orientation, sized to
-    // the inside of the tank body (border-aware padding).
+    // ── AGUA LIMPIA panel (fresh-water tank, BTHome) ──────────────────────────
+    // Tank graphic centered horizontally so it leaves the same gap against
+    // the left separator and the right panel border.  AGUA_W=214, body w=146
+    // → (214 − 146) / 2 = 34 px gap on each side.  Neck and percent label
+    // shift with the body to keep their relative alignment.
     {
         lv_obj_t* p_tank = make_section(scr, AGUA_X, CONTENT_Y, AGUA_W, ROW1_H);
 
-        make_label(p_tank, "AGUA L.", s_font_title, C_DIM, 19, 12);
+        make_label(p_tank, "AGUA LIMPIA", s_font_title, C_DIM, 17, 12);
 
         ui.lbl_tank_pct = lv_label_create(p_tank);
         lv_label_set_text(ui.lbl_tank_pct, "-- %");
         lv_obj_set_style_text_font(ui.lbl_tank_pct, s_font_22, 0);
         lv_obj_set_style_text_color(ui.lbl_tank_pct, C_TEXT, 0);
-        lv_obj_set_pos(ui.lbl_tank_pct, 31, 59);
+        lv_obj_set_pos(ui.lbl_tank_pct, 75, 59);          // centered above body (body center 107, label w=64)
         lv_obj_set_width(ui.lbl_tank_pct, 64);
         lv_obj_set_style_text_align(ui.lbl_tank_pct, LV_TEXT_ALIGN_CENTER, 0);
 
@@ -880,7 +899,7 @@ static void build_main_screen()
         // protruding 6 px above the body top, like a screw-cap.
         lv_obj_t* neck = lv_obj_create(p_tank);
         lv_obj_set_size(neck, 17, 6);
-        lv_obj_set_pos(neck, 103, 92);
+        lv_obj_set_pos(neck, 156, 92);                     // body right (180) − neck w (17) − 7 px gap
         lv_obj_set_style_bg_color(neck, C_BORDER_BAT, 0);
         lv_obj_set_style_bg_opa(neck, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(neck, 0, 0);
@@ -891,8 +910,8 @@ static void build_main_screen()
         // don't need a separate container.  Vertical orientation: indicator
         // rises from bottom proportional to pct.
         ui.bar_tank = lv_bar_create(p_tank);
-        lv_obj_set_pos(ui.bar_tank, 21, 96);
-        lv_obj_set_size(ui.bar_tank, 106, 71);
+        lv_obj_set_pos(ui.bar_tank, 34, 96);
+        lv_obj_set_size(ui.bar_tank, 146, 71);
         lv_bar_set_range(ui.bar_tank, 0, 100);
         lv_bar_set_value(ui.bar_tank, 0, LV_ANIM_OFF);
         lv_bar_set_orientation(ui.bar_tank, LV_BAR_ORIENTATION_VERTICAL);
@@ -938,14 +957,15 @@ static void build_main_screen()
 
     // ── Separators ────────────────────────────────────────────────────────────
     make_sep(scr, 0,                   TOP_H - 1,    W,       1);   // under top bar
-    make_sep(scr, WATER_X,             CONTENT_Y,    1,  ROW1_H);  // heat | water (left)
-    make_sep(scr, WATER_X + WATER_W,   CONTENT_Y,    1,  ROW1_H);  // water right edge
-    make_sep(scr, SOLAR_X,             ROW2_Y,        1,  ROW2_H);  // fan  | solar (left)
-    make_sep(scr, SOLAR_X + SOLAR_W,   ROW2_Y,        1,  ROW2_H);  // solar right edge
-    make_sep(scr, AGUA_X,              CONTENT_Y,     1,  ROW1_H);  // water | AGUA L.
-    make_sep(scr, INV_X,               ROW2_Y,        1,  ROW2_H);  // solar | INVERSOR
-    make_sep(scr, 0,                   ROW2_Y - 1,    HEAT_W,  1);  // heat / fan
-    make_sep(scr, WATER_X,             ROW2_Y - 1,    WATER_W, 1);  // water / solar
+    make_sep(scr, WATER_X,             CONTENT_Y,    1,  ROW1_H);  // CALEFACCIÓN | AGUA CALIENTE
+    make_sep(scr, WATER_X + WATER_W,   CONTENT_Y,    1,  ROW1_H);  // AGUA CALIENTE right edge
+    make_sep(scr, SOLAR_X,             ROW2_Y,        1,  ROW2_H);  // VENTILADOR | SOLAR
+    make_sep(scr, SOLAR_X + SOLAR_W,   ROW2_Y,        1,  ROW2_H);  // SOLAR right edge
+    make_sep(scr, AGUA_X,              CONTENT_Y,     1,  ROW1_H);  // AGUA CALIENTE | AGUA LIMPIA
+    make_sep(scr, INV_X,               ROW2_Y,        1,  ROW2_H);  // SOLAR | INVERSOR
+    make_sep(scr, 0,                   ROW2_Y - 1,    HEAT_W,  1);  // CALEFACCIÓN / VENTILADOR
+    make_sep(scr, WATER_X,             ROW2_Y - 1,    WATER_W, 1);  // AGUA CALIENTE / SOLAR
+    make_sep(scr, AGUA_X,              ROW2_Y - 1,    AGUA_W,  1);  // AGUA LIMPIA / INVERSOR
     make_sep(scr, 0,       H - STATUS_H - 1, W,   1);   // above status bar
 
     lv_screen_load(scr);
@@ -959,7 +979,7 @@ static void build_main_screen()
 static void refresh_controls()
 {
     char buf[20];
-    snprintf(buf, sizeof(buf), "%.0f°C", st.roomSetpoint);
+    snprintf(buf, sizeof(buf), "%.1f°C", st.roomSetpoint);
     lv_label_set_text(ui.lbl_room_sp, buf);
 
     if (st.heatingOn) {
@@ -1031,13 +1051,13 @@ static void refresh_controls()
 
 static void on_sp_dn(lv_event_t*)
 {
-    if (st.roomSetpoint > 5.0f) st.roomSetpoint -= 1.0f;
+    if (st.roomSetpoint > 5.0f) st.roomSetpoint -= 0.5f;
     refresh_controls();
 }
 
 static void on_sp_up(lv_event_t*)
 {
-    if (st.roomSetpoint < 30.0f) st.roomSetpoint += 1.0f;
+    if (st.roomSetpoint < 30.0f) st.roomSetpoint += 0.5f;
     refresh_controls();
 }
 
