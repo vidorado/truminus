@@ -92,14 +92,6 @@ static uint8_t nvs_read_u8(const char* ns, const char* key, uint8_t def) {
     return val;
 }
 
-static void nvs_write_u8(const char* ns, const char* key, uint8_t val) {
-    nvs_handle_t h;
-    if (nvs_open(ns, NVS_READWRITE, &h) != ESP_OK) return;
-    nvs_set_u8(h, key, val);
-    nvs_commit(h);
-    nvs_close(h);
-}
-
 // ── Navigate-back timer (delayed so "Config saved" message is briefly visible) ──
 
 static void back_timer_cb(lv_timer_t* t) {
@@ -945,6 +937,7 @@ struct BleCtx {
     lv_obj_t* ta_solar_mac;
     lv_obj_t* ta_solar_key;
     lv_obj_t* ta_batt_mac;
+    lv_obj_t* ta_batt_pass;
     lv_obj_t* ta_tank_mac;
     lv_obj_t* ta_multi_mac;
     lv_obj_t* ta_multi_key;
@@ -1068,6 +1061,7 @@ static void ble_save_cb(lv_event_t*) {
     nvs_write("solar", "addr", lv_textarea_get_text(bl_ctx.ta_solar_mac));
     nvs_write("solar", "key",  lv_textarea_get_text(bl_ctx.ta_solar_key));
     nvs_write("batt",  "addr", lv_textarea_get_text(bl_ctx.ta_batt_mac));
+    nvs_write("batt",  "pass", lv_textarea_get_text(bl_ctx.ta_batt_pass));
     nvs_write("tank",  "addr", lv_textarea_get_text(bl_ctx.ta_tank_mac));
     nvs_write("multiplus", "addr", lv_textarea_get_text(bl_ctx.ta_multi_mac));
     nvs_write("multiplus", "key",  lv_textarea_get_text(bl_ctx.ta_multi_key));
@@ -1175,51 +1169,32 @@ static void show_ble(lv_obj_t* from) {
         lv_obj_center(sl);
     }
 
-    lv_obj_t* lbl_binfo = make_label(bl_ctx.panel, t(TK::BATT_INFO), f->f20, C_LABEL);
-    lv_obj_set_pos(lbl_binfo, COL2_X, 134);
-    lv_obj_set_width(lbl_binfo, COL2_W);
-    lv_label_set_long_mode(lbl_binfo, LV_LABEL_LONG_WRAP);
+    // Password — optional 6-digit code that some Ultimatron firmwares
+    // require before the BMS will answer read queries.  Empty = no auth.
+    lv_obj_t* lbl_bpass = make_label(bl_ctx.panel, t(TK::PASSWORD), f->f22, C_LABEL);
+    lv_obj_set_pos(lbl_bpass, COL2_X, 136);
 
-    // ── Tank sensor (BTHome) — full-width row below both columns ──
-    lv_obj_t* lbl_tank_title = make_label(bl_ctx.panel, t(TK::TANK_SECTION), f->title, C_DIM);
-    lv_obj_set_pos(lbl_tank_title, 0, 232);
+    bl_ctx.ta_batt_pass = lv_textarea_create(bl_ctx.panel);
+    lv_obj_set_pos(bl_ctx.ta_batt_pass, COL2_X, 164);
+    lv_obj_set_size(bl_ctx.ta_batt_pass, COL2_W, 52);
+    lv_obj_set_style_text_font(bl_ctx.ta_batt_pass, f->f22, 0);
+    lv_textarea_set_one_line(bl_ctx.ta_batt_pass, true);
+    lv_textarea_set_password_mode(bl_ctx.ta_batt_pass, true);
+    lv_textarea_set_placeholder_text(bl_ctx.ta_batt_pass, t(TK::PASSWORD_OPT_PH));
+    nvs_read("batt", "pass", buf, sizeof(buf));
+    if (buf[0]) lv_textarea_set_text(bl_ctx.ta_batt_pass, buf);
+    lv_obj_add_event_cb(bl_ctx.ta_batt_pass, ble_alpha_focus_cb, LV_EVENT_FOCUSED, nullptr);
 
-    lv_obj_t* lbl_tmac = make_label(bl_ctx.panel, t(TK::MAC_BLE_LABEL), f->f22, C_LABEL);
-    lv_obj_set_pos(lbl_tmac, 0, 272);
-
-    bl_ctx.ta_tank_mac = lv_textarea_create(bl_ctx.panel);
-    lv_obj_set_pos(bl_ctx.ta_tank_mac, 0, 300);
-    lv_obj_set_size(bl_ctx.ta_tank_mac, 326, 52);
-    lv_obj_set_style_text_font(bl_ctx.ta_tank_mac, f->f22, 0);
-    lv_textarea_set_one_line(bl_ctx.ta_tank_mac, true);
-    nvs_read("tank", "addr", buf, sizeof(buf));
-    if (buf[0]) lv_textarea_set_text(bl_ctx.ta_tank_mac, buf);
-    lv_obj_add_event_cb(bl_ctx.ta_tank_mac, ble_alpha_focus_cb, LV_EVENT_FOCUSED, nullptr);
-
-    {
-        lv_obj_t* sb = lv_button_create(bl_ctx.panel);
-        lv_obj_set_pos(sb, 334, 300);
-        lv_obj_set_size(sb, 46, 52);
-        style_btn(sb);
-        lv_obj_add_event_cb(sb, ble_scan_tank_cb, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t* sl = make_label(sb, FA_SEARCH, f->icons22, C_TEXT);
-        lv_obj_center(sl);
-    }
-
-    lv_obj_t* lbl_tinfo = make_label(bl_ctx.panel, t(TK::TANK_INFO), f->f20, C_LABEL);
-    lv_obj_set_pos(lbl_tinfo, COL2_X, 272);
-    lv_obj_set_width(lbl_tinfo, COL2_W);
-    lv_label_set_long_mode(lbl_tinfo, LV_LABEL_LONG_WRAP);
-
-    // ── Multiplus (VE.Bus Smart dongle) — full-width row, read-only data ──
+    // ── Multiplus (VE.Bus Smart dongle) — stacked in the LEFT column,
+    //    below SmartSolar. Read-only data; needs MAC + per-device key.
     lv_obj_t* lbl_multi_title = make_label(bl_ctx.panel, t(TK::MULTI_SECTION), f->title, C_DIM);
-    lv_obj_set_pos(lbl_multi_title, 0, 392);
+    lv_obj_set_pos(lbl_multi_title, 0, 264);
 
     lv_obj_t* lbl_mmac = make_label(bl_ctx.panel, t(TK::MAC_BLE_LABEL), f->f22, C_LABEL);
-    lv_obj_set_pos(lbl_mmac, 0, 432);
+    lv_obj_set_pos(lbl_mmac, 0, 304);
 
     bl_ctx.ta_multi_mac = lv_textarea_create(bl_ctx.panel);
-    lv_obj_set_pos(bl_ctx.ta_multi_mac, 0, 460);
+    lv_obj_set_pos(bl_ctx.ta_multi_mac, 0, 332);
     lv_obj_set_size(bl_ctx.ta_multi_mac, 326, 52);
     lv_obj_set_style_text_font(bl_ctx.ta_multi_mac, f->f22, 0);
     lv_textarea_set_one_line(bl_ctx.ta_multi_mac, true);
@@ -1229,7 +1204,7 @@ static void show_ble(lv_obj_t* from) {
 
     {
         lv_obj_t* sb = lv_button_create(bl_ctx.panel);
-        lv_obj_set_pos(sb, 334, 460);
+        lv_obj_set_pos(sb, 334, 332);
         lv_obj_set_size(sb, 46, 52);
         style_btn(sb);
         lv_obj_add_event_cb(sb, ble_scan_multi_cb, LV_EVENT_CLICKED, nullptr);
@@ -1238,11 +1213,11 @@ static void show_ble(lv_obj_t* from) {
     }
 
     lv_obj_t* lbl_mkey = make_label(bl_ctx.panel, t(TK::SOLAR_KEY), f->f22, C_LABEL);
-    lv_obj_set_pos(lbl_mkey, COL2_X, 432);
+    lv_obj_set_pos(lbl_mkey, 0, 396);
 
     bl_ctx.ta_multi_key = lv_textarea_create(bl_ctx.panel);
-    lv_obj_set_pos(bl_ctx.ta_multi_key, COL2_X, 460);
-    lv_obj_set_size(bl_ctx.ta_multi_key, COL2_W, 52);
+    lv_obj_set_pos(bl_ctx.ta_multi_key, 0, 424);
+    lv_obj_set_size(bl_ctx.ta_multi_key, COL1_W, 52);
     lv_obj_set_style_text_font(bl_ctx.ta_multi_key, f->f22, 0);
     lv_textarea_set_one_line(bl_ctx.ta_multi_key, true);
     nvs_read("multiplus", "key", buf, sizeof(buf));
@@ -1250,9 +1225,40 @@ static void show_ble(lv_obj_t* from) {
     lv_obj_add_event_cb(bl_ctx.ta_multi_key, ble_alpha_focus_cb, LV_EVENT_FOCUSED, nullptr);
 
     lv_obj_t* lbl_minfo = make_label(bl_ctx.panel, t(TK::MULTI_INFO), f->f20, C_LABEL);
-    lv_obj_set_pos(lbl_minfo, 0, 524);
-    lv_obj_set_width(lbl_minfo, SCR_W - 40);
+    lv_obj_set_pos(lbl_minfo, 0, 492);
+    lv_obj_set_width(lbl_minfo, COL1_W);
     lv_label_set_long_mode(lbl_minfo, LV_LABEL_LONG_WRAP);
+
+    // ── Tank sensor (BTHome) — stacked in the RIGHT column, below Battery.
+    lv_obj_t* lbl_tank_title = make_label(bl_ctx.panel, t(TK::TANK_SECTION), f->title, C_DIM);
+    lv_obj_set_pos(lbl_tank_title, COL2_X, 264);
+
+    lv_obj_t* lbl_tmac = make_label(bl_ctx.panel, t(TK::MAC_BLE_LABEL), f->f22, C_LABEL);
+    lv_obj_set_pos(lbl_tmac, COL2_X, 304);
+
+    bl_ctx.ta_tank_mac = lv_textarea_create(bl_ctx.panel);
+    lv_obj_set_pos(bl_ctx.ta_tank_mac, COL2_X, 332);
+    lv_obj_set_size(bl_ctx.ta_tank_mac, 286, 52);
+    lv_obj_set_style_text_font(bl_ctx.ta_tank_mac, f->f22, 0);
+    lv_textarea_set_one_line(bl_ctx.ta_tank_mac, true);
+    nvs_read("tank", "addr", buf, sizeof(buf));
+    if (buf[0]) lv_textarea_set_text(bl_ctx.ta_tank_mac, buf);
+    lv_obj_add_event_cb(bl_ctx.ta_tank_mac, ble_alpha_focus_cb, LV_EVENT_FOCUSED, nullptr);
+
+    {
+        lv_obj_t* sb = lv_button_create(bl_ctx.panel);
+        lv_obj_set_pos(sb, COL2_X + 294, 332);
+        lv_obj_set_size(sb, 46, 52);
+        style_btn(sb);
+        lv_obj_add_event_cb(sb, ble_scan_tank_cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t* sl = make_label(sb, FA_SEARCH, f->icons22, C_TEXT);
+        lv_obj_center(sl);
+    }
+
+    lv_obj_t* lbl_tinfo = make_label(bl_ctx.panel, t(TK::TANK_INFO), f->f20, C_LABEL);
+    lv_obj_set_pos(lbl_tinfo, COL2_X, 394);
+    lv_obj_set_width(lbl_tinfo, COL2_W);
+    lv_label_set_long_mode(lbl_tinfo, LV_LABEL_LONG_WRAP);
 
     // ── Status + Save button — fixed children of scr (always visible at bottom) ──
     bl_ctx.lbl_status = make_label(bl_ctx.scr, "", f->f20, C_LABEL);
