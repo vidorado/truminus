@@ -1313,7 +1313,7 @@ static void show_display(lv_obj_t* from) {
 
     lv_obj_t* scr = build_title_bar(t(TK::DISPLAY_TITLE), disp_back_cb);
 
-    uint8_t cur_idx = nvs_read_u8("display", "timeout_idx", 3);  // default: never
+    uint8_t cur_idx = nvs_read_u8("display", "timeout_idx", 0);  // default: 30 s
 
     lv_obj_t* lbl_timeout = make_label(scr, t(TK::TIMEOUT_LABEL), f->f22, C_LABEL);
     lv_obj_set_pos(lbl_timeout, 20, TITLE_H + 24);

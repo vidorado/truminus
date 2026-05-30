@@ -1202,7 +1202,7 @@ void p4DisplayInit()
         s_splash_tick = lv_tick_get();
 
         // Screen timeout + brightness — read NVS.
-        uint8_t idx   = 3;   // default: never
+        uint8_t idx   = 0;   // default: 30 s
         uint8_t brite = 100; // default: full brightness
         nvs_handle_t nvs_h;
         if (nvs_open("display", NVS_READONLY, &nvs_h) == ESP_OK) {
