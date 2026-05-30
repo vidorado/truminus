@@ -382,9 +382,14 @@ static void broadcastTankData() {
     char buf[96];
 
     TankData t = tankGetData();
+    // Emit on any change OR whenever a fresh sensor advert arrives (lastMs
+    // moves even when pct is identical) — needed so the user can watch the
+    // level rise smoothly while filling, instead of waiting for whole-percent
+    // crossings.  Also drives initial-state push.
     bool changed = !inited
                    || t.valid != prev.valid
-                   || (t.valid && t.pct != prev.pct);
+                   || (t.valid && t.pct != prev.pct)
+                   || (t.valid && t.lastMs != prev.lastMs);
     if (changed) {
         snprintf(buf, sizeof(buf),
                  "{\"command\":\"tank\",\"valid\":%s,\"pct\":%u}",
@@ -585,6 +590,9 @@ extern "C" void app_main(void)
     // subsystem emits its first message.
     flags_apply_log_levels();
 
+    // Pick up persisted UI language before the display builds any labels.
+    loadLanguage();
+
     ESP_LOGI(TAG, "TruMinus P4 — starting (heap=%lu)",
              (unsigned long)esp_get_free_heap_size());
 
@@ -678,6 +686,19 @@ extern "C" void app_main(void)
         d.linOk = lin.linOk;
         d.roomTemp  = lin.roomTemp;   // already NAN when no valid frame yet
         d.waterTemp = lin.waterTemp;
+
+        // Status line: switch to "No LIN bus" once we've given the bus a few
+        // seconds to come up.  Mirrors the web UI's red "No LIN bus" message.
+        // Only push on transitions so the slot remains free for ad-hoc messages.
+        {
+            static int  prevStatus = -1;   // -1=unknown, 0=ok/empty, 1=no-LIN
+            int  newStatus = (iter >= 10 && !lin.linOk) ? 1 : 0;
+            if (newStatus != prevStatus) {
+                if (newStatus == 1)      p4DisplaySetStatus(t(TK::STATUS_NO_LIN), true);
+                else if (prevStatus == 1) p4DisplaySetStatus("", false);
+                prevStatus = newStatus;
+            }
+        }
 
         // Tunnel state → topbar cloud icon (grey/blinking/blue/red).
         p4SetTunnelState(static_cast<uint8_t>(wstunnelUiState()));
