@@ -79,7 +79,7 @@ static constexpr int ROW2_H  = CONTENT_H - ROW1_H;       // 176
 // narrowed by the same 20 px so the boiler drawing stays full-size.
 static constexpr int HEAT_W  = 256;
 static constexpr int WATER_X = 256;
-static constexpr int WATER_W = 330;
+static constexpr int WATER_W = 320;
 
 // Row 2: VENTILADOR | SOLAR | INVERSOR
 static constexpr int FAN_W   = 203;
@@ -93,8 +93,8 @@ static constexpr int INV_W   = 355;
 // "AGUA LIMPIA" panel — right-most slot of ROW 1 (next to AGUA CALIENTE).
 // 214 × ROW1_H, flush against the right edge.  Layout matches
 // ui/truminus_ui.eez-project (EMPTY 1 / SOLAR_1 panel).
-static constexpr int AGUA_X  = 586;
-static constexpr int AGUA_W  = 214;
+static constexpr int AGUA_X  = 576;
+static constexpr int AGUA_W  = 224;
 
 // Vertical bar dimensions
 static constexpr int TANK_W        = 64;
@@ -676,7 +676,7 @@ static void build_main_screen()
     {
         lv_obj_t* p_inv = make_section(scr, INV_X, ROW2_Y, INV_W, ROW2_H);
 
-        make_label(p_inv, "INVERSOR", s_font_title, C_DIM, 10, 12);
+        make_label(p_inv, t(TK::INVERTER), s_font_title, C_DIM, 10, 12);
 
         // ON / OFF placeholder buttons.  They render so the panel looks
         struct IoBoxOut { lv_obj_t* box; lv_obj_t* head; lv_obj_t* head_lbl; lv_obj_t* val; };
@@ -729,12 +729,12 @@ static void build_main_screen()
         };
 
         {
-            auto r = make_io_box(15, 103, 95, 29, "RED");
+            auto r = make_io_box(15, 103, 95, 29, t(TK::INV_MAINS));
             ui.lbl_inv_mains_w = r.val;
             ui.box_mains = r.box; ui.hdr_mains = r.head; ui.hdr_mains_lbl = r.head_lbl;
         }
         {
-            auto r = make_io_box(248, 56, 90, 29, "CARGAS");
+            auto r = make_io_box(248, 56, 90, 29, t(TK::INV_LOADS));
             ui.lbl_inv_load_w = r.val;
             ui.box_load = r.box; ui.hdr_load = r.head;
         }
@@ -889,19 +889,19 @@ static void build_main_screen()
 
     // ── AGUA LIMPIA panel (fresh-water tank, BTHome) ──────────────────────────
     // Tank graphic centered horizontally so it leaves the same gap against
-    // the left separator and the right panel border.  AGUA_W=214, body w=146
-    // → (214 − 146) / 2 = 34 px gap on each side.  Neck and percent label
+    // the left separator and the right panel border.  AGUA_W=224, body w=146
+    // → (224 − 146) / 2 = 39 px gap on each side.  Neck and percent label
     // shift with the body to keep their relative alignment.
     {
         lv_obj_t* p_tank = make_section(scr, AGUA_X, CONTENT_Y, AGUA_W, ROW1_H);
 
-        make_label(p_tank, "AGUA LIMPIA", s_font_title, C_DIM, 17, 12);
+        make_label(p_tank, t(TK::FRESH_WATER), s_font_title, C_DIM, 17, 12);
 
         ui.lbl_tank_pct = lv_label_create(p_tank);
         lv_label_set_text(ui.lbl_tank_pct, "-- %");
         lv_obj_set_style_text_font(ui.lbl_tank_pct, s_font_22, 0);
         lv_obj_set_style_text_color(ui.lbl_tank_pct, C_TEXT, 0);
-        lv_obj_set_pos(ui.lbl_tank_pct, 75, 59);          // centered above body (body center 107, label w=64)
+        lv_obj_set_pos(ui.lbl_tank_pct, 80, 59);          // centered above body (body center 112, label w=64)
         lv_obj_set_width(ui.lbl_tank_pct, 64);
         lv_obj_set_style_text_align(ui.lbl_tank_pct, LV_TEXT_ALIGN_CENTER, 0);
 
@@ -909,7 +909,7 @@ static void build_main_screen()
         // protruding 6 px above the body top, like a screw-cap.
         lv_obj_t* neck = lv_obj_create(p_tank);
         lv_obj_set_size(neck, 17, 6);
-        lv_obj_set_pos(neck, 156, 92);                     // body right (180) − neck w (17) − 7 px gap
+        lv_obj_set_pos(neck, 161, 92);                     // body right (185) − neck w (17) − 7 px gap
         lv_obj_set_style_bg_color(neck, C_BORDER_BAT, 0);
         lv_obj_set_style_bg_opa(neck, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(neck, 0, 0);
@@ -920,7 +920,7 @@ static void build_main_screen()
         // don't need a separate container.  Vertical orientation: indicator
         // rises from bottom proportional to pct.
         ui.bar_tank = lv_bar_create(p_tank);
-        lv_obj_set_pos(ui.bar_tank, 34, 96);
+        lv_obj_set_pos(ui.bar_tank, 39, 96);
         lv_obj_set_size(ui.bar_tank, 146, 71);
         lv_bar_set_range(ui.bar_tank, 0, 100);
         lv_bar_set_value(ui.bar_tank, 0, LV_ANIM_OFF);
@@ -1607,7 +1607,8 @@ void p4DisplayUpdate(const P4DisplayData& d)
             set_port_color(ui.box_mains, ui.hdr_mains,
                            acOn ? C_PORT_GREEN_BODY : C_PORT_GREY_BODY,
                            acOn ? C_PORT_GREEN_HDR  : C_PORT_GREY_HDR);
-            lv_label_set_text(ui.hdr_mains_lbl, acOn ? "RED " FA_PLUG_BOLT : "RED");
+            if (acOn) lv_label_set_text_fmt(ui.hdr_mains_lbl, "%s " FA_PLUG_BOLT, t(TK::INV_MAINS));
+            else      lv_label_set_text(ui.hdr_mains_lbl, t(TK::INV_MAINS));
 
             // CARGA: red when delivering power, grey when idle
             bool loadOn = abs(d.multi.acOutW) > 5;
@@ -1641,7 +1642,7 @@ void p4DisplayUpdate(const P4DisplayData& d)
             set_port_color(ui.box_mains, ui.hdr_mains, C_PORT_GREY_BODY, C_PORT_GREY_HDR);
             set_port_color(ui.box_load,  ui.hdr_load,  C_PORT_GREY_BODY, C_PORT_GREY_HDR);
             set_port_color(ui.box_batt,  ui.hdr_batt,  C_PORT_GREY_BODY, C_PORT_GREY_HDR);
-            lv_label_set_text(ui.hdr_mains_lbl, "RED");
+            lv_label_set_text(ui.hdr_mains_lbl, t(TK::INV_MAINS));
             lv_label_set_text(ui.hdr_batt_lbl, "BAT.");
         }
     }
@@ -1665,7 +1666,7 @@ void p4DisplayUpdate(const P4DisplayData& d)
         lv_label_set_text_fmt(ui.lbl_conn, "%s / %s", d.ssid, d.ip);
         lv_obj_set_style_text_color(ui.lbl_conn, C_TEXT, 0);
     } else {
-        lv_label_set_text(ui.lbl_conn, "Sin WiFi");
+        lv_label_set_text(ui.lbl_conn, t(TK::STATUS_NO_WIFI));
         lv_obj_set_style_text_color(ui.lbl_conn, C_LABEL, 0);
     }
 

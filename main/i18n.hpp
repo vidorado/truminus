@@ -123,6 +123,11 @@ enum class TK : uint8_t {
     TUNNEL_INSTR,
     TUNNEL_STATUS_ON,
     TUNNEL_STATUS_OFF,
+    // ── LCD panel titles (row 1 / row 2) ───────────────────────────────────
+    FRESH_WATER,       // "AGUA LIMPIA" / "FRESH WATER"
+    INVERTER,          // "INVERSOR" / "INVERTER"
+    INV_MAINS,         // INVERSOR I/O port: "RED" / "SHORE"
+    INV_LOADS,         // INVERSOR I/O port: "CARGAS" / "LOADS"
     _COUNT
 };
 

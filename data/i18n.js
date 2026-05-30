@@ -29,7 +29,7 @@ var LANG_STRINGS = {
         inverter:     'INVERTER',
         inv_on:       'On',
         inv_off:      'Off',
-        inv_mains:    'MAINS',
+        inv_mains:    'SHORE',
         inv_load:     'LOADS',
         batt_charge:  'CHARGE',
         batt_discharge:'DISCHARGE',

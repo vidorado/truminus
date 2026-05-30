@@ -1,7 +1,7 @@
 #include "i18n.hpp"
 #include "nvs.h"
 
-static Language s_language    = Language::ES;
+static Language s_language    = Language::EN;
 static bool     s_languageSet = false;
 
 // NVS location matches the table in CLAUDE.md: namespace "display", key "lang".
@@ -122,6 +122,10 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "y pega el mismo token que TUNNEL_TOKEN.",                       // TUNNEL_INSTR
     "Conectado",                                                     // TUNNEL_STATUS_ON
     "Desconectado",                                                  // TUNNEL_STATUS_OFF
+    "AGUA LIMPIA",                                                   // FRESH_WATER
+    "INVERSOR",                                                      // INVERTER
+    "RED",                                                           // INV_MAINS
+    "CARGAS",                                                        // INV_LOADS
 };
 
 static const char* EN_STRINGS[(int)TK::_COUNT] = {
@@ -239,6 +243,10 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "the same value as its TUNNEL_TOKEN env var.",                   // TUNNEL_INSTR
     "Connected",                                                     // TUNNEL_STATUS_ON
     "Disconnected",                                                  // TUNNEL_STATUS_OFF
+    "FRESH WATER",                                                   // FRESH_WATER
+    "INVERTER",                                                      // INVERTER
+    "SHORE",                                                         // INV_MAINS
+    "LOADS",                                                         // INV_LOADS
 };
 
 const char* t(TK key) {
@@ -269,7 +277,7 @@ void loadLanguage() {
     nvs_close(h);
     if (val == 0xFF) {
         s_languageSet = false;
-        s_language    = Language::ES;
+        s_language    = Language::EN;
     } else {
         s_language    = (val == (uint8_t)Language::EN) ? Language::EN : Language::ES;
         s_languageSet = true;
