@@ -1150,11 +1150,43 @@ static bool          s_dimmed            = false;
 static bool          s_blanked           = false;
 static bool          s_waking            = false; // 500 ms lockout after wake
 static uint32_t      s_wake_tick         = 0;
+static lv_obj_t*     s_wake_overlay      = nullptr;  // transparent shield on
+                                                     // lv_layer_top() while
+                                                     // blanked — swallows the
+                                                     // touch that wakes the
+                                                     // panel so it doesn't
+                                                     // hit any widget.
 
 // Dim level = 20 % of normal brightness, floor 8.
 static int dim_level() { int d = s_brightness_normal / 5; return d < 8 ? 8 : d; }
 
 static void tunnel_icon_timer_cb(lv_timer_t*);   // defined below
+
+static void wake_overlay_release_cb(lv_event_t*)
+{
+    if (s_wake_overlay) {
+        lv_obj_del(s_wake_overlay);
+        s_wake_overlay = nullptr;
+    }
+}
+
+static void install_wake_overlay()
+{
+    if (s_wake_overlay) return;
+    s_wake_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_wake_overlay);
+    lv_obj_set_size(s_wake_overlay, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_pos(s_wake_overlay, 0, 0);
+    lv_obj_set_style_bg_opa(s_wake_overlay, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(s_wake_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_wake_overlay, LV_OBJ_FLAG_CLICKABLE);
+    // Remove on release OR press-lost (finger drag off the panel) so the
+    // overlay can never stick around once the user is no longer touching.
+    lv_obj_add_event_cb(s_wake_overlay, wake_overlay_release_cb,
+                        LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(s_wake_overlay, wake_overlay_release_cb,
+                        LV_EVENT_PRESS_LOST, nullptr);
+}
 
 static void screen_timeout_cb(lv_timer_t*) {
     if (!s_disp) return;
@@ -1195,6 +1227,10 @@ static void screen_timeout_cb(lv_timer_t*) {
         s_target  = 0;
         s_blanked = true;
         s_dimmed  = false;
+        // Shield UI from the next press so the touch that wakes the panel
+        // can't also click a button underneath.  The overlay tears down on
+        // its own release/press-lost event.
+        install_wake_overlay();
     } else if (!s_dimmed && !s_blanked && idle >= s_timeout_ms - 7000) {
         s_target = dim_level();
         s_dimmed = true;
