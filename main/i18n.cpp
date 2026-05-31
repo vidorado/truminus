@@ -126,6 +126,20 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "INVERSOR",                                                      // INVERTER
     "RED",                                                           // INV_MAINS
     "CARGAS",                                                        // INV_LOADS
+    "Actualizaciones",                                               // UPDATES_CFG
+    "TruMinus - Actualizaciones",                                    // UPDATES_TITLE
+    "Versi\xC3\xB3n actual",                                         // OTA_CURRENT
+    "\xC3\x9Altima versi\xC3\xB3n",                                  // OTA_LATEST
+    "Est\xC3\xA1s al d\xC3\xAD" "a",                                 // OTA_UP_TO_DATE
+    "Actualizaci\xC3\xB3n disponible",                               // OTA_AVAILABLE
+    "Buscar",                                                        // OTA_CHECK
+    "Comprobando\xE2\x80\xA6",                                       // OTA_CHECKING
+    "Actualizar",                                                    // OTA_UPDATE_NOW
+    "Actualizando\xE2\x80\xA6",                                      // OTA_UPDATING
+    "Error al comprobar",                                            // OTA_CHECK_FAILED
+    "M\xC3\xA1s tarde",                                              // OTA_LATER
+    "Comprobaci\xC3\xB3n autom\xC3\xA1tica",                         // OTA_AUTOCHECK
+    "\xC2\xBF" "Actualizar ahora?",                                  // OTA_PROMPT
 };
 
 static const char* EN_STRINGS[(int)TK::_COUNT] = {
@@ -247,6 +261,20 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "INVERTER",                                                      // INVERTER
     "SHORE",                                                         // INV_MAINS
     "LOADS",                                                         // INV_LOADS
+    "Updates",                                                       // UPDATES_CFG
+    "TruMinus - Updates",                                            // UPDATES_TITLE
+    "Current version",                                               // OTA_CURRENT
+    "Latest version",                                                // OTA_LATEST
+    "Up to date",                                                    // OTA_UP_TO_DATE
+    "Update available",                                              // OTA_AVAILABLE
+    "Check",                                                         // OTA_CHECK
+    "Checking\xE2\x80\xA6",                                          // OTA_CHECKING
+    "Update",                                                        // OTA_UPDATE_NOW
+    "Updating\xE2\x80\xA6",                                          // OTA_UPDATING
+    "Check failed",                                                  // OTA_CHECK_FAILED
+    "Later",                                                         // OTA_LATER
+    "Auto-check",                                                    // OTA_AUTOCHECK
+    "Update now?",                                                   // OTA_PROMPT
 };
 
 const char* t(TK key) {

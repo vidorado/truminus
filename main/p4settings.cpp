@@ -12,6 +12,7 @@
 
 #include "p4settings.hpp"
 #include "p4display.hpp"
+#include "p4_ota.hpp"
 #include "i18n.hpp"
 #include "wifi_manager.hpp"
 #include "victronble.hpp"
@@ -52,6 +53,7 @@ static const char* TAG = "cfg";
 #define FA_EYE_SLASH "\xEF\x81\xB0"   // U+F070
 #define FA_SEARCH    "\xEF\x80\x82"   // U+F002
 #define FA_CLOUD     "\xEF\x83\x82"   // U+F0C2
+#define FA_CLOUD_DL  "\xEF\x83\xAD"   // U+F0ED (cloud-arrow-down, firmware updates)
 
 // Screen geometry.
 static constexpr int SCR_W   = 800;
@@ -254,6 +256,7 @@ static void show_ble(lv_obj_t* from);
 static void show_display(lv_obj_t* from);
 static void show_language(lv_obj_t* from);
 static void show_tunnel(lv_obj_t* from);
+static void show_updates(lv_obj_t* from);
 
 // ── "from" helpers — store prev screen pointer in the button user_data ────────
 // Each "Back" callback reads the pointer and calls show_xxx(prev).
@@ -288,6 +291,7 @@ static void menu_ble_cb(lv_event_t* e)      { show_ble(lv_screen_active()); }
 static void menu_display_cb(lv_event_t* e)  { show_display(lv_screen_active()); }
 static void menu_language_cb(lv_event_t* e) { show_language(lv_screen_active()); }
 static void menu_tunnel_cb(lv_event_t* e)   { show_tunnel(lv_screen_active()); }
+static void menu_updates_cb(lv_event_t* e)  { show_updates(lv_screen_active()); }
 
 static void show_menu(lv_obj_t* /*from*/) {
     const P4Fonts* f = p4GetFonts();
@@ -310,6 +314,7 @@ static void show_menu(lv_obj_t* /*from*/) {
         { FA_DISPLAY,  TK::DISP_CFG,    menu_display_cb  },
         { FA_GLOBE,    TK::LANGUAGE,    menu_language_cb },
         { FA_CLOUD,    TK::TUNNEL_CFG,  menu_tunnel_cb   },
+        { FA_CLOUD_DL, TK::UPDATES_CFG, menu_updates_cb  },
     };
 #else
     static const MenuBtn ITEMS[] = {
@@ -319,25 +324,32 @@ static void show_menu(lv_obj_t* /*from*/) {
         { FA_DISPLAY,  TK::DISP_CFG,    menu_display_cb  },
         { FA_GLOBE,    TK::LANGUAGE,    menu_language_cb },
         { FA_CLOUD,    TK::TUNNEL_CFG,  menu_tunnel_cb   },
+        { FA_CLOUD_DL, TK::UPDATES_CFG, menu_updates_cb  },
     };
 #endif
-    const int N      = sizeof(ITEMS) / sizeof(ITEMS[0]);
-    const int BTN_W  = 240;
-    const int BTN_H  = 185;
-    const int GAP    = 20;
-    const int CONT_H = SCR_H - TITLE_H - 2;
-    const int row1   = (N >= 3) ? 3 : N;
-    const int row2   = N - row1;
-    const int ROW1_X = (SCR_W - row1 * BTN_W - (row1 - 1) * GAP) / 2;
-    const int ROW2_X = row2 > 0 ? (SCR_W - row2 * BTN_W - (row2 - 1) * GAP) / 2 : 0;
-    const int ROW1_Y = TITLE_H + 2 + (CONT_H - (row2 > 0 ? 2 : 1) * BTN_H - (row2 > 0 ? GAP : 0)) / 2;
+    // Generic grid: up to 3 columns, as many rows as needed.  Button height
+    // scales so all rows fit; the last (possibly short) row is centred on its
+    // own so 5/7-item layouts stay symmetric.  Handles 5 (NO_MQTT) … 7 (full).
+    const int N        = sizeof(ITEMS) / sizeof(ITEMS[0]);
+    const int COLS     = (N < 3) ? N : 3;
+    const int ROWS     = (N + COLS - 1) / COLS;
+    const int BTN_W    = 240;
+    const int GAP      = 20;
+    const int CONT_TOP = TITLE_H + 2;
+    const int CONT_H   = SCR_H - CONT_TOP;
+    int BTN_H = (CONT_H - (ROWS + 1) * GAP) / ROWS;
+    if (BTN_H > 185) BTN_H = 185;
+    const int GRID_H  = ROWS * BTN_H + (ROWS - 1) * GAP;
+    const int START_Y = CONT_TOP + (CONT_H - GRID_H) / 2;
 
     for (int i = 0; i < N; i++) {
-        int row    = (i < row1) ? 0 : 1;
-        int col    = (row == 0) ? i : (i - row1);
-        int base_x = (row == 0) ? ROW1_X : ROW2_X;
-        int x      = base_x + col * (BTN_W + GAP);
-        int y      = ROW1_Y + row * (BTN_H + GAP);
+        int row          = i / COLS;
+        int col          = i % COLS;
+        int items_in_row = (N - row * COLS < COLS) ? (N - row * COLS) : COLS;
+        int row_w        = items_in_row * BTN_W + (items_in_row - 1) * GAP;
+        int row_x        = (SCR_W - row_w) / 2;
+        int x            = row_x + col * (BTN_W + GAP);
+        int y            = START_Y + row * (BTN_H + GAP);
 
         lv_obj_t* btn = lv_button_create(scr);
         lv_obj_set_pos(btn, x, y);
@@ -1578,6 +1590,138 @@ static void show_tunnel(lv_obj_t* from) {
     lv_obj_add_event_cb(tn.kb, tun_kb_hide_cb, LV_EVENT_CANCEL, nullptr);
 
     lv_screen_load(tn.scr);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FIRMWARE UPDATES  (self-OTA — see main/p4_ota.cpp)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+static lv_obj_t*  s_upd_prev       = nullptr;
+static lv_obj_t*  s_upd_status_lbl = nullptr;
+static lv_obj_t*  s_upd_btn_update = nullptr;
+static lv_timer_t* s_upd_timer     = nullptr;
+
+static void upd_stop_timer() {
+    if (s_upd_timer) { lv_timer_delete(s_upd_timer); s_upd_timer = nullptr; }
+}
+
+static void upd_back_cb(lv_event_t*) {
+    upd_stop_timer();
+    lv_obj_t* cur = lv_screen_active();
+    lv_screen_load(s_upd_prev);
+    lv_obj_delete(cur);
+    s_upd_status_lbl = nullptr;
+    s_upd_btn_update = nullptr;
+}
+
+static void upd_check_cb(lv_event_t*)   { p4OtaCheckNow(); }
+static void upd_autocheck_cb(lv_event_t* e) {
+    lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
+    p4OtaSetAutoCheck(lv_obj_has_state(sw, LV_STATE_CHECKED));
+}
+static void upd_install_cb(lv_event_t*) {
+    // p4OtaInstall() takes over the screen with the full-screen OTA progress
+    // display (p4DisplayShowOtaScreen).  Stop our poll timer and drop the
+    // widget refs so it never touches this screen again — on success the
+    // device reboots; on failure p4DisplayHideOtaScreen() returns to the main
+    // screen, not here.
+    upd_stop_timer();
+    s_upd_status_lbl = nullptr;
+    s_upd_btn_update = nullptr;
+    p4OtaInstall();
+}
+
+// Refresh the status line + Update-button enable-state from the live OTA
+// status.  Called on entry and from the poll timer.
+static void upd_refresh() {
+    if (!s_upd_status_lbl) return;
+    P4OtaStatus st;
+    p4OtaGetStatus(st);
+
+    char buf[96];
+    if (st.installing) {
+        snprintf(buf, sizeof(buf), "%s %d%%", t(TK::OTA_UPDATING), st.progress);
+    } else if (st.checking) {
+        snprintf(buf, sizeof(buf), "%s", t(TK::OTA_CHECKING));
+    } else if (st.error[0]) {
+        snprintf(buf, sizeof(buf), "%s", t(TK::OTA_CHECK_FAILED));
+    } else if (st.available) {
+        snprintf(buf, sizeof(buf), "%s:  %s", t(TK::OTA_LATEST), st.latestVer);
+    } else {
+        snprintf(buf, sizeof(buf), "%s", t(TK::OTA_UP_TO_DATE));
+    }
+    lv_label_set_text(s_upd_status_lbl, buf);
+
+    bool can = st.available && !st.installing && !st.checking;
+    if (s_upd_btn_update) {
+        if (can) lv_obj_remove_state(s_upd_btn_update, LV_STATE_DISABLED);
+        else     lv_obj_add_state(s_upd_btn_update, LV_STATE_DISABLED);
+    }
+}
+
+static void upd_timer_cb(lv_timer_t*) { upd_refresh(); }
+
+static void show_updates(lv_obj_t* from) {
+    const P4Fonts* f = p4GetFonts();
+    s_upd_prev = from;
+
+    lv_obj_t* scr = build_title_bar(t(TK::UPDATES_TITLE), upd_back_cb);
+
+    P4OtaStatus st;
+    p4OtaGetStatus(st);
+
+    // Current version line.
+    char cur[80];
+    snprintf(cur, sizeof(cur), "%s:  %s", t(TK::OTA_CURRENT),
+             st.currentVer[0] ? st.currentVer : "?");
+    lv_obj_t* lbl_cur = make_label(scr, cur, f->f22, C_LABEL);
+    lv_obj_set_pos(lbl_cur, 20, TITLE_H + 34);
+
+    // Dynamic status line (latest / up-to-date / checking / available / error).
+    s_upd_status_lbl = make_label(scr, "", f->f24, C_TEXT);
+    lv_obj_set_pos(s_upd_status_lbl, 20, TITLE_H + 84);
+
+    // Buttons: Check (left) + Update (right, disabled until available).
+    const int BTN_W = 220, BTN_H = 70, GAP = 24;
+    const int total = 2 * BTN_W + GAP;
+    const int bx = (SCR_W - total) / 2;
+    const int by = TITLE_H + 180;
+
+    lv_obj_t* btn_check = lv_button_create(scr);
+    lv_obj_set_pos(btn_check, bx, by);
+    lv_obj_set_size(btn_check, BTN_W, BTN_H);
+    style_btn(btn_check);
+    lv_obj_add_event_cb(btn_check, upd_check_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* cl = make_label(btn_check, t(TK::OTA_CHECK), f->f22, C_TEXT);
+    lv_obj_center(cl);
+
+    s_upd_btn_update = lv_button_create(scr);
+    lv_obj_set_pos(s_upd_btn_update, bx + BTN_W + GAP, by);
+    lv_obj_set_size(s_upd_btn_update, BTN_W, BTN_H);
+    style_btn(s_upd_btn_update, C_BTN_SEL);
+    lv_obj_add_event_cb(s_upd_btn_update, upd_install_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* ul = make_label(s_upd_btn_update, t(TK::OTA_UPDATE_NOW), f->f22, C_TEXT);
+    lv_obj_center(ul);
+
+    // Auto-check switch (persisted in NVS "ota"/"autocheck").
+    const int sw_y = by + BTN_H + 30;
+    lv_obj_t* lbl_auto = make_label(scr, t(TK::OTA_AUTOCHECK), f->f22, C_LABEL);
+    lv_obj_set_pos(lbl_auto, 20, sw_y + 8);
+    lv_obj_t* sw_auto = lv_switch_create(scr);
+    lv_obj_set_pos(sw_auto, SCR_W - 20 - 80, sw_y);
+    lv_obj_set_size(sw_auto, 80, 40);
+    if (p4OtaAutoCheckEnabled()) lv_obj_add_state(sw_auto, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw_auto, upd_autocheck_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_screen_load(scr);
+
+    upd_refresh();
+    // Poll the OTA status while this screen is open so a check / install in
+    // progress shows live.  Deleted in upd_back_cb.
+    s_upd_timer = lv_timer_create(upd_timer_cb, 700, nullptr);
+
+    // Kick a fresh check so the user sees up-to-date info on entry.
+    p4OtaCheckNow();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

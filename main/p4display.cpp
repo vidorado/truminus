@@ -1,5 +1,6 @@
 #include "p4display.hpp"
 #include "p4settings.hpp"
+#include "p4_ota.hpp"
 #include "i18n.hpp"
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
@@ -56,6 +57,7 @@ const P4Fonts* p4GetFonts() { return &s_fonts; }
 #define FA_SIGN_IN    "\xEF\x8B\xB6"   // U+F2F6 (right-to-bracket, outdoor temp arrow)
 #define FA_BLUETOOTH  "\xEF\x8A\x93"   // U+F293 (bluetooth brand icon, BLE status)
 #define FA_CLOUD      "\xEF\x83\x82"   // U+F0C2 (cloud, Serveo SSH tunnel status)
+#define FA_CLOUD_DL   "\xEF\x83\xAD"   // U+F0ED (cloud-arrow-down, firmware-update reminder)
 #define FA_PLUG_BOLT  "\xEE\x95\x9F"   // U+E55F (plug-circle-bolt)
 #define FA_ARROW_L    "\xEF\x85\xB7"   // U+F177 (arrow-left-long)
 #define FA_ARROW_R    "\xEF\x85\xB8"   // U+F178 (arrow-right-long)
@@ -148,6 +150,7 @@ static struct {
     lv_obj_t* icon_bt;
     lv_obj_t* icon_cloud;
     lv_obj_t* icon_lin;
+    lv_obj_t* icon_ota;    // firmware-update reminder (hidden unless available)
     lv_obj_t* icon_tint;   // water (boiler) status indicator
     lv_obj_t* icon_flame;  // heating status indicator
     lv_obj_t* btn_conf;
@@ -464,9 +467,19 @@ static void build_main_screen()
     lv_obj_set_style_text_color(ui.icon_cloud, lv_color_hex(0x444466), 0);  // dark grey = disconnected
     lv_obj_align_to(ui.icon_cloud, ui.icon_bt, LV_ALIGN_OUT_LEFT_MID, -16, 0);
 
+    // Firmware-update reminder icon, in a reserved slot between the cloud
+    // status icon and the Config button.  Hidden until p4SetUpdateAvailable(true)
+    // reveals it; the slot is kept clear either way so nothing reflows.
+    ui.icon_ota = lv_label_create(topbar);
+    lv_label_set_text(ui.icon_ota, FA_CLOUD_DL);
+    lv_obj_set_style_text_font(ui.icon_ota, s_font_icons24, 0);
+    lv_obj_set_style_text_color(ui.icon_ota, C_BTN_ACTIVE, 0);
+    lv_obj_align_to(ui.icon_ota, ui.icon_cloud, LV_ALIGN_OUT_LEFT_MID, -16, 0);
+    lv_obj_add_flag(ui.icon_ota, LV_OBJ_FLAG_HIDDEN);
+
     ui.btn_conf = lv_button_create(topbar);
     lv_obj_set_size(ui.btn_conf, 158, 40);
-    lv_obj_align_to(ui.btn_conf, ui.icon_cloud, LV_ALIGN_OUT_LEFT_MID, -20, 0);
+    lv_obj_align_to(ui.btn_conf, ui.icon_ota, LV_ALIGN_OUT_LEFT_MID, -16, 0);
     style_button(ui.btn_conf);
     lv_obj_t* lbl_conf = lv_label_create(ui.btn_conf);
     lv_label_set_text(lbl_conf, FA_COG "  Config");
@@ -1412,6 +1425,115 @@ static volatile uint8_t s_tunnel_state = 0;
 
 void p4SetTunnelState(uint8_t state) { s_tunnel_state = state; }
 
+// ── Firmware-update reminder icon + prompt modal ──────────────────────────
+static lv_obj_t* s_ota_prompt = nullptr;   // active "update now?" modal, or null
+
+void p4SetUpdateAvailable(bool available)
+{
+    if (!ui.icon_ota) return;
+    if (!bsp_display_lock(50)) return;
+    if (available) lv_obj_clear_flag(ui.icon_ota, LV_OBJ_FLAG_HIDDEN);
+    else           lv_obj_add_flag(ui.icon_ota,   LV_OBJ_FLAG_HIDDEN);
+    bsp_display_unlock();
+}
+
+static void ota_prompt_close()
+{
+    if (s_ota_prompt) {
+        lv_obj_delete(s_ota_prompt);
+        s_ota_prompt = nullptr;
+    }
+}
+
+static void on_ota_prompt_now(lv_event_t*)
+{
+    ota_prompt_close();
+    p4OtaInstall();
+}
+
+static void on_ota_prompt_later(lv_event_t*)
+{
+    ota_prompt_close();
+}
+
+bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver)
+{
+    if (!bsp_display_lock(50)) return false;
+    // Only prompt while the main screen is up — never on top of a settings
+    // screen, the OTA progress screen, or the splash.
+    if (!s_main_scr || lv_screen_active() != s_main_scr || s_ota_prompt) {
+        bsp_display_unlock();
+        return false;
+    }
+
+    // Dimming backdrop covering the whole UI.
+    lv_obj_t* back = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(back);
+    lv_obj_set_size(back, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_pos(back, 0, 0);
+    lv_obj_set_style_bg_color(back, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(back, LV_OPA_50, 0);
+    lv_obj_clear_flag(back, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);   // swallow taps behind modal
+    s_ota_prompt = back;
+
+    // Centered dialog box.
+    lv_obj_t* box = lv_obj_create(back);
+    lv_obj_set_size(box, 480, 240);
+    lv_obj_center(box);
+    lv_obj_set_style_bg_color(box, C_TOPBAR, 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(box, C_BTN_ACTIVE, 0);
+    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_radius(box, 8, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* icon = lv_label_create(box);
+    lv_label_set_text(icon, FA_CLOUD_DL);
+    lv_obj_set_style_text_font(icon, s_font_icons36 ? s_font_icons36 : s_font_28, 0);
+    lv_obj_set_style_text_color(icon, C_BTN_ACTIVE, 0);
+    lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 4);
+
+    lv_obj_t* title = lv_label_create(box);
+    lv_label_set_text(title, t(TK::OTA_PROMPT));
+    lv_obj_set_style_text_font(title, s_font_title ? s_font_title : s_font_24, 0);
+    lv_obj_set_style_text_color(title, C_TEXT, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 52);
+
+    char ver_buf[48];
+    snprintf(ver_buf, sizeof(ver_buf), "v%s  ->  v%s",
+             from_ver ? from_ver : "?", to_ver ? to_ver : "?");
+    lv_obj_t* ver_lbl = lv_label_create(box);
+    lv_label_set_text(ver_lbl, ver_buf);
+    lv_obj_set_style_text_font(ver_lbl, s_font_18, 0);
+    lv_obj_set_style_text_color(ver_lbl, C_LABEL, 0);
+    lv_obj_align(ver_lbl, LV_ALIGN_TOP_MID, 0, 95);
+
+    lv_obj_t* btn_now = lv_button_create(box);
+    lv_obj_set_size(btn_now, 200, 56);
+    lv_obj_align(btn_now, LV_ALIGN_BOTTOM_LEFT, 4, -4);
+    style_button(btn_now);
+    lv_obj_set_style_bg_color(btn_now, C_BTN_ACTIVE, 0);
+    lv_obj_t* l_now = lv_label_create(btn_now);
+    lv_label_set_text(l_now, t(TK::OTA_UPDATE_NOW));
+    lv_obj_set_style_text_font(l_now, s_font_20, 0);
+    lv_obj_center(l_now);
+    lv_obj_add_event_cb(btn_now, on_ota_prompt_now, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t* btn_later = lv_button_create(box);
+    lv_obj_set_size(btn_later, 200, 56);
+    lv_obj_align(btn_later, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
+    style_button(btn_later);
+    lv_obj_t* l_later = lv_label_create(btn_later);
+    lv_label_set_text(l_later, t(TK::OTA_LATER));
+    lv_obj_set_style_text_font(l_later, s_font_20, 0);
+    lv_obj_center(l_later);
+    lv_obj_add_event_cb(btn_later, on_ota_prompt_later, LV_EVENT_CLICKED, NULL);
+
+    bsp_display_unlock();
+    return true;
+}
+
 // LVGL timer (500 ms period) that repaints the cloud icon based on
 // s_tunnel_state.  Decoupling from p4SetTunnelState() lets us blink at a
 // fixed cadence regardless of how often main.cpp polls wstunnelUiState().
@@ -1710,7 +1832,7 @@ void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver)
 
     // Title
     lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "Updating co-processor firmware");
+    lv_label_set_text(title, "Updating firmware");
     lv_obj_set_style_text_font(title, s_font_title ? s_font_title : s_font_24, 0);
     lv_obj_set_style_text_color(title, C_TEXT, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, -75);
@@ -1767,6 +1889,21 @@ void p4DisplaySetOtaProgress(int percent)
     if (!bsp_display_lock(100)) return;
     lv_bar_set_value(s_ota_bar, percent, LV_ANIM_ON);
     lv_label_set_text_fmt(s_ota_pct_lbl, "%d%%", percent);
+    bsp_display_unlock();
+}
+
+void p4DisplayHideOtaScreen()
+{
+    // Restore the main screen after a *failed* self-OTA (a successful one
+    // reboots, so this is only reached on download/validation errors).  The
+    // running image is untouched, so returning to the normal UI is safe.
+    if (!s_main_scr) return;
+    if (!bsp_display_lock(500)) return;
+    lv_obj_t* cur = lv_screen_active();
+    lv_screen_load(s_main_scr);
+    if (cur && cur != s_main_scr) lv_obj_delete(cur);
+    s_ota_bar     = nullptr;
+    s_ota_pct_lbl = nullptr;
     bsp_display_unlock();
 }
 

@@ -119,6 +119,16 @@ void p4SetRoomSetpoint(float celsius);
 //   3 FAILED     → solid red
 void p4SetTunnelState(uint8_t state);
 
+// Show/hide the topbar firmware-update reminder icon (cloud-arrow-down).
+// Thread-safe.  Driven from app_main with p4OtaNotify().
+void p4SetUpdateAvailable(bool available);
+
+// Show a modal "update now?" prompt over the main screen with Update-now /
+// Later buttons.  Returns false (and shows nothing) when the main screen is
+// not the active screen or a prompt is already up — the caller should retry
+// later in that case.  Thread-safe.
+bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver);
+
 // ── Public API ────────────────────────────────────────────────────────────
 
 // Call once from app_main (before any task uses LVGL).
@@ -153,6 +163,10 @@ void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver);
 // Update the progress bar on the OTA screen (0–100).
 // Thread-safe; can be called from the main task while LVGL runs on its own task.
 void p4DisplaySetOtaProgress(int percent);
+
+// Restore the main screen after a failed self-OTA (a successful one reboots).
+// Thread-safe.
+void p4DisplayHideOtaScreen();
 
 // LVGL mutex — thin wrappers around bsp_display_lock/unlock.
 // timeout_ms = portMAX_DELAY (0xFFFFFFFF) to block forever.

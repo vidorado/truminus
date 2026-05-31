@@ -128,6 +128,21 @@ enum class TK : uint8_t {
     INVERTER,          // "INVERSOR" / "INVERTER"
     INV_MAINS,         // INVERSOR I/O port: "RED" / "SHORE"
     INV_LOADS,         // INVERSOR I/O port: "CARGAS" / "LOADS"
+    // ── Firmware updates (self-OTA) ────────────────────────────────────────
+    UPDATES_CFG,       // settings menu item: "Actualizaciones" / "Updates"
+    UPDATES_TITLE,     // updates screen title
+    OTA_CURRENT,       // "Versión actual" / "Current version"
+    OTA_LATEST,        // "Última versión" / "Latest version"
+    OTA_UP_TO_DATE,    // "Estás al día" / "Up to date"
+    OTA_AVAILABLE,     // "Actualización disponible" / "Update available"
+    OTA_CHECK,         // check-now button: "Buscar" / "Check"
+    OTA_CHECKING,      // "Comprobando…" / "Checking…"
+    OTA_UPDATE_NOW,    // install button: "Actualizar" / "Update"
+    OTA_UPDATING,      // "Actualizando…" / "Updating…"
+    OTA_CHECK_FAILED,  // "Error al comprobar" / "Check failed"
+    OTA_LATER,         // prompt button: "Más tarde" / "Later"
+    OTA_AUTOCHECK,     // settings switch: "Comprobación automática" / "Auto-check"
+    OTA_PROMPT,        // update modal title: "¿Actualizar ahora?" / "Update now?"
     _COUNT
 };
 
