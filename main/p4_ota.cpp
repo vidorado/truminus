@@ -356,6 +356,12 @@ static void install_task(void*) {
 
         int total = esp_https_ota_get_image_size(h);
         int last_pct = -1;
+        // Throughput instrumentation: overall average + a sample each decile,
+        // so we can tell whether the OTA is gated by the network or by the
+        // serialized flash writes (see the C6/SDIO discussion).
+        int64_t t_start    = esp_timer_get_time();
+        int64_t t_seg      = t_start;   // start of the current decile segment
+        int     seg_bytes0 = 0;         // bytes read at the segment start
         while ((err = esp_https_ota_perform(h)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
             int read = esp_https_ota_get_image_len_read(h);
             int pct  = (total > 0) ? (int)((int64_t)read * 100 / total) : 0;
@@ -366,6 +372,16 @@ static void install_task(void*) {
                 s_status.progress = pct;
                 xSemaphoreGive(s_lock);
                 if (pct % 5 == 0) broadcast_status();
+                if (pct % 10 == 0 && pct > 0) {
+                    int64_t now = esp_timer_get_time();
+                    double  dt  = (now - t_seg) / 1e6;          // s in this decile
+                    int     db  = read - seg_bytes0;            // bytes in decile
+                    if (dt > 0)
+                        ESP_LOGI(TAG, "OTA %3d%%  segment %.1f KB/s",
+                                 pct, (db / 1024.0) / dt);
+                    t_seg      = now;
+                    seg_bytes0 = read;
+                }
             }
         }
 
@@ -374,6 +390,12 @@ static void install_task(void*) {
             status_set_error("transfer error");
             esp_https_ota_abort(h);
             goto fail;
+        }
+        {
+            double  secs  = (esp_timer_get_time() - t_start) / 1e6;
+            int     bytes = esp_https_ota_get_image_len_read(h);
+            ESP_LOGI(TAG, "OTA download: %d bytes in %.1f s = %.1f KB/s avg",
+                     bytes, secs, secs > 0 ? (bytes / 1024.0) / secs : 0.0);
         }
         if (!esp_https_ota_is_complete_data_received(h)) {
             ESP_LOGE(TAG, "incomplete image");
