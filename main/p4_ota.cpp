@@ -45,7 +45,12 @@ static constexpr uint32_t CHECK_PERIOD_MS = 12 * 60 * 60 * 1000;  // 12 h
 
 // ── Post-OTA self-test gating ───────────────────────────────────────────
 // Hard firmware-health gates (independent of the environment):
-static constexpr size_t   HEAP_FLOOR        = 24 * 1024;  // internal DRAM
+// Steady-state free internal DRAM on this board sits around ~24 KB (WiFi via
+// the C6, the WSS tunnel's 16 KB TLS buffers, LVGL, BLE).  The floor must sit
+// well below that so it only fires on a real leak/exhaustion (which drives the
+// heap toward zero), not on healthy operation — a 24 KB floor rolled back a
+// perfectly healthy OTA'd 1.1.4 at free_int=24455.
+static constexpr size_t   HEAP_FLOOR        = 12 * 1024;  // internal DRAM
 static constexpr int      HEAP_BREACH_LIMIT = 5;          // consecutive samples below floor → rollback
 static constexpr uint32_t BEAT_STALL_MS     = 20000;      // task considered dead
 // Validation timing:
