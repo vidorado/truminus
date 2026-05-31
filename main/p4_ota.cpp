@@ -308,6 +308,12 @@ static void install_task(void*) {
     http.keep_alive_enable = true;
     // browser_download_url 302-redirects to the release CDN — follow it.
     http.max_redirection_count = 5;
+    // The GitHub 302 points at a long AES-signed objects.githubusercontent.com
+    // URL (X-Amz-… query) plus large response headers.  The default 1024 B
+    // TX/RX buffers overflow on the redirected request → "HTTP_CLIENT: Out of
+    // buffer" and esp_https_ota_begin() fails.  Give it room.
+    http.buffer_size       = 4096;
+    http.buffer_size_tx    = 4096;
 
     esp_https_ota_config_t ota_cfg = {};
     ota_cfg.http_config = &http;
