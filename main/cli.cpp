@@ -8,6 +8,7 @@
 #include "multiplusble.hpp"
 #include "wifi_manager.hpp"
 #include "wstunnel.hpp"
+#include "p4_ota.hpp"
 #include <strings.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -117,6 +118,26 @@ static int cmd_tunnel(int argc, char** argv) {
     return 0;
 }
 
+static int cmd_ota(int argc, char** argv) {
+    if (argc >= 2 && strcasecmp(argv[1], "install") == 0) {
+        P4OtaStatus st; p4OtaGetStatus(st);
+        if (!st.available) { printf("ota: no update available (run 'ota' first)\n"); return 1; }
+        printf("ota: installing v%s -> v%s ...\n", st.currentVer, st.latestVer);
+        p4OtaInstall();
+        return 0;
+    }
+    // Default / "ota check": kick a version check and report current status.
+    p4OtaCheckNow();
+    P4OtaStatus st; p4OtaGetStatus(st);
+    printf("ota: check started (current v%s)\n",
+           st.currentVer[0] ? st.currentVer : "?");
+    if (st.available)
+        printf("ota: update available -> v%s (run 'ota install')\n", st.latestVer);
+    else if (st.error[0])
+        printf("ota: last error: %s\n", st.error);
+    return 0;
+}
+
 static int cmd_show(int, char**) {
     TunnelConfig tc{}; wstunnelLoadConfig(tc);
     printf("tunnel:     %s server=%s\n",
@@ -178,6 +199,7 @@ void cliStart() {
     esp_console_cmd_t c_ultimatron = {}; c_ultimatron.command = "ultimatron"; c_ultimatron.help = "ultimatron <mac> [pass]: set Ultimatron BLE creds"; c_ultimatron.func = cmd_ultimatron;
     esp_console_cmd_t c_tank       = {}; c_tank.command       = "tank";       c_tank.help       = "tank <mac>|clear: bind BTHome tank sensor MAC";   c_tank.func       = cmd_tank;
     esp_console_cmd_t c_multiplus  = {}; c_multiplus.command  = "multiplus";  c_multiplus.help  = "multiplus <mac> <key32hex>|clear: VE.Bus dongle"; c_multiplus.func  = cmd_multiplus;
+    esp_console_cmd_t c_ota        = {}; c_ota.command        = "ota";        c_ota.help        = "ota [check|install]: check for / install firmware update"; c_ota.func        = cmd_ota;
     esp_console_cmd_t c_show       = {}; c_show.command       = "show";       c_show.help       = "show: print stored BLE config";                      c_show.func       = cmd_show;
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_wifi));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_tunnel));
@@ -185,6 +207,7 @@ void cliStart() {
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_ultimatron));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_tank));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_multiplus));
+    ESP_ERROR_CHECK(esp_console_cmd_register(&c_ota));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_show));
     esp_console_register_help_command();
 
