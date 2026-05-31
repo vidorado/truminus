@@ -982,7 +982,7 @@ static void build_main_screen()
     // ── Separators ────────────────────────────────────────────────────────────
     make_sep(scr, 0,                   TOP_H - 1,    W,       1);   // under top bar
     make_sep(scr, WATER_X,             CONTENT_Y,    1,  ROW1_H);  // CALEFACCIÓN | AGUA CALIENTE
-    make_sep(scr, WATER_X + WATER_W,   CONTENT_Y,    1,  ROW1_H);  // AGUA CALIENTE right edge
+    make_sep(scr, WATER_X + WATER_W + 3, CONTENT_Y,  1,  ROW1_H);  // AGUA CALIENTE right edge (overlaps the AGUA separator at AGUA_X+3)
     make_sep(scr, SOLAR_X,             ROW2_Y,        1,  ROW2_H);  // VENTILADOR | SOLAR
     make_sep(scr, SOLAR_X + SOLAR_W,   ROW2_Y,        1,  ROW2_H);  // SOLAR right edge
     make_sep(scr, AGUA_X + 3,          CONTENT_Y,     1,  ROW1_H);  // AGUA CALIENTE | AGUA LIMPIA
@@ -1491,7 +1491,7 @@ bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver)
 
     lv_obj_t* icon = lv_label_create(box);
     lv_label_set_text(icon, FA_DOWNLOAD);
-    lv_obj_set_style_text_font(icon, s_font_icons36 ? s_font_icons36 : s_font_28, 0);
+    lv_obj_set_style_text_font(icon, s_font_icons24 ? s_font_icons24 : s_font_20, 0);
     lv_obj_set_style_text_color(icon, C_TEXT, 0);
     lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 4);
 
@@ -1499,7 +1499,7 @@ bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver)
     lv_label_set_text(title, t(TK::OTA_AVAILABLE));
     lv_obj_set_style_text_font(title, s_font_title ? s_font_title : s_font_24, 0);
     lv_obj_set_style_text_color(title, C_TEXT, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 50);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 38);
 
     char ver_buf[48];
     snprintf(ver_buf, sizeof(ver_buf), "v%s  ->  v%s",
@@ -1508,13 +1508,13 @@ bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver)
     lv_label_set_text(ver_lbl, ver_buf);
     lv_obj_set_style_text_font(ver_lbl, s_font_18, 0);
     lv_obj_set_style_text_color(ver_lbl, C_LABEL, 0);
-    lv_obj_align(ver_lbl, LV_ALIGN_TOP_MID, 0, 90);
+    lv_obj_align(ver_lbl, LV_ALIGN_TOP_MID, 0, 78);
 
     lv_obj_t* prompt = lv_label_create(box);
     lv_label_set_text(prompt, t(TK::OTA_PROMPT));
     lv_obj_set_style_text_font(prompt, s_font_20, 0);
     lv_obj_set_style_text_color(prompt, C_TEXT, 0);
-    lv_obj_align(prompt, LV_ALIGN_TOP_MID, 0, 122);
+    lv_obj_align(prompt, LV_ALIGN_TOP_MID, 0, 110);
 
     lv_obj_t* btn_now = lv_button_create(box);
     lv_obj_set_size(btn_now, 200, 56);
