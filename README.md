@@ -10,9 +10,10 @@ UI and a serial CLI.  Solar charge data (Victron BLE) and battery SOC
 not expose.
 
 For remote access through home/RV CGNAT, the firmware can dial out to a
-companion Node.js mini-app (`server/`, runs on any VPS or a Plesk-managed
-subdomain like `tunnel.yourdomain.com`) and tunnel browser traffic over WSS —
-no port forwarding, no DDNS, just a domain you control.
+companion Node.js bridge — [`vidorado/truminus-cloud-server`](https://github.com/vidorado/truminus-cloud-server),
+which you run on any VPS or a Plesk-managed subdomain like
+`tunnel.yourdomain.com` — and tunnel browser traffic over WSS — no port
+forwarding, no DDNS, just a domain you control.
 
 > This software is not provided, endorsed, supported, or sponsored by Truma.
 > See [LICENSE](LICENSE) — no warranty of any kind.
@@ -108,6 +109,63 @@ automatically.
 
 ---
 
+## Firmware updates (OTA)
+
+After the first cable flash the device updates itself over WiFi — no cable,
+no port forwarding.  It checks this repo's **GitHub Releases** at boot and
+every 12 h and compares its built-in version against the latest tag.
+
+- **You're only nagged for meaningful updates.**  A pop-up + a topbar icon
+  appear automatically only for **minor/major** version bumps.  **Patch**
+  releases are silent — you still find and install them on demand from
+  **[⚙ Config] → Actualizaciones** (or the CLI below).
+- **Installs are user-initiated** (an *Update* button on the LCD / web), with
+  a progress bar.  The transfer pauses BLE and the tunnel so the download
+  isn't starved.
+- **Safe by design:** a freshly flashed image must pass a self-test (heap +
+  task liveness) within ~1 min or the bootloader **rolls back** to the
+  previous image.  A reverted update logs its reason on the next boot.
+
+> **First flash must be by cable** (`make flash`).  An update only ships the
+> P4 application image; the very first install of a brand-new feature that
+> changes the *downloader itself* still needs one cable flash to take effect.
+
+### Publishing a release (maintainers)
+
+```bash
+git tag X.Y.Z && git push origin X.Y.Z
+```
+
+GitHub Actions (`.github/workflows/release.yml`) builds the firmware and
+attaches the binary as an asset named **exactly `truminus.bin`** — the
+firmware downloads it by that name, so the name is a contract.  Tag from a
+**clean** tree so the embedded version is exactly `X.Y.Z` (a dirty tree bakes
+`X.Y.Z-<n>-g<sha>-dirty`).  Builds are ccache-accelerated via a parallel
+`master` CI build (~2.5 min per release).
+
+---
+
+## Serial CLI
+
+A line-based REPL is available on the USB-Serial-JTAG console
+(`/dev/ttyACM0`, e.g. `make monitor`).  Commands:
+
+| Command | Purpose |
+|---|---|
+| `wifi <ssid> [pass]` | Connect + persist WiFi credentials |
+| `tunnel <on\|off>` | Enable/disable the WSS reverse tunnel |
+| `victron <mac> <key32hex>` | Set Victron solar BLE creds |
+| `ultimatron <mac> [pass]` | Set Ultimatron BMS BLE creds |
+| `tank <mac>\|clear` | Bind/unbind the BTHome tank sensor |
+| `multiplus <mac> <key32hex>\|clear` | Set/clear the VE.Bus dongle |
+| `ota [check\|install]` | Check for / install a firmware update |
+| `show` | Print stored config |
+
+> USB-Serial-JTAG runs in linenoise *dumb mode* (no arrow keys / history);
+> BACKSPACE and Ctrl+U work.
+
+---
+
 ## Architecture
 
 ```
@@ -139,21 +197,22 @@ Build system notes and known gotchas are in
 
 ---
 
-## Public access via tunnel (`server/`)
+## Public access via tunnel (companion repo)
 
 The ESP sits behind home/RV CGNAT in most installs, so it isn't reachable
-from the outside.  `server/app.js` is a small Node.js bridge you run on
-any public-IP server (a VPS, a Plesk-managed subdomain, etc.).  The
-firmware dials out to it over WSS and the bridge muxes browser HTTP/WS
-traffic back to the device's local `esp_http_server`.
+from the outside.  A small Node.js bridge — which you run on any public-IP
+server (a VPS, a Plesk-managed subdomain, etc.) — accepts the firmware's
+outbound WSS connection and muxes browser HTTP/WS traffic back to the
+device's local `esp_http_server`.
 
-> **The bridge is a companion project** with its own README, env vars,
-> and operational quirks (reverse cache, queue, Passenger keepalive).
-> For setup — Unix bare or Plesk Node.js — see [`server/README.md`](server/README.md).
-> The wire protocol lives in [`.claude/skills/wss-tunnel/SKILL.md`](.claude/skills/wss-tunnel/SKILL.md)
-> (firmware side) and `server/.claude/skills/tunnel-bridge/SKILL.md`
-> (server side).  The plan is to split `server/` into its own repo
-> once it stabilises.
+> **The bridge lives in its own repository:**
+> [`vidorado/truminus-cloud-server`](https://github.com/vidorado/truminus-cloud-server).
+> Setup (Unix bare or Plesk Node.js), env vars and operational quirks
+> (reverse cache, queue, Passenger keepalive) are documented there.  The
+> wire protocol lives in
+> [`.claude/skills/wss-tunnel/SKILL.md`](.claude/skills/wss-tunnel/SKILL.md)
+> (firmware side) and in the companion repo's
+> `.claude/skills/tunnel-bridge/SKILL.md` (server side).
 
 ### Configure the device
 
