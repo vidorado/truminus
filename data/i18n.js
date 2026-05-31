@@ -53,6 +53,11 @@ var LANG_STRINGS = {
         err_warn:     'WARNING',
         err_error:    'ERROR',
         err_locked:   'LOCKED',
+        ota_available:'Update available',
+        ota_update:   'Update',
+        ota_updating: 'Updating…',
+        ota_reboot:   'Rebooting…',
+        ota_failed:   'Update failed',
     },
     es: {
         solar:        'SOLAR',
@@ -106,6 +111,11 @@ var LANG_STRINGS = {
         err_warn:     'AVISO',
         err_error:    'ERROR',
         err_locked:   'BLOQUEADO',
+        ota_available:'Actualización disponible',
+        ota_update:   'Actualizar',
+        ota_updating: 'Actualizando…',
+        ota_reboot:   'Reiniciando…',
+        ota_failed:   'Error al actualizar',
     }
 };
 

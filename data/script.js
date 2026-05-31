@@ -95,6 +95,7 @@ ws.onmessage = function (event) {
     if (d.command === 'tank')  { applyTank(d);  return; }
     if (d.command === 'multi') { applyMulti(d); return; }
     if (d.command === 'icon')  { applyIcon(d);  return; }
+    if (d.command === 'ota')   { applyOta(d);   return; }
     if (d.command === 'snapshot') {
         // Full initial-state burst from wsConnected() on the server.
         // One message with every cached setting and status value to
@@ -145,6 +146,57 @@ function applyIcon(d) {
     } else if (d.id === 'tunnel') {
         setDot('dot-cloud', TUNNEL_DOT[d.state] || 'dis');
     }
+}
+
+// ── OTA update banner ─────────────────────────────────────────────────────
+// Driven by {"command":"ota",available,installing,progress,current,latest,error}
+// broadcast from main/p4_ota.cpp.  Shown only when an update is available or
+// an install is in progress; the button triggers /ota_install on the device.
+var s_otaInstalling = false;
+function applyOta(d) {
+    var banner = document.getElementById('ota-banner');
+    var msg    = document.getElementById('ota-msg');
+    var btn    = document.getElementById('ota-btn');
+    if (!banner || !msg || !btn) return;
+
+    s_otaInstalling = !!d.installing;
+
+    if (d.installing) {
+        var pct = (typeof d.progress === 'number') ? d.progress : 0;
+        msg.textContent = t('ota_updating') + ' ' + pct + '%' +
+                          (pct >= 100 ? ' — ' + t('ota_reboot') : '');
+        btn.hidden = true;
+        banner.classList.remove('ota-err');
+        banner.hidden = false;
+        return;
+    }
+
+    btn.hidden = false;
+    btn.disabled = false;
+    btn.textContent = t('ota_update');
+
+    if (d.error) {
+        msg.textContent = t('ota_failed') + ': ' + d.error;
+        banner.classList.add('ota-err');
+        banner.hidden = false;
+        return;
+    }
+
+    banner.classList.remove('ota-err');
+    if (d.available) {
+        msg.textContent = t('ota_available') + ': ' +
+                          (d.current || '?') + ' → ' + (d.latest || '?');
+        banner.hidden = false;
+    } else {
+        banner.hidden = true;
+    }
+}
+
+function otaInstall() {
+    if (s_otaInstalling) return;
+    var btn = document.getElementById('ota-btn');
+    if (btn) { btn.disabled = true; btn.textContent = t('ota_updating'); }
+    send('/ota_install', '1');
 }
 
 // ── Settings received from device ─────────────────────────────────────────

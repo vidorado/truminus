@@ -66,6 +66,42 @@
   --gap:     10px;
 }
 
+/* ── OTA update banner ───────────────────────────────────────────────────
+   Fixed toast centred at the top so it never disturbs the responsive grid.
+   Hidden via the [hidden] attribute until the firmware reports an update. */
+.ota-banner {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 92vw;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--on);
+  color: var(--txt);
+  font-size: .9rem;
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .45);
+}
+.ota-banner[hidden] { display: none; }
+.ota-banner.ota-err { background: var(--err); }
+.ota-msg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ota-btn {
+  flex: none;
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--txt);
+  color: var(--on);
+  font-weight: 700;
+  cursor: pointer;
+}
+.ota-btn:disabled { opacity: .6; cursor: default; }
+
 /* ── Reset ────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
