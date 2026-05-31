@@ -100,6 +100,15 @@ void wifi_manager_start(void) {
     }
 
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    // Disable WiFi power save (default is WIFI_PS_MIN_MODEM, which sleeps
+    // between DTIM beacons).  This is a mains-powered controller, and modem
+    // sleep throttled bulk transfers badly — OTA downloads crawled at ~30 KB/s.
+    // PS_NONE keeps the radio awake → much higher throughput and lower latency
+    // for OTA, the web UI and the WSS tunnel.  Proxied to the C6 via esp_wifi_remote.
+    esp_err_t ps = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (ps != ESP_OK) ESP_LOGW(TAG, "esp_wifi_set_ps(NONE) failed: %s", esp_err_to_name(ps));
+
     s_started = true;
 }
 
