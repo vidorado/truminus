@@ -1,0 +1,45 @@
+# Build the ESP32-P4 firmware on every version tag and attach the resulting
+# binary to the GitHub Release as `truminus.bin` — the deterministic asset
+# name the device downloads during self-OTA (see main/p4_ota.cpp).
+#
+# Tagging flow:
+#   git tag 1.1.0 && git push origin 1.1.0
+# creates/updates the "1.1.0" release with truminus.bin attached.  The running
+# firmware compares its embedded version (PROJECT_VER, from `git describe`)
+# against the latest tag and offers the update.
+name: release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'      # 1.1.0
+      - 'v[0-9]+.[0-9]+.[0-9]+'     # v1.1.0 (also accepted by the parser)
+
+permissions:
+  contents: write                   # needed to create/update the Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with tags so `git describe` yields the clean version)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build firmware (ESP-IDF v6.0, target esp32p4)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: release-v6.0
+          target: esp32p4
+          # littlefs-python is required by the joltwallet LittleFS image step;
+          # the IDF container does not ship it.  The C6 co-processor binary is
+          # not embedded here (it lives outside the repo) — the app builds fine
+          # without it; self-OTA only updates the P4 application image.
+          command: pip install littlefs-python && idf.py build
+
+      - name: Attach truminus.bin to the Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/truminus.bin
+          fail_on_unmatched_files: true

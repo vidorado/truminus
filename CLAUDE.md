@@ -89,6 +89,7 @@ The project follows the ESP-IDF native convention: there is no `src/`; all firmw
 - **`ultimatronble.cpp/.hpp`** — Ultimatron LiFePO4 BMS BLE listener (GATT). See `.claude/skills/ultimatronble/SKILL.md`.
 - **`tankble.cpp/.hpp`** — Fresh-water tank level receiver.  Parses BTHome v2 unencrypted service-data (UUID `0xFCD2`, moisture tag `0x2F`) from BLE adverts, filtered by NVS `tank/addr` allow-list and deduped by BTHome packet-id (tag `0x00`).  No separate scan — `VictronScanCb::onResult` calls `tankBleHandleAd()` so we don't fight NimBLE for the single scan callback slot.  Exposes a thread-safe `TankData {pct, valid, lastMs}` consumed by the LCD (AGUA L. panel) and broadcast over WS as `{"command":"tank","valid":bool,"pct":N}`.
 - **`multiplusble.cpp/.hpp`** — Victron Multiplus / VE.Bus BLE receiver.  Parses the Instant Readout *VE.Bus* record (`mfr[6] = 0x0C`) emitted by a VE.Bus Smart dongle attached to a Multiplus / Multiplus-II / Quattro / Phoenix Inverter.  Same outer AES-CTR envelope as the Solar charger, **different bind key per device** and a packed-bitstream plaintext (102 bits: state, error, batt V/A/T, AC in/out W, ac_in_state, alarm, SOC).  IV-deduped, gated by source MAC.  Exposes `MultiplusData {deviceState, acInW, acOutW, battV, battA, soc, alarm, …}` to the LCD INVERSOR panel and WS as `{"command":"multi",…}`.  Read-only — ON/OFF requires VE.Bus GATT which Victron has not documented; the On/Off buttons render disabled.  See `.claude/skills/multiplusble/SKILL.md`.
+- **`p4_ota.cpp/.hpp`** — Self-OTA for the **P4 application image** (distinct from `c6_ota.cpp`, which reflashes the C6 co-processor from an embedded binary). Periodic check task hits `github.com/vidorado/truminus/releases/latest` with auto-redirect **disabled** and reads the `Location` header to learn the latest tag — no GitHub API JSON, no token. Downloads a deterministically-named `truminus.bin` release asset via `esp_https_ota` (cert bundle; tunnel suspended during the transfer to free internal DRAM). Auto-check + **manual** install (`p4OtaInstall()`); progress on the LCD OTA screen + WS `{"command":"ota",…,"installing":true,"progress":N}`. Also runs the post-OTA **self-test/rollback** task (only when the running image is `PENDING_VERIFY`). Critical tasks call `p4OtaBeat()` so the self-test can confirm liveness. See §"Firmware self-OTA".
 - **`i18n.cpp/.hpp`** — `TK` enum + `t(TK::KEY)`. Spanish (default) / English; language persisted in NVS.
 - **`logs.hpp`** — Logging macros / tag conventions.
 
@@ -298,6 +299,47 @@ rationale.
   rebuilds the URL with the canonical `/tunnel` path and `?token=…`.
 - `token` (str) — shared secret matching `TUNNEL_TOKEN` env on the
   bridge.
+
+## Firmware self-OTA (`main/p4_ota.cpp`)
+
+Over-the-air updates of the **P4 application image** (the C6 path is
+separate, `c6_ota.cpp`). Origin: **GitHub Releases direct**, against
+`vidorado/truminus`.
+
+- **Versioning.** `PROJECT_VER` is derived from `git describe --tags`
+  in the root `CMakeLists.txt` *before* `project()`, so it lands in
+  `esp_app_desc_t.version`. On a clean tag it is exactly `X.Y.Z`; in a
+  dirty tree it is `X.Y.Z-<n>-g<sha>-dirty`. `parse_semver()` reads the
+  leading `X.Y.Z` from both the running version and the GitHub tag.
+- **Discovery without the API.** `GET /releases/latest` with
+  `disable_auto_redirect = true`; GitHub answers `302 → /releases/tag/<tag>`
+  and the tag is the last path segment of the `Location` header. Tiny,
+  no JSON, no token, immune to the 60 req/h unauthenticated API limit.
+- **Asset name is a contract.** The release **must** carry an asset
+  named exactly `truminus.bin`; the firmware builds
+  `…/releases/download/<tag>/truminus.bin` and lets `esp_https_ota`
+  follow the 302 to the release CDN (covered by the IDF cert bundle).
+  `.github/workflows/release.yml` builds on every `X.Y.Z` tag and
+  uploads that asset (the C6 binary is absent in CI — the app builds
+  fine without it).
+- **Trigger model.** Auto-check at boot + every 12 h; an update is only
+  *flagged* (LCD "Actualizaciones" settings screen + web banner). Install
+  is **user-initiated** (`p4OtaInstall()` → LCD "Update" button or web).
+  The tunnel is suspended for the transfer (`wstunnelSuspend()`) to free
+  internal DRAM for the TLS handshake.
+- **Rollback safety net.** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`
+  (+ the pre-existing `CONFIG_BOOTLOADER_WDT_ENABLE`). A freshly flashed
+  image boots `PENDING_VERIFY`; `selftest_task` (spawned only in that
+  state) marks it valid via `esp_ota_mark_app_valid_cancel_rollback()`
+  **only after** it proves healthy. Gating splits **hard firmware-health
+  signals** (heap floor, per-task heartbeats via `p4OtaBeat()` from the
+  main loop / wsPump / LIN task) from **best-effort environment signals**
+  (IP, tunnel CONNECTED, fresh LIN frame, BLE advert). Hard-gate failure
+  → proactive `esp_ota_mark_app_invalid_rollback_and_reboot()`. A time
+  **ceiling** (~8 min) validates regardless of environment so a benign
+  reset (Combi off, BLE out of range) can't roll back a good image. The
+  net is one-shot for the first minutes; it does **not** guard a crash
+  that happens after validation.
 
 ## Related skills
 

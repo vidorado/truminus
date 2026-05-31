@@ -151,6 +151,17 @@ CONFIG_LWIP_MAX_ACTIVE_TCP=64
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=4096
 CONFIG_HTTPD_MAX_URI_LEN=1024
 
+# ── Self-OTA rollback safety net ─────────────────────────────────────────
+# A freshly OTA'd app boots in ESP_OTA_IMG_PENDING_VERIFY.  main/p4_ota.cpp
+# runs a post-OTA self-test and only calls
+# esp_ota_mark_app_valid_cancel_rollback() once the firmware proves healthy
+# (heartbeats + heap floor; tunnel/LIN/BLE/IP best-effort with a time
+# ceiling).  If the new image reboots/hangs before validating, the
+# bootloader reverts to the previous app.  CONFIG_BOOTLOADER_WDT_ENABLE is
+# already on, so a hard hang before the self-test runs still triggers the
+# revert on the next boot.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
 # ── ECDSA peripheral not present on ESP32-P4 rev < v3 (esp32p4_es) ────────
 # The ECDSA hardware accelerator is missing on the pre-production silicon on
 # this board, so MBEDTLS_HARDWARE_ECDSA_VERIFY makes the PSA driver log

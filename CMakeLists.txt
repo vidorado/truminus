@@ -32,6 +32,26 @@ idf_build_set_property(COMPILE_DEFINITIONS "NO_MQTT"           APPEND)
 idf_build_set_property(COMPILE_DEFINITIONS "WEBSERVER"         APPEND)
 idf_build_set_property(COMPILE_DEFINITIONS "JC4880_P4"         APPEND)
 
+# Firmware version — embedded into esp_app_desc_t.version and used by the
+# self-OTA path (main/p4_ota.cpp) to compare against the latest GitHub
+# release tag.  Derived from `git describe`: exactly "X.Y.Z" when sitting on
+# a tag, "X.Y.Z-<n>-g<sha>[-dirty]" otherwise.  Falls back to "0.0.0" when
+# git is unavailable (e.g. building from a tarball).  Must be set before
+# project() for IDF to pick it up; max 31 chars fit in the app descriptor.
+execute_process(
+    COMMAND git describe --tags --dirty --always
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE TRUMINUS_GIT_VER
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(TRUMINUS_GIT_VER)
+    set(PROJECT_VER "${TRUMINUS_GIT_VER}")
+else()
+    set(PROJECT_VER "0.0.0")
+endif()
+message(STATUS "TruMinus: firmware version = ${PROJECT_VER}")
+
 project(truminus)
 
 # Append --skip-flashed to every esptool write-flash invocation.  esptool

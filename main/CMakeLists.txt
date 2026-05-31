@@ -25,6 +25,7 @@ idf_component_register(
         "tankble.cpp"
         "multiplusble.cpp"
         "c6_ota.cpp"
+        "p4_ota.cpp"
         "webserver.cpp"
         "wstunnel.cpp"
         "cli.cpp"
@@ -48,6 +49,9 @@ idf_component_register(
         esp_wifi
         mbedtls
         freertos
+        esp_https_ota
+        app_update
+        esp_http_client
         espressif__cjson
         espressif__esp_websocket_client
         esp-tls

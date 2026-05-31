@@ -934,6 +934,14 @@ void wstunnelApply()
     xEventGroupSetBits(s_events, en ? EV_RECONNECT : EV_STOP);
 }
 
+void wstunnelSuspend()
+{
+    if (!s_events) return;
+    // EV_STOP destroys the client but keeps s_cfg.enabled, so the icon shows
+    // CONNECTING (blinking) rather than DISABLED — we intend to come back.
+    xEventGroupSetBits(s_events, EV_STOP);
+}
+
 bool wstunnelIsConnected() { return s_connected; }
 
 TunnelUiState wstunnelUiState() { return s_ui_state; }

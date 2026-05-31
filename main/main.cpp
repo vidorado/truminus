@@ -12,6 +12,7 @@
 #include "victronble.hpp"
 #include "ultimatronble.hpp"
 #include "c6_ota.hpp"
+#include "p4_ota.hpp"
 #include "webserver.hpp"
 #include "wstunnel.hpp"
 #include "cli.hpp"
@@ -106,6 +107,10 @@ static void onWsCommand(const char* id, const char* value) {
         p4SetRoomSetpoint(strtof(value, nullptr));
     } else if (strcmp(k, "energy_idx") == 0) {
         p4SetEnergyIdx(atoi(value));
+    } else if (strcmp(k, "ota_check") == 0) {
+        p4OtaCheckNow();
+    } else if (strcmp(k, "ota_install") == 0) {
+        p4OtaInstall();
     } else {
         ESP_LOGI(TAG, "ws cmd (unhandled): %s = %s", id, value);
     }
@@ -219,6 +224,18 @@ static void onWsConnected() {
     wsQueueSend(buf);
     snprintf(buf, sizeof(buf), "{\"command\":\"icon\",\"id\":\"tunnel\",\"state\":%d}",
              static_cast<int>(wstunnelUiState()));
+    wsQueueSend(buf);
+
+    // OTA status so the page can show an "update available" banner without
+    // waiting for the next periodic check.
+    P4OtaStatus ota;
+    p4OtaGetStatus(ota);
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"ota\",\"available\":%s,\"installing\":%s,"
+             "\"progress\":%d,\"current\":\"%s\",\"latest\":\"%s\",\"error\":\"%s\"}",
+             ota.available ? "true" : "false",
+             ota.installing ? "true" : "false",
+             ota.progress, ota.currentVer, ota.latestVer, ota.error);
     wsQueueSend(buf);
 }
 
@@ -492,6 +509,7 @@ static void wsPumpTask(void* /*arg*/) {
         broadcastLinTemps();
         broadcastIconStates();
         wsQueueDrain();
+        p4OtaBeat(P4OTA_BEAT_WEB);   // liveness for the post-OTA self-test
     }
 }
 
@@ -566,6 +584,11 @@ static void bootTask(void* /*arg*/) {
     // Pinned to Core 0 (legacy convention: blocking serial off the LVGL core).
     trumaLinStart(LIN_TX_PIN, LIN_RX_PIN);
 
+    // Self-OTA: periodic GitHub release check + post-OTA self-test/rollback.
+    // Spawned last so all the subsystems it watches (tunnel/LIN/BLE/web) are
+    // already up before the self-test starts sampling their heartbeats.
+    p4OtaStart();
+
     ESP_LOGI("boot", "background boot complete (heap=%lu)",
              (unsigned long)esp_get_free_heap_size());
     vTaskDelete(nullptr);
@@ -622,6 +645,7 @@ extern "C" void app_main(void)
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         iter++;
+        p4OtaBeat(P4OTA_BEAT_LOOP);   // liveness for the post-OTA self-test
 
         // (WS drain + LCD-change broadcast run in wsPumpTask at 100 ms.)
 
@@ -702,6 +726,15 @@ extern "C" void app_main(void)
 
         // Tunnel state → topbar cloud icon (grey/blinking/blue/red).
         p4SetTunnelState(static_cast<uint8_t>(wstunnelUiState()));
+
+        // Firmware-update reminder: topbar icon + one-shot "update now?" modal.
+        p4SetUpdateAvailable(p4OtaNotify());
+        char ota_cur[32], ota_latest[32];
+        if (p4OtaPromptPending(ota_cur, sizeof(ota_cur),
+                               ota_latest, sizeof(ota_latest))) {
+            if (p4DisplayShowUpdatePrompt(ota_cur, ota_latest))
+                p4OtaMarkPrompted();
+        }
 
         d.bleState = (vd.valid || ud.valid || td.valid || mp.valid) ? 2
                    : (victronIsConfigured() || ultimatronIsConfigured()

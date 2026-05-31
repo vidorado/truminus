@@ -1,6 +1,7 @@
 #include "truma_lin.hpp"
 #include "lin_driver.hpp"
 #include "p4display.hpp"
+#include "p4_ota.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -412,6 +413,7 @@ void lin_task(void*) {
         }
 
         publish_snapshot(snap);
+        p4OtaBeat(P4OTA_BEAT_LIN);   // liveness for the post-OTA self-test
         cyclesTotal++;
 
         uint32_t t = nowMs();

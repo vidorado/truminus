@@ -42,6 +42,11 @@ void wstunnelSaveConfig(const TunnelConfig& cfg);
 // new server URL).  Non-blocking.
 void wstunnelApply();
 
+// Tear the WS client down without changing the saved config — used to free
+// internal DRAM for the TLS handshake during a firmware OTA.  The tunnel
+// stays "enabled"; call wstunnelApply() to bring it back (or just reboot).
+void wstunnelSuspend();
+
 // True between the ESP-side WS "open" callback and the corresponding close.
 bool wstunnelIsConnected();
 
