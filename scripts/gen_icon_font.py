@@ -53,7 +53,7 @@ SOLID_GLYPHS = {
     0xF108: "display/desktop   FA_DISPLAY   (Display settings)",
     0xF0AC: "globe             FA_GLOBE     (Language)",
     0xF0C2: "cloud             FA_CLOUD     (WSS reverse-tunnel status)",
-    0xF0ED: "cloud-arrow-down  FA_CLOUD_DL  (firmware updates / self-OTA)",
+    0xF019: "download          FA_DOWNLOAD  (firmware updates / self-OTA)",
     # p4display.cpp — INVERSOR port dynamic indicators
     0xE55F: "plug-circle-bolt  FA_PLUG_BOLT (AC mains connected)",
     0xF177: "arrow-left-long   FA_ARROW_L   (BAT discharging)",

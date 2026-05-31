@@ -57,7 +57,7 @@ const P4Fonts* p4GetFonts() { return &s_fonts; }
 #define FA_SIGN_IN    "\xEF\x8B\xB6"   // U+F2F6 (right-to-bracket, outdoor temp arrow)
 #define FA_BLUETOOTH  "\xEF\x8A\x93"   // U+F293 (bluetooth brand icon, BLE status)
 #define FA_CLOUD      "\xEF\x83\x82"   // U+F0C2 (cloud, Serveo SSH tunnel status)
-#define FA_CLOUD_DL   "\xEF\x83\xAD"   // U+F0ED (cloud-arrow-down, firmware-update reminder)
+#define FA_DOWNLOAD   "\xEF\x80\x99"   // U+F019 (download, firmware-update reminder)
 #define FA_PLUG_BOLT  "\xEE\x95\x9F"   // U+E55F (plug-circle-bolt)
 #define FA_ARROW_L    "\xEF\x85\xB7"   // U+F177 (arrow-left-long)
 #define FA_ARROW_R    "\xEF\x85\xB8"   // U+F178 (arrow-right-long)
@@ -471,7 +471,7 @@ static void build_main_screen()
     // status icon and the Config button.  Hidden until p4SetUpdateAvailable(true)
     // reveals it; the slot is kept clear either way so nothing reflows.
     ui.icon_ota = lv_label_create(topbar);
-    lv_label_set_text(ui.icon_ota, FA_CLOUD_DL);
+    lv_label_set_text(ui.icon_ota, FA_DOWNLOAD);
     lv_obj_set_style_text_font(ui.icon_ota, s_font_icons24, 0);
     // White to stand apart from the blue/grey tunnel cloud icon next to it.
     lv_obj_set_style_text_color(ui.icon_ota, C_TEXT, 0);
@@ -985,7 +985,7 @@ static void build_main_screen()
     make_sep(scr, WATER_X + WATER_W,   CONTENT_Y,    1,  ROW1_H);  // AGUA CALIENTE right edge
     make_sep(scr, SOLAR_X,             ROW2_Y,        1,  ROW2_H);  // VENTILADOR | SOLAR
     make_sep(scr, SOLAR_X + SOLAR_W,   ROW2_Y,        1,  ROW2_H);  // SOLAR right edge
-    make_sep(scr, AGUA_X,              CONTENT_Y,     1,  ROW1_H);  // AGUA CALIENTE | AGUA LIMPIA
+    make_sep(scr, AGUA_X + 3,          CONTENT_Y,     1,  ROW1_H);  // AGUA CALIENTE | AGUA LIMPIA
     make_sep(scr, INV_X,               ROW2_Y,        1,  ROW2_H);  // SOLAR | INVERSOR
     make_sep(scr, 0,                   ROW2_Y - 1,    HEAT_W,  1);  // CALEFACCIÓN / VENTILADOR
     make_sep(scr, WATER_X,             ROW2_Y - 1,    WATER_W, 1);  // AGUA CALIENTE / SOLAR
@@ -1480,7 +1480,7 @@ bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver)
 
     // Centered dialog box.
     lv_obj_t* box = lv_obj_create(back);
-    lv_obj_set_size(box, 480, 240);
+    lv_obj_set_size(box, 480, 260);
     lv_obj_center(box);
     lv_obj_set_style_bg_color(box, C_TOPBAR, 0);
     lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
@@ -1490,9 +1490,9 @@ bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver)
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* icon = lv_label_create(box);
-    lv_label_set_text(icon, FA_CLOUD_DL);
+    lv_label_set_text(icon, FA_DOWNLOAD);
     lv_obj_set_style_text_font(icon, s_font_icons36 ? s_font_icons36 : s_font_28, 0);
-    lv_obj_set_style_text_color(icon, C_BTN_ACTIVE, 0);
+    lv_obj_set_style_text_color(icon, C_TEXT, 0);
     lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 4);
 
     lv_obj_t* title = lv_label_create(box);

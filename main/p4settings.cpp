@@ -53,7 +53,7 @@ static const char* TAG = "cfg";
 #define FA_EYE_SLASH "\xEF\x81\xB0"   // U+F070
 #define FA_SEARCH    "\xEF\x80\x82"   // U+F002
 #define FA_CLOUD     "\xEF\x83\x82"   // U+F0C2
-#define FA_CLOUD_DL  "\xEF\x83\xAD"   // U+F0ED (cloud-arrow-down, firmware updates)
+#define FA_DOWNLOAD  "\xEF\x80\x99"   // U+F019 (download, firmware updates)
 
 // Screen geometry.
 static constexpr int SCR_W   = 800;
@@ -314,7 +314,7 @@ static void show_menu(lv_obj_t* /*from*/) {
         { FA_DISPLAY,  TK::DISP_CFG,    menu_display_cb  },
         { FA_GLOBE,    TK::LANGUAGE,    menu_language_cb },
         { FA_CLOUD,    TK::TUNNEL_CFG,  menu_tunnel_cb   },
-        { FA_CLOUD_DL, TK::UPDATES_CFG, menu_updates_cb  },
+        { FA_DOWNLOAD, TK::UPDATES_CFG, menu_updates_cb  },
     };
 #else
     static const MenuBtn ITEMS[] = {
@@ -324,7 +324,7 @@ static void show_menu(lv_obj_t* /*from*/) {
         { FA_DISPLAY,  TK::DISP_CFG,    menu_display_cb  },
         { FA_GLOBE,    TK::LANGUAGE,    menu_language_cb },
         { FA_CLOUD,    TK::TUNNEL_CFG,  menu_tunnel_cb   },
-        { FA_CLOUD_DL, TK::UPDATES_CFG, menu_updates_cb  },
+        { FA_DOWNLOAD, TK::UPDATES_CFG, menu_updates_cb  },
     };
 #endif
     // Generic grid: up to 3 columns, as many rows as needed.  Button height
