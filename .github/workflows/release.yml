@@ -54,26 +54,20 @@ jobs:
 
       - name: Build firmware (ESP-IDF v6.0, target esp32p4)
         uses: espressif/esp-idf-ci-action@v1
-        env:
-          IDF_CCACHE_ENABLE: "1"
-          CCACHE_MAXSIZE: "500M"
-          # See ci.yml: the IDF container resets file mtimes each run, so hash
-          # by content and ignore include-file timestamps or ccache gets 0 hits.
-          CCACHE_COMPILERCHECK: content
-          CCACHE_NOHASHDIR: "true"
-          CCACHE_SLOPPINESS: "time_macros,locale,include_file_ctime,include_file_mtime"
         with:
           esp_idf_version: release-v6.0
           target: esp32p4
-          # littlefs-python is required by the joltwallet LittleFS image step;
-          # the IDF container does not ship it.  The C6 co-processor binary is
-          # not embedded here (it lives outside the repo) — the app builds fine
-          # without it; self-OTA only updates the P4 application image.
-          # CCACHE_DIR must be set inside the container ($PWD/.ccache = the
-          # mounted /app/<owner>/<repo>) so actions/cache can persist it; the
-          # action does not mount the workspace at /github/workspace.
-          # CCACHE_BASEDIR normalises absolute paths for cross-run hits.
-          command: export CCACHE_DIR="$PWD/.ccache" CCACHE_BASEDIR="$PWD" && pip install littlefs-python && idf.py build && ccache -p && ccache -s -v
+          # All ccache settings MUST be exported here — this action does not
+          # forward the step `env:` into the container (see ci.yml for the full
+          # rationale: mounted path is /app/<owner>/<repo>, and the fresh-
+          # extracted container needs content-based compiler/header hashing).
+          # littlefs-python is required by the joltwallet LittleFS image step.
+          command: >-
+            export CCACHE_DIR="$PWD/.ccache" CCACHE_BASEDIR="$PWD"
+            CCACHE_COMPILERCHECK=content CCACHE_NOHASHDIR=true
+            CCACHE_SLOPPINESS=time_macros,locale,include_file_ctime,include_file_mtime
+            CCACHE_MAXSIZE=500M IDF_CCACHE_ENABLE=1
+            && pip install littlefs-python && idf.py build && ccache -s
 
       - name: Attach truminus.bin to the Release
         uses: softprops/action-gh-release@v2
