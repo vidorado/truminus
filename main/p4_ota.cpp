@@ -46,6 +46,7 @@ static constexpr uint32_t CHECK_PERIOD_MS = 12 * 60 * 60 * 1000;  // 12 h
 // ── Post-OTA self-test gating ───────────────────────────────────────────
 // Hard firmware-health gates (independent of the environment):
 static constexpr size_t   HEAP_FLOOR        = 24 * 1024;  // internal DRAM
+static constexpr int      HEAP_BREACH_LIMIT = 5;          // consecutive samples below floor → rollback
 static constexpr uint32_t BEAT_STALL_MS     = 20000;      // task considered dead
 // Validation timing:
 static constexpr uint32_t SELFTEST_FAST_MIN_MS = 90  * 1000;   // earliest validate
@@ -476,6 +477,39 @@ static bool env_ready() {
     return ip && tun_ok && lin_ok && ble_ok;
 }
 
+// Persist why the post-OTA self-test rolled back, so the reason survives the
+// reboot (the USB-Serial-JTAG console re-enumerates on reset, so the ESP_LOGE
+// just before the rollback is usually lost).  Read + logged + cleared on the
+// next boot by report_prior_rollback().
+static void persist_rollback_reason(const char* why, uint32_t free_int) {
+    nvs_handle_t h;
+    if (nvs_open("ota", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_str(h, "rb_why",  why);
+    nvs_set_u32(h, "rb_heap", free_int);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+// Log (loudly) any rollback recorded by the previous boot's self-test, then
+// clear it.  Called from p4OtaStart so a lost serial console no longer hides
+// the reason — reconnect the monitor and it shows on the next boot.
+static void report_prior_rollback() {
+    nvs_handle_t h;
+    if (nvs_open("ota", NVS_READWRITE, &h) != ESP_OK) return;
+    char why[48] = "";
+    size_t len = sizeof(why);
+    uint32_t heap = 0;
+    if (nvs_get_str(h, "rb_why", why, &len) == ESP_OK) {
+        nvs_get_u32(h, "rb_heap", &heap);
+        ESP_LOGE(TAG, "PREVIOUS BOOT ROLLED BACK a self-OTA image: %s "
+                      "(free internal DRAM was %lu B)", why, (unsigned long)heap);
+        nvs_erase_key(h, "rb_why");
+        nvs_erase_key(h, "rb_heap");
+        nvs_commit(h);
+    }
+    nvs_close(h);
+}
+
 static void selftest_task(void*) {
     const esp_partition_t* run = esp_ota_get_running_partition();
     esp_ota_img_states_t st = ESP_OTA_IMG_UNDEFINED;
@@ -498,18 +532,28 @@ static void selftest_task(void*) {
     uint32_t t0 = now0;
 
     auto rollback = [](const char* why) {
-        ESP_LOGE(TAG, "post-OTA self-test FAILED (%s) — rolling back", why);
+        size_t fi = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        ESP_LOGE(TAG, "post-OTA self-test FAILED (%s, free_int=%u) — rolling back",
+                 why, (unsigned)fi);
+        persist_rollback_reason(why, (uint32_t)fi);
         esp_ota_mark_app_invalid_rollback_and_reboot();   // never returns
     };
+
+    int heap_breach = 0;   // consecutive samples below the floor
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(SELFTEST_SAMPLE_MS));
         uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
 
-        // Hard gate 1: internal DRAM floor.
+        // Hard gate 1: internal DRAM floor — must be *sustained*.  A single
+        // dip is normal (e.g. the WSS tunnel's TLS handshake right after boot
+        // transiently needs internal DMA buffers); only a persistent breach
+        // signals a real leak.  Require HEAP_BREACH_LIMIT consecutive samples.
         size_t free_int = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
         if (free_int < HEAP_FLOOR) {
-            rollback("heap floor breached");
+            if (++heap_breach >= HEAP_BREACH_LIMIT) rollback("heap floor breached");
+        } else {
+            heap_breach = 0;
         }
 
         // Hard gate 2: every critical task must keep scheduling.
@@ -551,6 +595,7 @@ void p4OtaStart() {
     if (!s_lock) s_lock = xSemaphoreCreateMutex();
     snprintf(s_status.currentVer, sizeof(s_status.currentVer), "%s", running_version());
     ESP_LOGI(TAG, "running firmware version: %s", s_status.currentVer);
+    report_prior_rollback();   // surface any rollback from the previous boot
 
     nvs_handle_t h;
     if (nvs_open("ota", NVS_READONLY, &h) == ESP_OK) {
