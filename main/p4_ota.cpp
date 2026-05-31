@@ -80,6 +80,11 @@ static std::atomic<bool> s_check_request{false};
 // Automatic-check preference + prompt bookkeeping (guarded by s_lock).
 static bool s_autocheck      = true;
 static char s_prompted_ver[32] = "";   // version we've already prompted about
+// True when the latest release is a minor/major bump over the running image
+// (set by do_check).  Gates the proactive topbar icon + prompt modal so a
+// patch-only release doesn't nag; s_status.available stays true for any newer
+// version so manual checks / install still surface patches.
+static bool s_notify_worthy  = false;
 
 void p4OtaBeat(P4OtaComp comp) {
     if (comp < P4OTA_BEAT_COUNT) s_beats[comp].fetch_add(1, std::memory_order_relaxed);
@@ -121,14 +126,16 @@ void p4OtaSetAutoCheck(bool enabled) {
 
 bool p4OtaNotify() {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    bool v = s_status.available && s_autocheck;
+    // Proactive topbar reminder: only for minor/major bumps (patch is silent).
+    bool v = s_status.available && s_autocheck && s_notify_worthy;
     xSemaphoreGive(s_lock);
     return v;
 }
 
 bool p4OtaPromptPending(char* cur, size_t cur_len, char* latest, size_t latest_len) {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    bool pend = s_status.available && s_autocheck &&
+    // Proactive modal: only for minor/major bumps (patch never auto-prompts).
+    bool pend = s_status.available && s_autocheck && s_notify_worthy &&
                 strcmp(s_prompted_ver, s_status.latestVer) != 0;
     if (pend) {
         snprintf(cur,    cur_len,    "%s", s_status.currentVer);
@@ -183,6 +190,19 @@ static int semver_cmp(const char* a, const char* b) {
     if (am != bm) return am - bm;
     if (an != bn) return an - bn;
     return ap - bp;
+}
+
+// True if `latest` is a newer MINOR or MAJOR than `running` (a patch-only
+// bump returns false).  Gates the *proactive* auto-notification (topbar
+// reminder icon + prompt modal) so patch releases don't nag the user; manual
+// checks (settings screen / `ota check`) and install still use plain
+// semver_cmp, so patches are surfaced and installable when explicitly sought.
+static bool is_minor_or_major_newer(const char* latest, const char* running) {
+    int lm, ln, lp, rm, rn, rp;
+    if (!parse_semver(latest, &lm, &ln, &lp)) return false;
+    if (!parse_semver(running, &rm, &rn, &rp)) return false;
+    if (lm != rm) return lm > rm;   // major bump
+    return ln > rn;                 // same major: only a minor increase counts
 }
 
 static const char* running_version() {
@@ -273,12 +293,15 @@ static void do_check() {
         s_status.error[0] = '\0';
         bool newer = semver_cmp(tag, s_status.currentVer) > 0;
         s_status.available = newer;
+        s_notify_worthy = newer && is_minor_or_major_newer(tag, s_status.currentVer);
         if (newer) {
             snprintf(s_status.latestVer, sizeof(s_status.latestVer), "%s", tag);
             snprintf(s_asset_url, sizeof(s_asset_url),
                      "https://github.com/" OTA_GH_OWNER "/" OTA_GH_REPO
                      "/releases/download/%s/" OTA_ASSET, tag);
-            ESP_LOGI(TAG, "update available: %s -> %s", s_status.currentVer, tag);
+            ESP_LOGI(TAG, "update available: %s -> %s (%s)", s_status.currentVer, tag,
+                     s_notify_worthy ? "minor/major — will prompt"
+                                     : "patch — silent (manual check only)");
         } else {
             // No longer behind — clear the prompt memory so a future release
             // pops the modal again.
