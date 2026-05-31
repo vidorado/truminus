@@ -38,6 +38,25 @@ idf_build_set_property(COMPILE_DEFINITIONS "JC4880_P4"         APPEND)
 # a tag, "X.Y.Z-<n>-g<sha>[-dirty]" otherwise.  Falls back to "0.0.0" when
 # git is unavailable (e.g. building from a tarball).  Must be set before
 # project() for IDF to pick it up; max 31 chars fit in the app descriptor.
+#
+# git describe runs at *configure* time, and cmake won't reconfigure just
+# because the git state changed — so an incremental build/flash after a new
+# commit or tag would keep baking the stale version (we shipped 1.1.0-dirty
+# this way once).  Watch the reflog + packed-refs as configure-dependencies
+# so a commit/checkout forces a reconfigure and re-runs git describe.  This
+# is *reconfigure only* (re-parse + regen ninja, a few seconds) — ninja still
+# builds incrementally, and only the app-descriptor object that embeds
+# PROJECT_VER is recompiled.  We deliberately do NOT watch .git/index: it
+# changes on every `git add`, which would tax the dev loop for no benefit
+# (the version only changes on commit/checkout, captured by logs/HEAD; a
+# bare `git tag` is picked up by the reconfigure already pending from the
+# commit that precedes it).
+foreach(_gitfile logs/HEAD packed-refs)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git/${_gitfile}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_CURRENT_SOURCE_DIR}/.git/${_gitfile}")
+    endif()
+endforeach()
 execute_process(
     COMMAND git describe --tags --dirty --always
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
