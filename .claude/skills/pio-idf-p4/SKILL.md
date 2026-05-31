@@ -214,3 +214,79 @@ Install `espressif.esp-idf-extension`. After the first `make build`, the file
 
 Copy `.vscode/settings.json.template` → `.vscode/settings.json` and fill in
 your IDF path. `settings.json` is gitignored.
+
+---
+
+## 9. CI build caching (`.github/workflows/{ci,release}.yml`)
+
+`release.yml` builds + attaches `truminus.bin` on every `X.Y.Z` tag;
+`ci.yml` builds on every push to `master`. Getting ccache to actually hit
+took fixing **three** independent traps — symptom each time was "cache
+restored" but **0 hits** and a full ~5-6 min build. Use `ccache -p`
+(effective config) and `ccache -s -v` (per-reason stats) to diagnose, not
+guesswork.
+
+1. **Mount path.** `espressif/esp-idf-ci-action` mounts the repo at
+   `/app/<owner>/<repo>`, **not** `/github/workspace`. So `CCACHE_DIR` must
+   be `$PWD/.ccache` (the mounted dir, which `actions/cache path: .ccache`
+   persists). A host-side `${{ github.workspace }}` path silently saves
+   nothing ("Path Validation Error").
+2. **`env:` is not forwarded into the container.** Only what you `export`
+   inside the action's `command` reaches ccache. `CCACHE_*` set via the step
+   `env:` block show up as **defaults** in `ccache -p` (`compiler_check =
+   mtime`). Export every setting in `command`.
+3. **Fresh container = new mtimes.** The IDF image is extracted per run, so
+   the compiler + every header get new mtimes; the default `compiler_check =
+   mtime` then misses everything. Need `CCACHE_COMPILERCHECK=content` plus
+   `CCACHE_SLOPPINESS=time_macros,locale,include_file_ctime,include_file_mtime`.
+
+Plus the **cache-scope** rule: Actions caches are scoped per ref, and tag
+runs are mutually isolated — a tag can only restore from its own ref or the
+**default branch**. So the `master` build (`ci.yml`) is what populates the
+shared cache; release (tag) runs restore it via the common `ccache-esp32p4-`
+key prefix (per-commit key + `restore-keys` fallback). Without a master
+build, every release is cold. `concurrency: cancel-in-progress` stops rapid
+master pushes from stacking. Result: releases ~2.5 min (now dominated by
+container pull + `cmake configure` ~40 s + littlefs + link, not compilation).
+
+The canonical build command (both workflows):
+
+```yaml
+command: >-
+  export CCACHE_DIR="$PWD/.ccache" CCACHE_BASEDIR="$PWD"
+  CCACHE_COMPILERCHECK=content CCACHE_NOHASHDIR=true
+  CCACHE_SLOPPINESS=time_macros,locale,include_file_ctime,include_file_mtime
+  CCACHE_MAXSIZE=500M IDF_CCACHE_ENABLE=1
+  && pip install littlefs-python && idf.py build && ccache -s
+```
+
+## 10. `PROJECT_VER` is captured at *configure* time
+
+`git describe --tags` runs in the root `CMakeLists.txt` before `project()`.
+cmake does **not** reconfigure just because git state changed, so an
+incremental build/flash after a new commit or tag keeps baking the **stale**
+version (we once flashed `1.1.0-dirty` while the tag was `1.1.1`, and a
+locally-built `truminus.bin` carried the old `esp_app_desc_t.version`). Fix:
+the root `CMakeLists.txt` lists `.git/logs/HEAD` + `.git/packed-refs` in
+`CMAKE_CONFIGURE_DEPENDS` so a commit/checkout forces a reconfigure. It's
+reconfigure-only (seconds; ninja still incremental). `.git/index` is not
+watched (would trigger on every `git add`). Verify with the
+`-- TruMinus: firmware version = …` line and `strings build/truminus.bin | grep`.
+
+## 11. Multiple Espressif boards on USB / WSL
+
+When more than one Espressif chip is attached (e.g. a stray ESP32-C3 dev
+board alongside the P4), `/dev/ttyACM{0,1,…}` ordering is not stable and a
+flash can target the wrong chip (`A fatal error occurred: This chip is
+ESP32-C3, not ESP32-P4`). Identify the P4 before flashing:
+
+```bash
+for p in /dev/ttyACM*; do echo -n "$p -> "; \
+  python -m esptool --port $p --chip auto chip-id 2>&1 | grep -m1 "Detecting chip type"; done
+```
+
+Then `idf.py -p /dev/ttyACMx flash`. On WSL the P4 must be attached via
+`usbipd attach --wsl --busid <id>` (PowerShell); a DTR/RTS reset from a
+failed flash can re-enumerate it. The P4's USB-Serial-JTAG re-enumerates on
+every reset, so a serial monitor drops on each OTA/rollback reboot (and
+holding the port from a monitor makes `esptool`/flash report the port busy).

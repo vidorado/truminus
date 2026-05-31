@@ -110,6 +110,8 @@ Assets live in `data/` and are served from LittleFS (see §"Web assets are serve
 
 ## Cross-cutting gotchas (write these down once, save the next session)
 
+- **WiFi power save throttles *everything* — disable it.** The default is `WIFI_PS_MIN_MODEM`, which sleeps the station between DTIM beacons and adds ~100 ms latency to every receive cycle. Symptoms: OTA downloads crawl at ~30 KB/s, the web UI feels janky, the WSS tunnel is laggy — all the same root cause. This is a mains-powered controller, so `wifi_manager.cpp` calls `esp_wifi_set_ps(WIFI_PS_NONE)` right after `esp_wifi_start()` (proxied to the C6 via `esp_wifi_remote`). Big throughput + latency win. Don't re-enable PS unless the board ever goes battery-powered.
+- **CI ccache: three traps with `espressif/esp-idf-ci-action` (all fixed in `.github/workflows/`).** Symptom was 0 cache hits / ~5-6 min builds even with the cache "restored". (1) The action mounts the repo at `/app/<owner>/<repo>`, **not** `/github/workspace`, so `CCACHE_DIR` must be `$PWD/.ccache`. (2) The action does **not** forward the step `env:` into the container — verified with `ccache -p` (showed `compiler_check = mtime`); every `CCACHE_*` must be `export`ed inside the `command`, not set via `env:`. (3) The IDF container is extracted fresh each run with new file mtimes, so `compiler_check=content` + `CCACHE_SLOPPINESS=…include_file_mtime,include_file_ctime,time_macros,locale` are required or every object misses. Plus: Actions caches are scoped per ref and tag runs are mutually isolated, so a **`ci.yml` build on `master`** populates the default-branch cache that release (tag) runs restore via the shared `ccache-esp32p4-` key prefix. Net: releases dropped from ~5.5 min to ~2.5 min (mostly fixed overhead now).
 - **`littlefs_create_partition_image()` rebuilds the bin on every cmake run** — CMake can't watch directory contents, so the helper uses `add_custom_target ... ALL` with no input deps. The bin gets a fresh mtime each time even when `data/` is identical. Mitigated by `--skip-flashed` (esptool MD5-compare; baked into every flash target's `SUB_ARGS` in the root `CMakeLists.txt`). Inputs are deterministic (`littlefs-python` + `mtime=0` in our `gen_gz.py`) so the comparison succeeds.
 - **VSCode IDF extension's Flash button bypasses our CMake hooks.** It hardcodes the esptool args in TypeScript (`r.push("write_flash","--flash_mode",mode,…)`), ignores `write_flash_args` in `flasher_args.json`, and offers no setting for extra args. We work around by providing `.vscode/tasks.json` tasks ("TruMinus: Flash"/"Flash + Monitor") that invoke `idf.py flash` (which *does* honour our `--skip-flashed`) and `.vscode/settings.json` `VsCodeTaskButtons.tasks` puts status-bar buttons next to them. Recommend `spencerwmiles.vscode-task-buttons` in `extensions.json`. The tasks must source `$IDF_PATH/export.sh` first because `idf.py` is not on PATH in a fresh shell.
 - **NimBLE 2.x `scan->start(duration, false)` is non-blocking** — returns once the GAP procedure is queued. Calling `cb(results, count)` right after gives `count=0` every time. Poll `scan->isScanning()` (with `vTaskDelay`) until the duration window elapses, then report. See `main/victronble.cpp::discovery_scan_task`.
@@ -311,6 +313,20 @@ separate, `c6_ota.cpp`). Origin: **GitHub Releases direct**, against
   `esp_app_desc_t.version`. On a clean tag it is exactly `X.Y.Z`; in a
   dirty tree it is `X.Y.Z-<n>-g<sha>-dirty`. `parse_semver()` reads the
   leading `X.Y.Z` from both the running version and the GitHub tag.
+  `git describe` runs at **configure** time and cmake won't reconfigure
+  on a git change by itself — so the root `CMakeLists.txt` lists
+  `.git/logs/HEAD` + `.git/packed-refs` in `CMAKE_CONFIGURE_DEPENDS`,
+  forcing a reconfigure after a commit/checkout (we once flashed
+  `1.1.0-dirty` from a stale cached `PROJECT_VER`). It's reconfigure-only;
+  ninja still builds incrementally. `.git/index` is deliberately **not**
+  watched (it changes on every `git add`).
+- **Auto-prompt only for minor/major.** The periodic check sets
+  `s_status.available` for **any** newer tag (so the LCD "Actualizaciones"
+  screen, the `ota` CLI and the web banner surface patches), but the
+  *proactive* topbar reminder icon (`p4OtaNotify()`) and the prompt modal
+  (`p4OtaPromptPending()`) fire only when the latest is a **minor or major**
+  bump (`is_minor_or_major_newer()` → `s_notify_worthy`). Patch releases
+  don't nag; the user still finds + installs them via a manual check.
 - **Discovery without the API.** `GET /releases/latest` with
   `disable_auto_redirect = true`; GitHub answers `302 → /releases/tag/<tag>`
   and the tag is the last path segment of the `Location` header. Tiny,
@@ -325,21 +341,43 @@ separate, `c6_ota.cpp`). Origin: **GitHub Releases direct**, against
 - **Trigger model.** Auto-check at boot + every 12 h; an update is only
   *flagged* (LCD "Actualizaciones" settings screen + web banner). Install
   is **user-initiated** (`p4OtaInstall()` → LCD "Update" button or web).
-  The tunnel is suspended for the transfer (`wstunnelSuspend()`) to free
-  internal DRAM for the TLS handshake.
+- **Transfer tuning (download speed).** During the transfer `install_task`
+  frees the radio + DRAM: `wstunnelSuspend()` (DRAM for the TLS handshake)
+  **and** `victronBleSuspend()` + `ultimatronBleSuspend()` — the C6 shares
+  one radio between WiFi and BLE, so an active BLE scan throttles the
+  download. The HTTP client RX buffer is **16 KB** (matches
+  `MBEDTLS_SSL_IN_CONTENT_LEN`, so a full TLS record is read per call; the
+  default 1 KB also broke `esp_https_ota_begin` against the long signed CDN
+  redirect URL → "HTTP_CLIENT: Out of buffer"). A throughput log
+  (`OTA download: N bytes in T s = X KB/s avg` + per-decile) tells whether
+  the bottleneck is the network or the serialized flash writes. The dominant
+  real-world speed fix was **WiFi power save** (see the cross-cutting gotcha).
 - **Rollback safety net.** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`
   (+ the pre-existing `CONFIG_BOOTLOADER_WDT_ENABLE`). A freshly flashed
   image boots `PENDING_VERIFY`; `selftest_task` (spawned only in that
   state) marks it valid via `esp_ota_mark_app_valid_cancel_rollback()`
   **only after** it proves healthy. Gating splits **hard firmware-health
-  signals** (heap floor, per-task heartbeats via `p4OtaBeat()` from the
-  main loop / wsPump / LIN task) from **best-effort environment signals**
-  (IP, tunnel CONNECTED, fresh LIN frame, BLE advert). Hard-gate failure
-  → proactive `esp_ota_mark_app_invalid_rollback_and_reboot()`. A time
-  **ceiling** (~8 min) validates regardless of environment so a benign
-  reset (Combi off, BLE out of range) can't roll back a good image. The
-  net is one-shot for the first minutes; it does **not** guard a crash
-  that happens after validation.
+  signals** from **best-effort environment signals** (IP, tunnel CONNECTED,
+  fresh LIN frame, BLE advert):
+  - *Heap floor* `HEAP_FLOOR=12 KB` of internal DRAM, **sustained** — only
+    rolls back after `HEAP_BREACH_LIMIT=5` consecutive 2 s samples below it,
+    so a transient handshake dip doesn't false-trip. Steady-state free
+    internal DRAM here is ~24 KB, so an earlier 24 KB floor rolled back a
+    *healthy* image; the floor must sit well below normal operation.
+  - *Heartbeats* via `p4OtaBeat()` from the main loop / wsPump / LIN task;
+    a task not beating for `BEAT_STALL_MS=20 s` rolls back.
+  - Hard-gate failure → proactive
+    `esp_ota_mark_app_invalid_rollback_and_reboot()`, and the reason +
+    free-heap value are **persisted to NVS** (`ota/rb_why`, `rb_heap`) and
+    logged loudly on the next boot (`report_prior_rollback()`) — the
+    USB-Serial-JTAG console re-enumerates on the reboot, so the pre-rollback
+    `ESP_LOGE` is otherwise lost.
+  - Timing: **fast-pass at 30 s** if the environment is ready, else a
+    **60 s ceiling** validates regardless (was 90 s / 8 min — far too long
+    a silent `PENDING_VERIFY` window when the env never comes up, e.g. Combi
+    off → LIN never ready). A ~15 s progress log shows elapsed / free heap /
+    `env_ready`. The net is one-shot for the first ~minute; it does **not**
+    guard a crash after validation.
 
 ## Related skills
 
