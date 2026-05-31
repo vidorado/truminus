@@ -28,13 +28,17 @@ CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 # 2. Lower the "always internal" threshold so allocations as small as 2 KB
 #    can spill to PSRAM (IDF default was 16 KB, which kept almost
 #    everything mbedtls touches in DRAM).
-# 3. Shrink the TLS input record buffer from 16 KB → 4 KB.  WSS frames
-#    from the Plesk bridge are small JSON / binary chunks (IO_CHUNK=4096
-#    on both sides), so 16 KB was pure overhead.
+# 3. Keep the TLS *input* record buffer at the 16 KB TLS maximum.  An
+#    earlier 4 KB setting (to trim WSS overhead) broke self-OTA: the
+#    GitHub release CDN sends full-size TLS records, so reading the
+#    response failed with mbedtls -0x0087 / "Complete headers were not
+#    received".  Thanks to (1)+(2) this 16 KB buffer lands in PSRAM, so it
+#    does NOT reintroduce the internal-DRAM cascade.  OUT stays small via
+#    ASYMMETRIC_CONTENT_LEN (we never send big records).
 CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC=n
 CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC=y
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=2048
-CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=4096
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
 
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
