@@ -1,0 +1,58 @@
+# Build the firmware on every push to master.  This exists mainly to keep a
+# warm ccache on the *default branch*: GitHub Actions caches are scoped per
+# ref, and a release runs on a tag ref (refs/tags/X.Y.Z) which can only
+# restore caches from its own tag or from the default branch.  Tag runs alone
+# never share a cache, so without this every release compiled cold (~5-6 min).
+# A master build populates the default-branch-scoped cache that release.yml's
+# tag runs then restore (same key prefix), cutting releases to ~1-2 min.  It
+# also validates that master builds on every push.
+name: ci
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+# A newer push to master cancels an in-progress build so rapid commits don't
+# stack up CI minutes; the latest commit is what we want cached anyway.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with tags so `git describe` yields the clean version)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Same key prefix as release.yml so the tag-ref release builds restore
+      # this default-branch cache via restore-keys.
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-esp32p4-${{ github.sha }}
+          restore-keys: |
+            ccache-esp32p4-
+
+      - name: Cache managed_components
+        uses: actions/cache@v4
+        with:
+          path: managed_components
+          key: idf-components-${{ hashFiles('main/idf_component.yml', 'dependencies.lock') }}
+          restore-keys: |
+            idf-components-
+
+      - name: Build firmware (ESP-IDF v6.0, target esp32p4)
+        uses: espressif/esp-idf-ci-action@v1
+        env:
+          IDF_CCACHE_ENABLE: "1"
+          CCACHE_DIR: /github/workspace/.ccache
+          CCACHE_MAXSIZE: "500M"
+        with:
+          esp_idf_version: release-v6.0
+          target: esp32p4
+          command: pip install littlefs-python && idf.py build && ccache -s
