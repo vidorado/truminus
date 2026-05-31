@@ -150,3 +150,11 @@ CONFIG_LWIP_MAX_ACTIVE_TCP=64
 # this buffer once, so the cost is bounded by max_open_sockets.
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=4096
 CONFIG_HTTPD_MAX_URI_LEN=1024
+
+# ── ECDSA peripheral not present on ESP32-P4 rev < v3 (esp32p4_es) ────────
+# The ECDSA hardware accelerator is missing on the pre-production silicon on
+# this board, so MBEDTLS_HARDWARE_ECDSA_VERIFY makes the PSA driver log
+# "ECDSA peripheral not supported on this chip revision" on every ECDSA
+# verify during the TLS handshake (GitHub OTA check / WSS tunnel).  Disable
+# it so cert-chain verification runs in software (mbedtls) cleanly.
+CONFIG_MBEDTLS_HARDWARE_ECDSA_VERIFY=n

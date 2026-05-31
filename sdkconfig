@@ -3965,8 +3965,7 @@ CONFIG_MBEDTLS_ROM_MD5=y
 #
 # Hardware Acceleration
 #
-# default:
-CONFIG_MBEDTLS_HARDWARE_ECDSA_VERIFY=y
+# CONFIG_MBEDTLS_HARDWARE_ECDSA_VERIFY is not set
 # default:
 # CONFIG_MBEDTLS_HARDWARE_ECDSA_SIGN is not set
 # default:
