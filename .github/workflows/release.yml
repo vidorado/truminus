@@ -57,6 +57,11 @@ jobs:
         env:
           IDF_CCACHE_ENABLE: "1"
           CCACHE_MAXSIZE: "500M"
+          # See ci.yml: the IDF container resets file mtimes each run, so hash
+          # by content and ignore include-file timestamps or ccache gets 0 hits.
+          CCACHE_COMPILERCHECK: content
+          CCACHE_NOHASHDIR: "true"
+          CCACHE_SLOPPINESS: "time_macros,locale,include_file_ctime,include_file_mtime"
         with:
           esp_idf_version: release-v6.0
           target: esp32p4
@@ -67,7 +72,8 @@ jobs:
           # CCACHE_DIR must be set inside the container ($PWD/.ccache = the
           # mounted /app/<owner>/<repo>) so actions/cache can persist it; the
           # action does not mount the workspace at /github/workspace.
-          command: export CCACHE_DIR="$PWD/.ccache" && pip install littlefs-python && idf.py build && ccache -s
+          # CCACHE_BASEDIR normalises absolute paths for cross-run hits.
+          command: export CCACHE_DIR="$PWD/.ccache" CCACHE_BASEDIR="$PWD" && pip install littlefs-python && idf.py build && ccache -s
 
       - name: Attach truminus.bin to the Release
         uses: softprops/action-gh-release@v2

@@ -51,6 +51,13 @@ jobs:
         env:
           IDF_CCACHE_ENABLE: "1"
           CCACHE_MAXSIZE: "500M"
+          # The IDF container is extracted fresh each run, resetting the mtimes
+          # of the compiler and every IDF header.  ccache's default mtime-based
+          # checks then treat everything as changed → 0 hits even with the
+          # cache restored.  Hash by content and ignore include-file timestamps.
+          CCACHE_COMPILERCHECK: content
+          CCACHE_NOHASHDIR: "true"
+          CCACHE_SLOPPINESS: "time_macros,locale,include_file_ctime,include_file_mtime"
         with:
           esp_idf_version: release-v6.0
           target: esp32p4
@@ -58,4 +65,6 @@ jobs:
           # /github/workspace, so CCACHE_DIR must be set inside the container
           # to $PWD/.ccache (the mounted workspace) for actions/cache to find
           # and persist it — a host-side ${{ github.workspace }} path is wrong.
-          command: export CCACHE_DIR="$PWD/.ccache" && pip install littlefs-python && idf.py build && ccache -s
+          # CCACHE_BASEDIR normalises absolute paths so objects hit regardless
+          # of the (deterministic) mount path.
+          command: export CCACHE_DIR="$PWD/.ccache" CCACHE_BASEDIR="$PWD" && pip install littlefs-python && idf.py build && ccache -s
