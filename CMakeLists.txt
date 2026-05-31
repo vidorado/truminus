@@ -81,9 +81,20 @@ endforeach()
 #
 # Both scripts are idempotent: when nothing changed they print "up to
 # date" and return immediately, so making them ALL targets is cheap.
+# IDF passes the interpreter as -DPYTHON=…; PYTHON_EXECUTABLE is not set in
+# the CI container (only some local setups define it), so an empty prefix made
+# cmake try to exec the scripts directly → "Permission denied".  Use the
+# IDF-provided ${PYTHON}, falling back to PYTHON_EXECUTABLE / "python3".
+if(PYTHON)
+    set(_TRUMINUS_PY "${PYTHON}")
+elseif(PYTHON_EXECUTABLE)
+    set(_TRUMINUS_PY "${PYTHON_EXECUTABLE}")
+else()
+    set(_TRUMINUS_PY "python3")
+endif()
 add_custom_target(web_assets_prep ALL
-    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/cache_bust.py
-    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_gz.py
+    COMMAND ${_TRUMINUS_PY} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/cache_bust.py
+    COMMAND ${_TRUMINUS_PY} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_gz.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Refreshing web asset cache-bust hashes + .gz variants"
 )
