@@ -19,6 +19,7 @@
 #include "truma_lin.hpp"
 #include "tankble.hpp"
 #include "multiplusble.hpp"
+#include "am2301.hpp"
 #include "flags.h"
 
 // LIN bus pins on the JC4880-P4 board — wired to connector J5.
@@ -26,6 +27,11 @@
 // J5 connector: ESP TX=GPIO27 (→ transceiver RXD), ESP RX=GPIO26 (← transceiver TXD).
 #define LIN_TX_PIN 27
 #define LIN_RX_PIN 26
+
+// AM2301 / DHT22 external (outdoor) temperature + humidity sensor DATA line.
+// Read via the RMT peripheral (see main/am2301.cpp); needs a pull-up on the
+// line (internal one enabled in am2301Start, plus the breakout's own 5.1 kΩ).
+#define AM2301_DATA_PIN GPIO_NUM_52
 #include "esp_hosted_host_fw_ver.h"
 extern "C" {
 #include "esp_hosted_misc.h"
@@ -209,6 +215,14 @@ static void onWsConnected() {
     snprintf(buf, sizeof(buf),
              "{\"command\":\"status\",\"id\":\"/linok\",\"value\":\"%d\"}",
              lin.linOk ? 1 : 0);
+    wsQueueSend(buf);
+
+    // AM2301 external sensor temperature.
+    Am2301Data am = am2301GetData();
+    char ot[16];
+    fmtTemp(am.valid ? am.tempC : NAN, ot, sizeof(ot));
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"status\",\"id\":\"/outdoor_temp\",\"value\":\"%s\"}", ot);
     wsQueueSend(buf);
 
     // Icon states (BLE + tunnel)
@@ -465,6 +479,19 @@ static void broadcastLinTemps() {
         emit("linok", lin.linOk ? "1" : "0");
     }
 
+    // AM2301 external sensor temperature (not LIN-derived, but shares this
+    // change-detected broadcast slot to reuse fmtTemp/tempChanged).
+    {
+        static float prevOutdoor = NAN;
+        Am2301Data   am = am2301GetData();
+        float        outdoor = am.valid ? am.tempC : NAN;
+        if (!inited || tempChanged(outdoor, prevOutdoor)) {
+            fmtTemp(outdoor, val, sizeof(val));
+            emit("outdoor_temp", val);
+            prevOutdoor = outdoor;
+        }
+    }
+
     prev = lin;
     inited = true;
 }
@@ -579,6 +606,11 @@ static void bootTask(void* /*arg*/) {
     // unavailable.  Commands: `wifi`, `victron`, `ultimatron`, `tunnel`,
     // `show`, `help`.
     cliStart();
+
+    // AM2301 / DHT22 external temperature sensor on GPIO52 (RMT-based reader,
+    // 30 s cadence).  Populates d.outdoorTemp in the main loop and broadcasts
+    // as the WS `outdoor_temp` status id.
+    am2301Start(AM2301_DATA_PIN);
 
     // LIN scheduler — emulates the CP-Plus D control unit on UART1.
     // Pinned to Core 0 (legacy convention: blocking serial off the LVGL core).
@@ -711,6 +743,10 @@ extern "C" void app_main(void)
         d.roomTemp  = lin.roomTemp;   // already NAN when no valid frame yet
         d.waterTemp = lin.waterTemp;
 
+        // AM2301 external sensor → outdoor temp (NAN until first valid read).
+        Am2301Data am = am2301GetData();
+        d.outdoorTemp = am.valid ? am.tempC : NAN;
+
         // Status line: switch to "No LIN bus" once we've given the bus a few
         // seconds to come up.  Mirrors the web UI's red "No LIN bus" message.
         // Only push on transitions so the slot remains free for ad-hoc messages.
@@ -718,8 +754,8 @@ extern "C" void app_main(void)
             static int  prevStatus = -1;   // -1=unknown, 0=ok/empty, 1=no-LIN
             int  newStatus = (iter >= 10 && !lin.linOk) ? 1 : 0;
             if (newStatus != prevStatus) {
-                if (newStatus == 1)      p4DisplaySetStatus(t(TK::STATUS_NO_LIN), true);
-                else if (prevStatus == 1) p4DisplaySetStatus("", false);
+                if (newStatus == 1)        p4DisplaySetStatus(t(TK::STATUS_NO_LIN), true);
+                else if (prevStatus != 0)  p4DisplaySetStatus("", false);  // clear boot "Iniciando…" / No-LIN
                 prevStatus = newStatus;
             }
         }

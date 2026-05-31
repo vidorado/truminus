@@ -41,7 +41,7 @@
 // #define LOG_MEM_ENABLED
 // #define LOG_LVGL_ENABLED
 // #define LOG_SNIFF_ENABLED
-// #define LOG_AM2301_ENABLED
+#define LOG_AM2301_ENABLED      // external AM2301/DHT22 — per-read temp/RH
 // #define LOG_CLI_ENABLED
 
 // ── 3. Runtime ESP_LOG levels per TAG ────────────────────────────────────

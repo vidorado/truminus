@@ -24,6 +24,7 @@ idf_component_register(
         "ultimatronble.cpp"
         "tankble.cpp"
         "multiplusble.cpp"
+        "am2301.cpp"
         "c6_ota.cpp"
         "p4_ota.cpp"
         "webserver.cpp"
@@ -43,6 +44,7 @@ idf_component_register(
         esp_netif
         esp_http_server
         esp_driver_uart
+        esp_driver_rmt
         console
         esp_driver_gpio
         esp_timer

@@ -123,6 +123,7 @@ Assets live in `data/` and are served from LittleFS (see §"Web assets are serve
 - **`serveFile()` buffer lives in PSRAM** (`heap_caps_malloc(MALLOC_CAP_SPIRAM)`), not on the httpd task stack.  The httpd stack is only 8 KB (`cfg.stack_size = 8192`); a 16 KB stack buffer would overflow it.  Always use PSRAM for large per-request allocations.
 - **Dead WS fds must be closed actively.**  `httpd_ws_send_frame_async` returning an error does **not** trigger `close_fn` — the socket stays open, occupying one of the limited slots (`MAX_OPEN_SOCKETS_WS=4` on the tunnel server).  The `wsReaper` task PINGs every 20 s and `wsQueueDrain` broadcasts to all fds; both now call `httpd_sess_trigger_close()` on failure, which invokes `close_fn` → decrements `wsClientCount` → frees the slot.  Without this, tunnel reconnects accumulate zombie fds until no browser can connect.
 - **`p4display.cpp::st` mutations need the LVGL lock.** The remote setters (`p4SetHeating`, `p4SetFanMode`, `p4SetBoilerMode`, `p4SetEnergyIdx`, `p4SetRoomSetpoint`, `p4SetScreenTimeoutIdx`) take `bsp_display_lock(50)`; the on-screen button callbacks already run on the LVGL task with the lock held. The diff-broadcast helper (`broadcastControlChanges` in `main.cpp`) reads `st` via `p4GetControlState` from the `wsPumpTask` *without* the lock — safe because each field is a plain int/bool/float, but don't introduce composite reads.
+- **RMT TX on an open-drain single-wire bus must idle *high*, or the bus is held low forever.** The single-wire AM2301/DHT22 reader (`main/am2301.cpp`) uses an RMT TX channel (start pulse) + RX channel (response) bound to the **same GPIO** (IDF 6.0 wires them in loopback automatically — no `io_loop_back` flag, and `io_od_mode` is gone too: call `gpio_od_enable()` after channel creation). The trap: a TX channel's idle/end-of-transmission level defaults to **0**, and on an open-drain line that is an *active* pull-low — so after the start pulse the bus stays at 0 V, the sensor never sees the release and never responds (symptom: `rx timeout`). Fix: `tx_cfg.flags.init_level = 1` **and** `rmt_transmit_config_t.flags.eot_level = 1` so the line idles released (high) through the pull-up. Also: `mem_block_symbols` must respect `SOC_RMT_MEM_WORDS_PER_CHANNEL` (**48** on the P4), and `signal_range_max_ns` must exceed your own start-low pulse (RX is armed first and captures it) while still ending the frame on the indefinite trailing high. The first read after power-up routinely fails while the sensor settles — retry, don't treat it as an error.
 
 ## Key Design Patterns
 
@@ -157,7 +158,7 @@ Writable setpoints: `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off
 
 ### Pin assignments (LIN / external sensor)
 
-LIN UART pins and the AM2301/DHT22 external temperature sensor pin live in `main/main.cpp`. On the JC4880-P4 board the LIN bus is wired to **connector J5 → TX=GPIO27 / RX=GPIO26 on UART_NUM_1 @ 9600 baud** (see `LIN_TX_PIN`/`LIN_RX_PIN` in `main/main.cpp` and `trumaLinStart()` in `main/truma_lin.cpp`). The LCD backlight is on GPIO23 (`CONFIG_BSP_JC4880P443C_LCD_BL_GPIO=23`), not GPIO27 as a previous draft of this document claimed. The AM2301/DHT pin is not yet assigned on the P4 board; the sensor task is dormant.
+LIN UART pins and the AM2301/DHT22 external temperature sensor pin live in `main/main.cpp`. On the JC4880-P4 board the LIN bus is wired to **connector J5 → TX=GPIO27 / RX=GPIO26 on UART_NUM_1 @ 9600 baud** (see `LIN_TX_PIN`/`LIN_RX_PIN` in `main/main.cpp` and `trumaLinStart()` in `main/truma_lin.cpp`). The LCD backlight is on GPIO23 (`CONFIG_BSP_JC4880P443C_LCD_BL_GPIO=23`), not GPIO27 as a previous draft of this document claimed. The AM2301/DHT22 external sensor DATA line is on **GPIO52** (`AM2301_DATA_PIN` in `main/main.cpp`), read by `main/am2301.cpp` via the RMT peripheral.
 
 ### LVGL / display library
 
@@ -165,7 +166,7 @@ Use the BSP's own `bsp_display_start()` + `esp_lvgl_port`. Do NOT pull `rzeldent
 
 ### External temperature sensor
 
-AM2301 (DHT22-compatible). Read every 30 s, broadcast to web clients as `outdoor_temp`. Currently not wired in `app_main` (see migration status note above).
+AM2301 (DHT22-compatible) on **GPIO52**, read every 30 s and broadcast to web clients as `outdoor_temp` (also shown on the LCD top bar). Implemented in `main/am2301.cpp` with the RMT peripheral: a TX channel drives the >=1 ms start-low pulse and an RX channel captures the 40-bit response, both bound to the same GPIO in open-drain loopback — so the timing-critical decode runs in hardware, with no interrupts-disabled critical section. Started from `bootTask` via `am2301Start()`. The first read after power-up usually fails (sensor settling) and is retried after 2.5 s; needs a line pull-up (the breakout's 5.1 kΩ; an internal one is enabled as backup).
 
 ---
 
