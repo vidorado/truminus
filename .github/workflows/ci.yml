@@ -50,9 +50,12 @@ jobs:
         uses: espressif/esp-idf-ci-action@v1
         env:
           IDF_CCACHE_ENABLE: "1"
-          CCACHE_DIR: /github/workspace/.ccache
           CCACHE_MAXSIZE: "500M"
         with:
           esp_idf_version: release-v6.0
           target: esp32p4
-          command: pip install littlefs-python && idf.py build && ccache -s
+          # This action mounts the repo at /app/<owner>/<repo>, not at
+          # /github/workspace, so CCACHE_DIR must be set inside the container
+          # to $PWD/.ccache (the mounted workspace) for actions/cache to find
+          # and persist it — a host-side ${{ github.workspace }} path is wrong.
+          command: export CCACHE_DIR="$PWD/.ccache" && pip install littlefs-python && idf.py build && ccache -s

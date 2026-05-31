@@ -55,9 +55,7 @@ jobs:
       - name: Build firmware (ESP-IDF v6.0, target esp32p4)
         uses: espressif/esp-idf-ci-action@v1
         env:
-          # Inside the container the workspace is mounted at /github/workspace.
           IDF_CCACHE_ENABLE: "1"
-          CCACHE_DIR: /github/workspace/.ccache
           CCACHE_MAXSIZE: "500M"
         with:
           esp_idf_version: release-v6.0
@@ -66,7 +64,10 @@ jobs:
           # the IDF container does not ship it.  The C6 co-processor binary is
           # not embedded here (it lives outside the repo) — the app builds fine
           # without it; self-OTA only updates the P4 application image.
-          command: pip install littlefs-python && idf.py build && ccache -s
+          # CCACHE_DIR must be set inside the container ($PWD/.ccache = the
+          # mounted /app/<owner>/<repo>) so actions/cache can persist it; the
+          # action does not mount the workspace at /github/workspace.
+          command: export CCACHE_DIR="$PWD/.ccache" && pip install littlefs-python && idf.py build && ccache -s
 
       - name: Attach truminus.bin to the Release
         uses: softprops/action-gh-release@v2
