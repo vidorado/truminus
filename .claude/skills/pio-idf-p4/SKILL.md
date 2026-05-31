@@ -290,3 +290,49 @@ Then `idf.py -p /dev/ttyACMx flash`. On WSL the P4 must be attached via
 failed flash can re-enumerate it. The P4's USB-Serial-JTAG re-enumerates on
 every reset, so a serial monitor drops on each OTA/rollback reboot (and
 holding the port from a monitor makes `esptool`/flash report the port busy).
+
+## 12. WiFi power save throttles *everything* — disable it
+
+The default `WIFI_PS_MIN_MODEM` sleeps the station between DTIM beacons and
+adds ~100 ms latency to every receive cycle. Symptoms: OTA downloads crawl at
+~30 KB/s, the web UI feels janky, the WSS tunnel is laggy — all the same root
+cause. This is a mains-powered controller, so `wifi_manager.cpp` calls
+`esp_wifi_set_ps(WIFI_PS_NONE)` right after `esp_wifi_start()` (proxied to the
+C6 via `esp_wifi_remote`). Big throughput + latency win. Don't re-enable PS
+unless the board ever goes battery-powered.
+
+## 13. LittleFS image rebuilds every cmake run; VSCode Flash button bypasses our args
+
+- `littlefs_create_partition_image()` rebuilds the bin on every cmake run —
+  CMake can't watch directory contents, so the helper uses
+  `add_custom_target ... ALL` with no input deps; the bin gets a fresh mtime
+  even when `data/` is identical. Mitigated by `--skip-flashed` (esptool
+  MD5-compare; baked into every flash target's `SUB_ARGS` in the root
+  `CMakeLists.txt`). Inputs are deterministic (`littlefs-python` + `mtime=0`
+  in `gen_gz.py`) so the comparison succeeds.
+- The VSCode IDF extension's **Flash button** hardcodes esptool args in
+  TypeScript, ignores `write_flash_args` in `flasher_args.json`, and offers no
+  setting for extra args — so it bypasses `--skip-flashed`. Work around with
+  `.vscode/tasks.json` tasks ("TruMinus: Flash"/"Flash + Monitor") that invoke
+  `idf.py flash` (which *does* honour our args); `VsCodeTaskButtons.tasks` in
+  `.vscode/settings.json` puts status-bar buttons next to them
+  (`spencerwmiles.vscode-task-buttons`). The tasks must source
+  `$IDF_PATH/export.sh` first because `idf.py` is not on PATH in a fresh shell.
+
+## 14. RMT on an open-drain single-wire bus must idle *high*
+
+The single-wire AM2301/DHT22 reader (`main/am2301.cpp`, DATA on GPIO52) uses an
+RMT TX channel (start pulse) + RX channel (response) bound to the **same GPIO**
+(IDF 6.0 wires them in loopback automatically — no `io_loop_back` flag, and
+`io_od_mode` is gone too: call `gpio_od_enable()` after channel creation). The
+trap: a TX channel's idle/end-of-transmission level defaults to **0**, and on an
+open-drain line that is an *active* pull-low — so after the start pulse the bus
+stays at 0 V, the sensor never sees the release and never responds (symptom:
+`rx timeout`). Fix: `tx_cfg.flags.init_level = 1` **and**
+`rmt_transmit_config_t.flags.eot_level = 1` so the line idles released (high)
+through the pull-up. Also: `mem_block_symbols` must respect
+`SOC_RMT_MEM_WORDS_PER_CHANNEL` (**48** on the P4), and `signal_range_max_ns`
+must exceed your own start-low pulse (RX is armed first and captures it) while
+still ending the frame on the indefinite trailing high. The first read after
+power-up routinely fails while the sensor settles — retry, don't treat it as an
+error.

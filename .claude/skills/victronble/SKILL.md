@@ -120,3 +120,10 @@ When `-DENABLE_BLE` is NOT defined, `victronble.cpp` compiles to stubs:
 
 **Memory pressure when NimBLE + WiFi coexist**
 → ESP32-P4 has 32 MB PSRAM, so this is much less of a concern than on the old C5 board, but: keep `LV_MEM_SIZE` reasonable, initialise BLE before WiFi if possible, and prefer running NimBLE on the C6 co-processor where available rather than on the P4 itself.
+
+**Symptom: discovery scan reports `count=0` every time**
+→ Cause: NimBLE 2.x `scan->start(duration, false)` is **non-blocking** — it
+returns once the GAP procedure is queued, so calling `cb(results, count)` right
+after gives 0.
+→ Fix: poll `scan->isScanning()` (with `vTaskDelay`) until the duration window
+elapses, then report. See `discovery_scan_task`.

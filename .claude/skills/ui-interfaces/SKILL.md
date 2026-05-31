@@ -83,7 +83,10 @@ All web controls send with a 300 ms debounce to avoid flooding the ESP32 with ra
 `boilerCb` forces `fan="off"` when the boiler is enabled from the LCD. `main.cpp` immediately overrides this back to "eco" if heating is on. It's a benign side effect that doesn't exist on the web path.
 
 ### Outdoor temperature
-The LCD has an AM2301/DHT22 sensor (pin TBD on the JC4880-P4 — confirm in `main/main.cpp`; on the previous C5 board it was GPIO17). Outdoor temperature is shown in the LCD top bar and broadcast to web clients as `{"command":"status","id":"outdoor_temp","value":"..."}`. Web clients display it but cannot read it independently.
+The LCD has an AM2301/DHT22 sensor on **GPIO52** (`AM2301_DATA_PIN` in `main/main.cpp`), read every 30 s via the RMT peripheral (`main/am2301.cpp`). Outdoor temperature is shown in the LCD top bar and broadcast to web clients as `{"command":"status","id":"outdoor_temp","value":"..."}`. Web clients display it but cannot read it independently.
+
+### LVGL lock for `p4display.cpp::st` mutations
+The remote setters (`p4SetHeating`, `p4SetFanMode`, `p4SetBoilerMode`, `p4SetEnergyIdx`, `p4SetRoomSetpoint`, `p4SetScreenTimeoutIdx`) take `bsp_display_lock(50)`; the on-screen button callbacks already run on the LVGL task with the lock held. The diff-broadcast helper (`broadcastControlChanges` in `main.cpp`) reads `st` via `p4GetControlState` from `wsPumpTask` *without* the lock — safe because each field is a plain int/bool/float, but don't introduce composite reads. Prefer a short lock timeout (e.g. 10 ms) over `portMAX_DELAY` to avoid deadlocks if the LVGL task is busy.
 
 ---
 

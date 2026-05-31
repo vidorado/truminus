@@ -272,3 +272,36 @@ we close a stranger's stream and the server double-deletes.
   re-introduces the connect-storm bug.
 - Don't extend `SEND_DATA_TICKS` back to 10 s. The pump task is
   single-threaded; longer timeouts cascade across the slot table.
+
+---
+
+## Local httpd / WS server gotchas (`webserver.cpp`)
+
+- **`esp_http_server` does not invoke the URI handler for the WS upgrade leg.**
+  The handshake is handled internally before any handler runs
+  (`components/esp_http_server/src/httpd_uri.c:362`: *"If the request is
+  websocket handshake, then do not call the uri->handler"*). `req->method`
+  stays `HTTP_GET` for every subsequent frame, so a
+  `if (req->method == HTTP_GET) handshake()` branch eats every frame without
+  reading it. Use `CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y` +
+  `ws_post_handshake_cb` to detect new clients; `close_fn` for disconnects.
+- **`httpd_get_client_list(handle, &fds, fds_array)` requires `fds_array` ≥
+  `max_open_sockets`** — otherwise it returns `ESP_ERR_INVALID_ARG` silently and
+  the WS broadcast loop sees zero clients. Use one `MAX_OPEN_SOCKETS` constant
+  for both `cfg.max_open_sockets` and the local `int fds[…]`.
+- **Do NOT set `Content-Length` when using `httpd_resp_send_chunk()`.** The two
+  are mutually exclusive in HTTP; sending both produces invalid HTTP that
+  confuses browsers and kills the tunnel (symptom: "502 Bad Gateway" +
+  `errno=128` in `wstunnel` logs). `serveFile()` uses chunked transfer with a
+  16 KB PSRAM buffer; the browser infers length from the final zero-length chunk.
+- **`serveFile()` buffer lives in PSRAM** (`heap_caps_malloc(MALLOC_CAP_SPIRAM)`),
+  not on the httpd task stack. The httpd stack is only 8 KB
+  (`cfg.stack_size = 8192`); a 16 KB stack buffer would overflow it. Always use
+  PSRAM for large per-request allocations.
+- **Dead WS fds must be closed actively.** `httpd_ws_send_frame_async` returning
+  an error does **not** trigger `close_fn` — the socket stays open, occupying
+  one of the limited slots. The `wsReaper` task PINGs every 20 s and
+  `wsQueueDrain` broadcasts to all fds; both call `httpd_sess_trigger_close()`
+  on failure, which invokes `close_fn` → decrements `wsClientCount` → frees the
+  slot. Without this, tunnel reconnects accumulate zombie fds until no browser
+  can connect.
