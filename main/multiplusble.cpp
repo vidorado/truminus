@@ -243,7 +243,11 @@ void multiplusBleHandleAd(const NimBLEAdvertisedDevice* dev) {
     if (devAddr != s_targetAddr) return;
 
     std::string mfrStr = dev->getManufacturerData();
-    if (mfrStr.size() < 26) return;       // 10 header + 16 cipher
+    // VE.Bus Instant Readout packs only 102 plaintext bits, so Victron sends
+    // just 13 cipher bytes → a 23-byte manufacturer field (10 header + 13
+    // cipher), NOT the 16-byte/26-byte cipher the Solar record uses.  The old
+    // `< 26` check silently dropped every real Multiplus advert.
+    if (mfrStr.size() < 23) return;       // 10 header + 13 cipher (102 bits)
     const uint8_t* mfr = (const uint8_t*)mfrStr.data();
 
     if (mfr[0] != 0xE1 || mfr[1] != 0x02) return;   // Victron company id
@@ -257,8 +261,13 @@ void multiplusBleHandleAd(const NimBLEAdvertisedDevice* dev) {
     uint16_t iv = (uint16_t)mfr[7] | ((uint16_t)mfr[8] << 8);
     if (s_haveLastIv && iv == s_lastIv) return;
 
+    // Decrypt only the cipher bytes actually present (13 for VE.Bus, up to 16).
+    // AES-CTR is a stream cipher so a partial block is fine; the unused tail of
+    // pt[] stays zero and the BitReader only consumes the 102 bits it needs.
+    int cipherLen = (int)mfrStr.size() - 10;
+    if (cipherLen > 16) cipherLen = 16;
     uint8_t pt[16] = {};
-    if (!aesCtrDecrypt(mfr + 10, 16, mfr[7], mfr[8], pt)) return;
+    if (!aesCtrDecrypt(mfr + 10, cipherLen, mfr[7], mfr[8], pt)) return;
 
     BitReader r(pt);
     uint8_t  ds  = (uint8_t)r.readU(8);

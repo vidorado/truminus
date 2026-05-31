@@ -61,6 +61,17 @@ static volatile bool s_supervisorInScan = false;
 static volatile bool s_nimbleUp         = false;
 static volatile bool s_discoveryRunning = false;
 
+// DIAGNOSTIC: log each DISTINCT advertiser MAC once (up to this many) so we
+// can see how many different devices the radio actually delivers — not 40
+// copies of the one aggressive advertiser.
+static char s_seenMacs[40][18];
+static int  s_seenCount = 0;
+
+// DIAGNOSTIC: total adverts seen in the current scan window (any device).
+// Plain (not volatile): written from the NimBLE host task during the scan,
+// read by the supervisor only after the window closes (s_supervisorInScan=0).
+static uint32_t s_scanAdvCount = 0;
+
 // ── Hex helpers ───────────────────────────────────────────────────────────
 static bool hexToBytes(const std::string& hex, uint8_t* out, int len) {
     if ((int)hex.size() < len * 2) return false;
@@ -144,6 +155,38 @@ static void parseMfrData(const uint8_t* mfr, int len) {
 // ── Victron scan callback (continuous monitoring) ─────────────────────────
 class VictronScanCb : public NimBLEScanCallbacks {
     void onResult(const NimBLEAdvertisedDevice* dev) override {
+        s_scanAdvCount++;   // diagnostic: count every advert this window
+
+        // DIAGNOSTIC (bounded, deduped): log each DISTINCT advertiser once so
+        // we can see how many different devices the radio delivers and whether
+        // any configured Victron/Ultimatron MAC is among them.
+        if (s_seenCount < (int)(sizeof(s_seenMacs) / sizeof(s_seenMacs[0]))) {
+            std::string mac = dev->getAddress().toString();
+            bool isNew = true;
+            for (int i = 0; i < s_seenCount; i++)
+                if (mac == s_seenMacs[i]) { isNew = false; break; }
+            if (isNew) {
+                strncpy(s_seenMacs[s_seenCount], mac.c_str(),
+                        sizeof(s_seenMacs[0]) - 1);
+                s_seenMacs[s_seenCount][sizeof(s_seenMacs[0]) - 1] = '\0';
+                s_seenCount++;
+                uint8_t b0 = 0, b1 = 0; unsigned mlen = 0;
+                if (dev->haveManufacturerData()) {
+                    const std::string& m = dev->getManufacturerData();
+                    mlen = (unsigned)m.size();
+                    if (m.size() >= 1) b0 = (uint8_t)m[0];
+                    if (m.size() >= 2) b1 = (uint8_t)m[1];
+                }
+                LOG_BLE_PF("[ble] NEW dev #%d mac=%s type=%d rssi=%d mfrlen=%u mfrid=%02X%02X\n",
+                           s_seenCount, mac.c_str(),
+                           (int)dev->getAddress().getType(),
+                           dev->getRSSI(), mlen, b1, b0);
+            }
+        }
+        // DIAGNOSTIC: feed the Ultimatron observer so we know whether the BMS
+        // is actually advertising before we sink 16 s into a blind connect.
+        ultimatronBleHandleAd(dev);
+
         // Diagnostic: log every advertisement that matches the target MAC so
         // we can tell "the device isn't advertising" from "it advertises but
         // without Victron manufacturer data".  Logged once per scan window
@@ -162,6 +205,19 @@ class VictronScanCb : public NimBLEScanCallbacks {
                            (unsigned)mfr.size(), b1, b0);
             } else {
                 LOG_BLE_PL("[ble] adv target — no manufacturer data");
+            }
+        }
+
+        // DIAGNOSTIC: log every Victron-branded advert (company id 0x02E1)
+        // with its MAC + record type, so we can see which Victron devices are
+        // actually in range and compare against the configured Solar/Multiplus
+        // MACs.  record byte: 0x01=SolarCharger, 0x0C=VE.Bus(Multiplus).
+        if (dev->haveManufacturerData()) {
+            const std::string& m = dev->getManufacturerData();
+            if (m.size() >= 7 && (uint8_t)m[0] == 0xE1 && (uint8_t)m[1] == 0x02) {
+                LOG_BLE_PF("[ble] victron dev=%s rec=0x%02X len=%u\n",
+                           dev->getAddress().toString().c_str(),
+                           (uint8_t)m[6], (unsigned)m.size());
             }
         }
 
@@ -311,6 +367,7 @@ static void bleSupervisorTask(void* /*arg*/) {
         constexpr uint32_t SCAN_MS = 5000;
         if ((s_configured || tankIsConfigured() || multiplusIsConfigured()) && s_bleScan) {
             s_bleScan->clearResults();
+            s_scanAdvCount = 0;   // diagnostic: reset per-window advert counter
             s_supervisorInScan = true;
             // NimBLE 2.x: start() is non-blocking — it returns once the GAP
             // procedure is queued, not when the duration elapses.  Wait for
@@ -329,6 +386,15 @@ static void bleSupervisorTask(void* /*arg*/) {
                 failCount++;
             }
             s_supervisorInScan = false;
+            // DIAGNOSTIC: one line per scan window — total adverts heard and
+            // how long ago (if ever) the Ultimatron MAC was seen advertising.
+            uint32_t ultSeen = ultimatronLastSeenMs();
+            LOG_BLE_PF("[ble-sup] scan done: adverts=%lu ult_last_seen=%s\n",
+                       (unsigned long)s_scanAdvCount,
+                       ultSeen ? "" : "never");
+            if (ultSeen)
+                LOG_BLE_PF("[ble-sup]   ult seen %lums ago\n",
+                           (unsigned long)(millis() - ultSeen));
         } else {
             // Nothing to scan — still pace the loop so Ultimatron polls at the
             // expected cadence.
@@ -336,7 +402,16 @@ static void bleSupervisorTask(void* /*arg*/) {
         }
 
         if (ultimatronIsConfigured() && (cycleCount % ULTIMATRON_EVERY_N) == 0) {
-            ultimatronPollOnce();
+            // Only attempt the GATT connect if the BMS was actually seen
+            // advertising in the last ~15 s.  A blind connect to a BMS that is
+            // asleep / out of range burns 3×5 s of connect timeout (~16 s) on
+            // the shared radio, starving the passive Victron/Multiplus scans.
+            uint32_t seen = ultimatronLastSeenMs();
+            if (seen && (millis() - seen) < 15000) {
+                ultimatronPollOnce();
+            } else {
+                LOG_BLE_PL("[ble-sup] skip ult poll — not advertising recently");
+            }
         }
         cycleCount++;
 

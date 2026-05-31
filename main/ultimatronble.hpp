@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <string>
 
+class NimBLEAdvertisedDevice;
+
 struct UltimatronData {
     uint8_t  soc;       // state of charge [%] 0-100
     float    battV;     // pack voltage [V]
@@ -22,6 +24,12 @@ bool           ultimatronIsConfigured();
 
 // Internal: called by bleSupervisorTask in victronble.cpp.
 bool ultimatronPollOnce();
+
+// DIAGNOSTIC: fed every advertisement by VictronScanCb so we can tell whether
+// the BMS is actually advertising (and thus whether a connect attempt is even
+// worth making).  Records the last-seen timestamp when the MAC matches.
+void     ultimatronBleHandleAd(const NimBLEAdvertisedDevice* dev);
+uint32_t ultimatronLastSeenMs();   // 0 = never seen this boot
 
 void ultimatronBleSuspend();
 void ultimatronBleResume();

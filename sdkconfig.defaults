@@ -124,6 +124,12 @@ CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_TRANSPORT_UART=n
 CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
 CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y
+# Scan extended (BLE 5) advertisements as well as legacy ones.  Modern Victron
+# devices advertise Instant Readout on extended adverts; a legacy-only scan
+# silently misses them (a phone sees them, the board does not).  EXT_ADV scan
+# is a superset — it still delivers legacy adverts.  Depends on the already-set
+# CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT.
+CONFIG_BT_NIMBLE_EXT_ADV=y
 
 # Web server: enable native WebSocket support in esp_http_server.
 CONFIG_HTTPD_WS_SUPPORT=y

@@ -43,6 +43,13 @@ static const char* TAG = "p4_ota";
 // Period between automatic version checks (after the boot check).
 static constexpr uint32_t CHECK_PERIOD_MS = 12 * 60 * 60 * 1000;  // 12 h
 
+// Delay before the *first* (boot) check.  The C6 shares one radio between WiFi
+// and BLE, so the HTTPS version check starves the BLE scan that brings up the
+// Victron/Ultimatron monitors.  Hold the boot check off until the BLE
+// supervisor (starts ~15 s in) has had a clean window to read present devices
+// and time out absent ones.
+static constexpr uint32_t INITIAL_CHECK_DELAY_MS = 60 * 1000;  // 60 s
+
 // ── Post-OTA self-test gating ───────────────────────────────────────────
 // Hard firmware-health gates (independent of the environment):
 // Steady-state free internal DRAM on this board sits around ~24 KB (WiFi via
@@ -482,8 +489,9 @@ void p4OtaInstall() {
 
 // ── Periodic check task ──────────────────────────────────────────────────
 static void check_task(void*) {
-    // Give WiFi a moment to associate before the first check.
-    vTaskDelay(pdMS_TO_TICKS(8000));
+    // Give WiFi a moment to associate, and let the BLE supervisor get a clean
+    // scan window first (shared radio — see INITIAL_CHECK_DELAY_MS).
+    vTaskDelay(pdMS_TO_TICKS(INITIAL_CHECK_DELAY_MS));
     for (;;) {
         bool manual = s_check_request.exchange(false);
         WifiStatus ws = wifi_manager_get_status();

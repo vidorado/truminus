@@ -7,6 +7,7 @@
 #include "esp_timer.h"
 #include <string.h>
 #include <algorithm>
+#include <cctype>
 
 static inline uint32_t millis() { return (uint32_t)(esp_timer_get_time() / 1000ULL); }
 
@@ -49,6 +50,10 @@ static SemaphoreHandle_t s_rxSem    = nullptr;
 static UltimatronData    s_data     = {};
 
 static volatile bool s_ultSuspended = false;
+
+// DIAGNOSTIC: last time the BMS MAC was seen in a scan window (0 = never).
+static volatile uint32_t s_lastSeenMs = 0;
+static volatile bool     s_everSeen   = false;
 
 static uint8_t  s_rxBuf[64] = {};
 static int      s_rxLen     = 0;
@@ -171,6 +176,22 @@ bool ultimatronPollOnce() {
     return got;
 }
 
+// ── Advertisement observer (diagnostic) ───────────────────────────────────
+void ultimatronBleHandleAd(const NimBLEAdvertisedDevice* dev) {
+    if (!s_configured || !dev) return;
+    std::string devAddr;
+    for (char c : dev->getAddress().toString())
+        if (c != ':') devAddr += (char)toupper((unsigned char)c);
+    if (devAddr != s_targetAddr) return;
+    s_lastSeenMs = millis();
+    if (!s_everSeen) {
+        s_everSeen = true;
+        LOG_ULT_PF("[ult] advert seen, target present rssi=%d\n", dev->getRSSI());
+    }
+}
+
+uint32_t ultimatronLastSeenMs() { return s_lastSeenMs; }
+
 // ── Public API ────────────────────────────────────────────────────────────
 bool ultimatronIsConfigured() {
 #ifdef ENABLE_SOLAR_DUMMY
@@ -186,7 +207,13 @@ static void load_config_internal() {
         s_configured = false;
         return;
     }
-    s_targetAddr  = addr;
+    // Normalise to uppercase, no separators, so the advert-observer's MAC
+    // compare (which uppercases the scanned address) matches regardless of how
+    // the address was stored.  NimBLEAddress/formatMac are case-insensitive, so
+    // the GATT connect path is unaffected.
+    s_targetAddr.clear();
+    for (char c : addr)
+        if (c != ':') s_targetAddr += (char)toupper((unsigned char)c);
     s_password    = pass;
     s_configured  = true;
     if (!s_dataMux) s_dataMux = xSemaphoreCreateMutex();
@@ -253,6 +280,8 @@ UltimatronData ultimatronGetData() {
 
 bool ultimatronIsConfigured() { return false; }
 bool ultimatronPollOnce()     { return false; }
+void ultimatronBleHandleAd(const NimBLEAdvertisedDevice*) {}
+uint32_t ultimatronLastSeenMs() { return 0; }
 void ultimatronBleSuspend()   {}
 void ultimatronBleResume()    {}
 bool ultimatronLoadConfig(std::string& addr, std::string& pass) { (void)addr; (void)pass; return false; }
