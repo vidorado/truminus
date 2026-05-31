@@ -16,7 +16,36 @@ Truma Combi D ←→ LIN transceiver ←→ ESP32 UART (9600 baud, UART_NUM_1)
 - LIN @ 9600 baud.
 - Master: TruMinus (ESP32-P4). Slave: Truma Combi D.
 - TruMinus emulates a CP Plus D (the original Truma wall control panel).
-- LIN UART pins live in `main/main.cpp`. They are still being finalised on the JC4880-P4 — always grep that file for the current TX/RX assignment. The previous C5 board used TX=GPIO5 / RX=GPIO4 (P5 LP-UART), which is NOT applicable here.
+- LIN UART pins live in `main/main.cpp` (`LIN_TX_PIN`/`LIN_RX_PIN`). On the JC4880-P4: TX=GPIO27, RX=GPIO26, UART_NUM_1. The previous C5 board used TX=GPIO5 / RX=GPIO4 (P5 LP-UART), which is NOT applicable here.
+
+### Transceiver hardware caveat (TJA1020) — both logic lines need external pull-ups
+
+The P4 board uses a **TJA1020** LIN transceiver. Two of its pins are NOT plain
+push-pull CMOS, so they need external pull-ups or **every received frame fails its
+checksum** (you read `0x00`/garbage even though the heater still reacts to writes —
+the slave reads our *dominant* bits fine, but our *recessive* bits never form):
+
+- **RXD** is **open-drain** → needs a pull-up to go HIGH.
+- **TXD** has only a weak **internal pull-down** (125–800 kΩ, datasheet), no
+  pull-up. The host must actively drive the recessive (HIGH) level. The P4 pad's
+  rising edge is too soft on its own, so recessive bits sag below `VIH = 2 V`.
+
+Fix (shipped on the hardware): a pull-up on **each** line — 4.7 kΩ to 5 V works
+(TX/RX pins are 5 V-tolerant, abs-max 7 V; only > 2 V is needed); 2.2–4.7 kΩ to
+3.3 V is cleaner and avoids over-driving the P4's non-5 V-tolerant GPIOs.
+
+Why the C5 never needed this: Arduino `HardwareSerial` drove TX hard push-pull and
+that board's wiring differed. The IDF `driver/uart.h` path on the P4 does not, and
+**forcing the pad push-pull via `gpio_set_direction()` breaks the UART matrix
+routing** (RX goes silent) — don't try it; it's a hardware pull-up, not a firmware
+fix. Diagnostic: scope TXD for a rounded (vs sharp) rising edge, or build with
+`-DLIN_SELFTEST` for a boot-time baud-sweep loopback dump. See README
+"Hardware: P4 ↔ Truma LIN wiring" and `main/lin_driver.cpp::ensureStarted()`.
+
+Also note `readFrame()` (`main/lin_driver.cpp`) does **not** rely on a fixed echo
+length: the half-baud break loops back as 1–2 bytes (non-deterministic on the IDF
+UART), so it scans for the `(0x55, PID)` header and reads `expectedLen` + checksum
+after it, ending on a bus-idle gap. A count-based parser truncated frames here.
 
 ### Bus cycle (~100 ms per iteration)
 

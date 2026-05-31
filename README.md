@@ -31,9 +31,48 @@ forwarding, no DDNS, just a domain you control.
 | **Connectivity** | WiFi + BLE 5 via co-processor ESP32-C6 (SDIO) |
 | **Upload** | USB-CDC on `/dev/ttyACM0` (no USB bridge needed) |
 
-LIN bus pins and the AM2301/DHT22 external temperature sensor pin are being
-finalised on the new board — always check `main/main.cpp` and `main/lin_driver.cpp`
-for current assignments rather than relying on this document.
+The AM2301/DHT22 external temperature sensor pin is still being finalised on the
+new board — check `main/main.cpp` for current assignments.
+
+### Hardware: P4 ↔ Truma LIN wiring
+
+TruMinus emulates the **CP-Plus D (the LIN bus master)** and talks to the Truma
+Combi D over a single-wire LIN bus through a **TJA1020 LIN transceiver** module.
+
+**ESP32-P4 ↔ transceiver (UART1 @ 9600 baud, 8N1):**
+
+| ESP32-P4 | Transceiver | Notes |
+|----------|-------------|-------|
+| GPIO27 (TX) | TXD | + **pull-up required** (see below) |
+| GPIO26 (RX) | RXD | open-drain output → + **pull-up required** |
+| GND | GND | must be common with battery − and Truma GND |
+
+(Pins are defined as `LIN_TX_PIN` / `LIN_RX_PIN` in `main/main.cpp`.)
+
+**Transceiver ↔ Truma / power:**
+
+- The TJA1020 is powered from **+12 V (battery positive)**, *not* from the Truma
+  connector. Only the **LIN** line and **GND** run to the Truma's CP-Plus port.
+- **All grounds must be common**: battery −, the P4 board GND, and the Truma GND.
+
+> [!IMPORTANT]
+> **Both logic lines need external pull-ups — this is not optional.**
+> - **RXD** is an **open-drain** output: without a pull-up it never goes HIGH.
+> - **TXD** has only a weak **internal pull-down** (125–800 kΩ, no pull-up), so
+>   the host alone must drive the recessive (HIGH) level. On the P4 the recessive
+>   edge rises too slowly without help: the recessive bits of our own transmission
+>   sag below the TXD threshold (`VIH = 2 V`) and **every received frame fails its
+>   checksum** (you read `0x00` / garbage even though the heater reacts to commands).
+>
+> Fit a pull-up on **each** line. **4.7 kΩ to 5 V works** (the TJA1020 TX/RX pins
+> are 5 V-tolerant — abs-max 7 V). **2.2–4.7 kΩ to 3.3 V is cleaner**: the
+> transceiver only needs > 2 V, and 3.3 V avoids over-driving the P4's
+> non-5 V-tolerant GPIOs (with a 5 V pull-up the pin's clamp diode holds it at
+> ~3.6 V — works, but slightly out of spec).
+>
+> Symptom if a pull-up is missing/weak: scope **TXD** — a *rounded* rising edge
+> (instead of a sharp one) means the recessive level is being starved. Build with
+> `-DLIN_SELFTEST` to dump a baud-sweep loopback test at boot for diagnosis.
 
 ---
 

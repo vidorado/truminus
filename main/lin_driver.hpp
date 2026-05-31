@@ -28,6 +28,10 @@ public:
     void writeCmdWakeup();
     void writeCmdSleep();
 
+    // One-shot diagnostic: transmits known patterns and dumps the half-duplex
+    // loopback echo, to separate "wrong RX baud/clock" from "break desync".
+    void selfTestLoopback();
+
     // Request frame from slave (master → slave request, slave → master response).
     // Returns true if a valid frame with correct checksum was received.
     bool readFrame(uint8_t frameId, uint8_t expectedLen = 0);

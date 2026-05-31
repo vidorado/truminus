@@ -312,6 +312,14 @@ void lin_task(void*) {
 void lin_task(void*) {
     ESP_LOGI(TAG, "LIN task running on core %d", xPortGetCoreID());
 
+#ifdef LIN_SELFTEST
+    // One-shot loopback diagnostic: sweeps baud rates transmitting 0x55 and
+    // dumps the half-duplex echo.  Use it to separate UART/baud problems from
+    // physical-layer ones (transceiver pull-ups, bus slew).  Build with
+    // -DLIN_SELFTEST to enable; off by default.
+    g_lin->selfTestLoopback();
+#endif
+
     // Wakeup pulse before the first transaction.  Matches the legacy driver:
     // writes a single 0x00 at half baud, then waits 150 ms.
     g_lin->writeCmdWakeup();

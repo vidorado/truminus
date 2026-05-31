@@ -46,6 +46,20 @@ void LinDriver::ensureStarted() {
     // transceiver's RXD output is ever tri-stated (e.g. boot, sleep
     // transitions).  uart_set_pin doesn't set pulls on its own.
     gpio_set_pull_mode((gpio_num_t)m_rxPin, GPIO_PULLUP_ONLY);
+
+    // TX drives the transceiver's TXD input.  The TJA1020 TXD pin has only a
+    // weak INTERNAL PULL-DOWN (125–800 kΩ, datasheet) and no pull-up, so the
+    // recessive (HIGH) level depends entirely on the host driving it up.  On
+    // the P4 the recessive edge rose slowly/rounded and the recessive bits of
+    // our own 0x55 sagged below the TXD threshold (VIH = 2 V) before the UART's
+    // mid-bit sample point → we read 0x00 and every frame failed its checksum.
+    // The fix is a HARDWARE PULL-UP on TXD (4.7 kΩ to 5 V works; ~2.2–4.7 kΩ to
+    // 3V3 is cleaner — only >2 V is needed and it avoids over-driving the P4
+    // pad).  See README "Hardware: P4 ↔ Truma LIN wiring".  We also crank the
+    // pad drive strength here (harmless; helps the rising edge a little).
+    // Forcing the pad push-pull via gpio_set_direction() is NOT a substitute —
+    // it breaks the UART matrix routing and RX goes silent.
+    gpio_set_drive_capability((gpio_num_t)m_txPin, GPIO_DRIVE_CAP_3);
     ESP_LOGI(TAG, "UART%d configured: TX=GPIO%d RX=GPIO%d @ %lu baud",
              (int)m_uart, m_txPin, m_rxPin, (unsigned long)m_baud);
     m_started = true;
@@ -68,6 +82,48 @@ void LinDriver::writeCmdSleep() {
     LinMessage[0] = 0;
     for (int i = 1; i <= 7; ++i) LinMessage[i] = 0xFF;
     writeFrame(0x3C, 8);
+}
+
+// ── Loopback self-test ─────────────────────────────────────────────────────
+//
+// Transmits known bytes and dumps the half-duplex echo so we can tell apart:
+//   * Test A (0x55 ×4, NO break)         — if echo == "55 55 55 55", the RX
+//     baud/clock and the transceiver loopback are fine.  If smeared, the
+//     UART baud or source clock is wrong.
+//   * Test B (break + 0x55 + 0x61 + data) — same header readFrame() sends.  If
+//     A is clean but B is smeared from the 0x55 on, the half-baud break leaves
+//     the UART desynced when we switch back to normal baud.
+static void dumpRx(const char* tag, const uint8_t* b, int n) {
+    char hex[3 * 32 + 1]; size_t off = 0;
+    for (int i = 0; i < n && i < 32; i++)
+        off += snprintf(hex + off, sizeof(hex) - off, "%02X ", b[i]);
+    ESP_LOGW(TAG, "selftest %s: echo[%d]=%s", tag, n, hex);
+}
+
+void LinDriver::selfTestLoopback() {
+    ensureStarted();
+    uint8_t rx[48];
+    uint8_t pat[4] = {0x55, 0x55, 0x55, 0x55};
+
+    // Baud sweep: transmit 0x55x4 at each rate and dump the half-duplex echo.
+    // 0x55 is the max-transition pattern, so the rate at which it loops back
+    // as a clean "55 55 55 55" reveals the true effective link baud:
+    //   * exactly one rate clean      → UART clock/baud was misconfigured
+    //   * none clean (lows less smeared as rate drops) → bus too slow for 9600
+    //     (LIN pull-up / transceiver Vsup / slew-rate — a hardware issue)
+    const uint32_t bauds[] = {2400, 4800, 9600, 19200, 38400};
+    for (uint32_t b : bauds) {
+        uart_set_baudrate(m_uart, b);
+        uart_flush_input(m_uart);
+        uart_write_bytes(m_uart, pat, 4);
+        uart_wait_tx_done(m_uart, pdMS_TO_TICKS(40));
+        delay_ms(40);
+        int n = 0;
+        while (n < (int)sizeof(rx) && uart_read_bytes(m_uart, &rx[n], 1, 0) == 1) n++;
+        char tag[24]; snprintf(tag, sizeof(tag), "0x55x4 @ %lu", (unsigned long)b);
+        dumpRx(tag, rx, n);
+    }
+    uart_set_baudrate(m_uart, m_baud);   // restore configured baud
 }
 
 // ── Internal frame helpers ────────────────────────────────────────────────
@@ -98,84 +154,72 @@ void LinDriver::startTransmission(uint8_t protectedId) {
 
 bool LinDriver::readFrame(uint8_t frameId, uint8_t expectedLen) {
     uint8_t protectedId = getProtectedId(frameId);
+
+    // Discard any stale RX (previous frame's TX echo / partials) so the only
+    // thing in the buffer is this transaction's echo + the slave response.
+    uart_flush_input(m_uart);
+
     startTransmission(protectedId);
     uart_wait_tx_done(m_uart, pdMS_TO_TICKS(20));
 
-    if (expectedLen > 0) {
-        // Wait up to 400 ms for expectedLen + echo bytes to arrive.
-        uint32_t t0 = millis_now();
-        while ((millis_now() - t0) < 400) {
-            size_t avail = 0;
-            uart_get_buffered_data_len(m_uart, &avail);
-            if (avail >= (size_t)(expectedLen + 4)) break;
-            vTaskDelay(1);
-        }
-    } else {
-        delay_ms(100);
-    }
+    if (expectedLen == 0) { delay_ms(100); return false; }
 
-    // Parse: skip break(0x00) + sync(0x55) + PID echo, then collect data.
-    int bytesReceived = -4;
-    size_t avail = 0;
-    uart_get_buffered_data_len(m_uart, &avail);
-
-    while (avail > 0 && bytesReceived < (8 + 1)) {
-        uint8_t b = 0;
-        if (uart_read_bytes(m_uart, &b, 1, 0) != 1) break;
-        rxBytesTotal++;
-        if (bytesReceived < 0) {
-            if (b == 0x00) { bytesReceived = -3; }
-            if (b == 0x55) { bytesReceived = -2; }
-            if (b == protectedId) { bytesReceived = -1; }
-        } else {
-            LinMessage[bytesReceived] = b;
-        }
-        bytesReceived++;
-        uart_get_buffered_data_len(m_uart, &avail);
-    }
-
-    if (bytesReceived <= 0) {
-        // Drain anything that did arrive into a scratch buffer so we can
-        // dump the raw bytes — helps diagnose "slave silent" vs "slave
-        // replied but our parser tossed it".  Rate-limited to one dump
-        // per ~3 s per FID to keep the monitor readable.
-        uint8_t leftover[24]; size_t n = 0;
-        while (n < sizeof(leftover) &&
-               uart_read_bytes(m_uart, &leftover[n], 1, 0) == 1) { n++; rxBytesTotal++; }
-        if (verboseMode > 0) {
-            static uint32_t lastLogMs[256] = {0};
-            uint32_t nowMs = millis_now();
-            if ((uint32_t)(nowMs - lastLogMs[frameId]) > 3000) {
-                lastLogMs[frameId] = nowMs;
-                if (n == 0) {
-                    ESP_LOGI(TAG, "FID %02X (PID %02X) — no bytes back", frameId, protectedId);
-                } else {
-                    char hex[3*24+1]; size_t off = 0;
-                    for (size_t i = 0; i < n; i++) off += snprintf(hex+off, sizeof(hex)-off, "%02X ", leftover[i]);
-                    ESP_LOGI(TAG, "FID %02X (PID %02X) — got %u bytes: %s",
-                             frameId, protectedId, (unsigned)n, hex);
-                }
+    // Collect raw bytes for up to 400 ms.  We can NOT use a fixed byte count
+    // to decide the frame is complete: the half-baud break (0x00 @ baud/2)
+    // loops back through the half-duplex transceiver and the IDF UART decodes
+    // it as 1 OR 2 bytes (framing error, non-deterministic), so the echo
+    // prefix length varies.  Instead we scan for the (0x55, PID) header — both
+    // are sent at normal baud and always arrive clean, regardless of break
+    // junk before them — and read exactly expectedLen data + 1 checksum after
+    // it, finishing early on a bus-idle gap.
+    uint8_t raw[48];
+    int rn = 0;
+    int dataStart = -1;            // index just past the (0x55, PID) header
+    uint32_t t0 = millis_now();
+    while ((millis_now() - t0) < 400) {
+        uint8_t b;
+        if (uart_read_bytes(m_uart, &b, 1, pdMS_TO_TICKS(5)) == 1) {
+            rxBytesTotal++;
+            if (rn < (int)sizeof(raw)) raw[rn++] = b;
+            if (dataStart < 0 && rn >= 2 &&
+                raw[rn - 2] == 0x55 && raw[rn - 1] == protectedId) {
+                dataStart = rn;
             }
+            // Stop as soon as we have the whole frame (data + checksum).
+            if (dataStart >= 0 && (rn - dataStart) >= (int)expectedLen + 1) break;
+        } else if (dataStart >= 0 && rn - dataStart >= 1) {
+            break;                 // idle gap after a partial response → done
         }
+    }
+
+    int got = (dataStart >= 0) ? (rn - dataStart) : -1;
+
+    auto diagDump = [&](const char* note) {
+        if (verboseMode <= 0) return;
+        static uint32_t lastLogMs[256] = {0};
+        uint32_t nowMs = millis_now();
+        if ((uint32_t)(nowMs - lastLogMs[frameId]) <= 1000) return;
+        lastLogMs[frameId] = nowMs;
+        char hex[3 * 48 + 1]; size_t off = 0; hex[0] = '\0';
+        for (int i = 0; i < rn; i++)
+            off += snprintf(hex + off, sizeof(hex) - off, "%02X ", raw[i]);
+        // DEBUG level: a silent slave (0x3D in idle) is normal, so don't spam
+        // INFO.  Raise the "lin" tag to DEBUG to see raw bytes + checksum.
+        ESP_LOGD(TAG, "FID %02X (PID %02X) %s raw[%d]=%s",
+                 frameId, protectedId, note, rn, hex);
+    };
+
+    if (got < (int)expectedLen + 1) {
+        // No header at all → slave silent; header but short → truncated reply.
+        diagDump(dataStart < 0 ? "no response" : "truncated");
         return false;
     }
 
-    uint8_t checksum = LinMessage[bytesReceived - 1];
-    bytesReceived--;
+    memcpy(LinMessage, raw + dataStart, expectedLen);
+    uint8_t checksum = raw[dataStart + expectedLen];
+    bool ok = (0xFF == (uint8_t)(checksum + ~getChecksum(protectedId, expectedLen)));
 
-    // Drain leftover bytes.
-    uint8_t discard;
-    while (uart_read_bytes(m_uart, &discard, 1, 0) == 1) {
-        rxBytesTotal++;
-        if (verboseMode > 0) ESP_LOGD(TAG, "extra byte discarded");
-    }
-
-    bool ok = (0xFF == (uint8_t)(checksum + ~getChecksum(protectedId, bytesReceived)));
-
-    if (verboseMode > 0) {
-        ESP_LOGD(TAG, " --->> FID %02Xh [%02X] rcv=%d%s",
-                 frameId, protectedId, bytesReceived, ok ? "" : " CHKFAIL");
-    }
+    if (verboseMode > 0 && !ok) diagDump("CHKFAIL");
     return ok;
 }
 
