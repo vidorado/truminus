@@ -53,9 +53,13 @@ static constexpr uint32_t CHECK_PERIOD_MS = 12 * 60 * 60 * 1000;  // 12 h
 static constexpr size_t   HEAP_FLOOR        = 12 * 1024;  // internal DRAM
 static constexpr int      HEAP_BREACH_LIMIT = 5;          // consecutive samples below floor → rollback
 static constexpr uint32_t BEAT_STALL_MS     = 20000;      // task considered dead
-// Validation timing:
-static constexpr uint32_t SELFTEST_FAST_MIN_MS = 90  * 1000;   // earliest validate
-static constexpr uint32_t SELFTEST_CEILING_MS  = 480 * 1000;   // validate regardless
+// Validation timing.  Kept just above the hard gates (heap 10 s, task-stall
+// 20 s) so a real failure still has time to trip before we validate — but far
+// below the old 90 s/8 min, which left the image PENDING_VERIFY (and the LCD
+// silent) for ages whenever the environment never came up (e.g. Combi off →
+// LIN never ready, the common case).
+static constexpr uint32_t SELFTEST_FAST_MIN_MS = 30 * 1000;   // earliest validate (env ready)
+static constexpr uint32_t SELFTEST_CEILING_MS  = 60 * 1000;   // validate regardless
 static constexpr uint32_t SELFTEST_SAMPLE_MS   = 2000;
 
 // ── Shared status ───────────────────────────────────────────────────────
@@ -567,10 +571,21 @@ static void selftest_task(void*) {
     };
 
     int heap_breach = 0;   // consecutive samples below the floor
+    uint32_t last_log_ms = now0;
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(SELFTEST_SAMPLE_MS));
         uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
+
+        // Liveness/progress log every ~15 s so the silent PENDING_VERIFY wait
+        // is visible and we can watch the real heap value while it runs.
+        if (now - last_log_ms >= 15000) {
+            last_log_ms = now;
+            ESP_LOGI(TAG, "self-test running %lus — free_int=%u, env_ready=%d",
+                     (unsigned long)((now - t0) / 1000),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                     (int)env_ready());
+        }
 
         // Hard gate 1: internal DRAM floor — must be *sustained*.  A single
         // dip is normal (e.g. the WSS tunnel's TLS handshake right after boot
