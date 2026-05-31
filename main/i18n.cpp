@@ -140,6 +140,7 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "M\xC3\xA1s tarde",                                              // OTA_LATER
     "Comprobaci\xC3\xB3n autom\xC3\xA1tica",                         // OTA_AUTOCHECK
     "\xC2\xBF" "Actualizar ahora?",                                  // OTA_PROMPT
+    "Error al actualizar",                                           // OTA_FAILED
 };
 
 static const char* EN_STRINGS[(int)TK::_COUNT] = {
@@ -275,6 +276,7 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Later",                                                         // OTA_LATER
     "Auto-check",                                                    // OTA_AUTOCHECK
     "Update now?",                                                   // OTA_PROMPT
+    "Update failed",                                                 // OTA_FAILED
 };
 
 const char* t(TK key) {

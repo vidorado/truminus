@@ -14,6 +14,7 @@
 #include "nvs.h"
 
 #include "p4display.hpp"
+#include "i18n.hpp"
 #include "webserver.hpp"
 #include "wstunnel.hpp"
 #include "wifi_manager.hpp"
@@ -390,8 +391,11 @@ fail:
     broadcast_status();
     // The running image is untouched by a failed download — return the LCD to
     // the normal UI rather than stranding it on the progress screen, and bring
-    // the tunnel back so the device stays reachable.
+    // the tunnel back so the device stays reachable.  Surface the failure on
+    // the status bar (red) so the user sees why we bounced back to the main
+    // screen instead of rebooting into a new image.
     p4DisplayHideOtaScreen();
+    p4DisplaySetStatus(t(TK::OTA_FAILED), true);
     wstunnelApply();
     vTaskDelete(nullptr);
 }

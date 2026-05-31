@@ -473,7 +473,8 @@ static void build_main_screen()
     ui.icon_ota = lv_label_create(topbar);
     lv_label_set_text(ui.icon_ota, FA_CLOUD_DL);
     lv_obj_set_style_text_font(ui.icon_ota, s_font_icons24, 0);
-    lv_obj_set_style_text_color(ui.icon_ota, C_BTN_ACTIVE, 0);
+    // White to stand apart from the blue/grey tunnel cloud icon next to it.
+    lv_obj_set_style_text_color(ui.icon_ota, C_TEXT, 0);
     lv_obj_align_to(ui.icon_ota, ui.icon_cloud, LV_ALIGN_OUT_LEFT_MID, -16, 0);
     lv_obj_add_flag(ui.icon_ota, LV_OBJ_FLAG_HIDDEN);
 
@@ -1495,10 +1496,10 @@ bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver)
     lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 4);
 
     lv_obj_t* title = lv_label_create(box);
-    lv_label_set_text(title, t(TK::OTA_PROMPT));
+    lv_label_set_text(title, t(TK::OTA_AVAILABLE));
     lv_obj_set_style_text_font(title, s_font_title ? s_font_title : s_font_24, 0);
     lv_obj_set_style_text_color(title, C_TEXT, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 52);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 50);
 
     char ver_buf[48];
     snprintf(ver_buf, sizeof(ver_buf), "v%s  ->  v%s",
@@ -1507,7 +1508,13 @@ bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver)
     lv_label_set_text(ver_lbl, ver_buf);
     lv_obj_set_style_text_font(ver_lbl, s_font_18, 0);
     lv_obj_set_style_text_color(ver_lbl, C_LABEL, 0);
-    lv_obj_align(ver_lbl, LV_ALIGN_TOP_MID, 0, 95);
+    lv_obj_align(ver_lbl, LV_ALIGN_TOP_MID, 0, 90);
+
+    lv_obj_t* prompt = lv_label_create(box);
+    lv_label_set_text(prompt, t(TK::OTA_PROMPT));
+    lv_obj_set_style_text_font(prompt, s_font_20, 0);
+    lv_obj_set_style_text_color(prompt, C_TEXT, 0);
+    lv_obj_align(prompt, LV_ALIGN_TOP_MID, 0, 122);
 
     lv_obj_t* btn_now = lv_button_create(box);
     lv_obj_set_size(btn_now, 200, 56);
