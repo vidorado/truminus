@@ -296,10 +296,17 @@ static void install_task(void*) {
     ESP_LOGI(TAG, "starting self-OTA from %s", url);
     p4DisplayShowOtaScreen(cur, latest);
 
-    // Free internal DRAM for the TLS handshake: tear the WSS tunnel down for
-    // the duration.  The reboot on success re-establishes it; on failure we
-    // re-apply the saved config below.
+    // Free up the radio + internal DRAM for the duration:
+    //  - Tear the WSS tunnel down (frees DRAM for the TLS handshake).
+    //  - Pause BLE so the C6 stops sharing airtime between WiFi and BLE —
+    //    coexistence on the single co-processor otherwise throttles the
+    //    download badly.  victronBleSuspend() also stops the tank/multiplus
+    //    scan (they piggyback on the same GAP scan).
+    // The reboot on success re-establishes everything; on failure we restore
+    // it below.
     wstunnelSuspend();
+    victronBleSuspend();
+    ultimatronBleSuspend();
     vTaskDelay(pdMS_TO_TICKS(500));
 
     esp_http_client_config_t http = {};
@@ -312,8 +319,9 @@ static void install_task(void*) {
     // The GitHub 302 points at a long AES-signed objects.githubusercontent.com
     // URL (X-Amz-… query) plus large response headers.  The default 1024 B
     // TX/RX buffers overflow on the redirected request → "HTTP_CLIENT: Out of
-    // buffer" and esp_https_ota_begin() fails.  Give it room.
-    http.buffer_size       = 4096;
+    // buffer" and esp_https_ota_begin() fails.  RX matches the 16 KB TLS
+    // record (MBEDTLS_SSL_IN_CONTENT_LEN) so each record is read in one go.
+    http.buffer_size       = 16384;
     http.buffer_size_tx    = 4096;
 
     esp_https_ota_config_t ota_cfg = {};
@@ -397,6 +405,8 @@ fail:
     p4DisplayHideOtaScreen();
     p4DisplaySetStatus(t(TK::OTA_FAILED), true);
     wstunnelApply();
+    victronBleResume();
+    ultimatronBleResume();
     vTaskDelete(nullptr);
 }
 
