@@ -73,7 +73,7 @@ jobs:
           # mounted /app/<owner>/<repo>) so actions/cache can persist it; the
           # action does not mount the workspace at /github/workspace.
           # CCACHE_BASEDIR normalises absolute paths for cross-run hits.
-          command: export CCACHE_DIR="$PWD/.ccache" CCACHE_BASEDIR="$PWD" && pip install littlefs-python && idf.py build && ccache -s
+          command: export CCACHE_DIR="$PWD/.ccache" CCACHE_BASEDIR="$PWD" && pip install littlefs-python && idf.py build && ccache -p && ccache -s -v
 
       - name: Attach truminus.bin to the Release
         uses: softprops/action-gh-release@v2

@@ -67,4 +67,4 @@ jobs:
           # and persist it — a host-side ${{ github.workspace }} path is wrong.
           # CCACHE_BASEDIR normalises absolute paths so objects hit regardless
           # of the (deterministic) mount path.
-          command: export CCACHE_DIR="$PWD/.ccache" CCACHE_BASEDIR="$PWD" && pip install littlefs-python && idf.py build && ccache -s
+          command: export CCACHE_DIR="$PWD/.ccache" CCACHE_BASEDIR="$PWD" && pip install littlefs-python && idf.py build && ccache -p && ccache -s -v
