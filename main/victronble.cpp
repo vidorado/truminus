@@ -309,8 +309,10 @@ static void discovery_scan_task(void* arg) {
     NimBLEScan* scan = NimBLEDevice::getScan();
     scan->setScanCallbacks(new DiscoveryScanCb(vo), true);
     scan->setActiveScan(true);
+    // Continuous scan (window == interval) — see bleSupervisorStart() for why the
+    // C6 coexistence path makes a 50% duty cycle lose advertisements.
     scan->setInterval(160);
-    scan->setWindow(80);
+    scan->setWindow(160);
     scan->setMaxResults(0);
     scan->clearResults();
     // NimBLE 2.x: start() is non-blocking and returns as soon as the GAP
@@ -511,8 +513,13 @@ void bleSupervisorStart() {
         s_bleScan = NimBLEDevice::getScan();
         s_bleScan->setScanCallbacks(new VictronScanCb(), true);
         s_bleScan->setActiveScan(true);
+        // Continuous scan (window == interval): on the JC4880P443C the BLE radio
+        // lives on the ESP32-C6 co-processor and time-shares a single RF front
+        // end with WiFi. A 50% scan duty cycle (window 80 / interval 160) plus
+        // WiFi coexistence left us missing many advertisements, so listen as much
+        // as the coex arbiter allows to recover effective RX range. Units = 0.625 ms.
         s_bleScan->setInterval(160);
-        s_bleScan->setWindow(80);
+        s_bleScan->setWindow(160);
         s_bleScan->setMaxResults(0);
     }
 
