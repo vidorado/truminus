@@ -110,15 +110,46 @@ static int cmd_wifi(int argc, char** argv) {
     return 0;
 }
 
+static void print_tunnel_state(const TunnelConfig& c) {
+    printf("tunnel: %s server=%s token=%s\n",
+           c.enabled ? "on" : "off",
+           c.server[0] ? c.server : "-",
+           c.token[0]  ? "set"    : "-");
+}
+
+static const char* TUNNEL_USAGE =
+    "usage: tunnel <on|off> | tunnel server <host|url> | tunnel token <secret|clear>\n";
+
 static int cmd_tunnel(int argc, char** argv) {
-    if (argc < 2) { printf("usage: tunnel <on|off>\n"); return 1; }
     TunnelConfig c{}; wstunnelLoadConfig(c);
-    if (strcasecmp(argv[1], "on") == 0) c.enabled = true;
-    else if (strcasecmp(argv[1], "off") == 0) c.enabled = false;
-    else { printf("usage: tunnel <on|off>\n"); return 1; }
+    // Bare "tunnel": report current config without touching it.
+    if (argc < 2) { print_tunnel_state(c); printf("%s", TUNNEL_USAGE); return 0; }
+
+    if (strcasecmp(argv[1], "on") == 0) {
+        c.enabled = true;
+    } else if (strcasecmp(argv[1], "off") == 0) {
+        c.enabled = false;
+    } else if (strcasecmp(argv[1], "server") == 0) {
+        if (argc < 3) { printf("%s", TUNNEL_USAGE); return 1; }
+        // Stored verbatim; wstunnel strips any wss://, ws:// or trailing path
+        // and owns the scheme/path itself, so a bare host is fine.
+        strncpy(c.server, argv[2], sizeof(c.server) - 1);
+        c.server[sizeof(c.server) - 1] = '\0';
+    } else if (strcasecmp(argv[1], "token") == 0) {
+        if (argc < 3) { printf("%s", TUNNEL_USAGE); return 1; }
+        if (strcasecmp(argv[2], "clear") == 0) {
+            c.token[0] = '\0';
+        } else {
+            strncpy(c.token, argv[2], sizeof(c.token) - 1);
+            c.token[sizeof(c.token) - 1] = '\0';
+        }
+    } else {
+        printf("%s", TUNNEL_USAGE);
+        return 1;
+    }
     wstunnelSaveConfig(c);
     wstunnelApply();
-    printf("tunnel: %s\n", c.enabled ? "enabled" : "disabled");
+    print_tunnel_state(c);
     return 0;
 }
 
@@ -252,7 +283,7 @@ void cliStart() {
     linenoiseSetDumbMode(1);
 
     esp_console_cmd_t c_wifi       = {}; c_wifi.command       = "wifi";       c_wifi.help       = "wifi <ssid> [pass]: connect + persist credentials"; c_wifi.func       = cmd_wifi;
-    esp_console_cmd_t c_tunnel     = {}; c_tunnel.command     = "tunnel";     c_tunnel.help     = "tunnel <on|off>: enable/disable WSS reverse tunnel"; c_tunnel.func     = cmd_tunnel;
+    esp_console_cmd_t c_tunnel     = {}; c_tunnel.command     = "tunnel";     c_tunnel.help     = "tunnel <on|off> | server <host> | token <secret|clear>: WSS reverse tunnel"; c_tunnel.func     = cmd_tunnel;
     esp_console_cmd_t c_victron    = {}; c_victron.command    = "victron";    c_victron.help    = "victron <mac> <key32hex>: set Victron BLE creds";    c_victron.func    = cmd_victron;
     esp_console_cmd_t c_ultimatron = {}; c_ultimatron.command = "ultimatron"; c_ultimatron.help = "ultimatron <mac> [pass]: set Ultimatron BLE creds"; c_ultimatron.func = cmd_ultimatron;
     esp_console_cmd_t c_tank       = {}; c_tank.command       = "tank";       c_tank.help       = "tank <mac>|clear: bind BTHome tank sensor MAC";   c_tank.func       = cmd_tank;
