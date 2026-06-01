@@ -946,7 +946,7 @@ bool wstunnelIsConnected() { return s_connected; }
 
 TunnelUiState wstunnelUiState() { return s_ui_state; }
 
-void wstunnelInit()
+void wstunnelInit(bool deferConnect)
 {
     static bool inited = false;
     if (inited) return;
@@ -993,7 +993,14 @@ void wstunnelInit()
     }
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (s_cfg.enabled) start_client_locked();
+    if (s_cfg.enabled && !deferConnect) {
+        start_client_locked();
+    } else if (s_cfg.enabled) {
+        // Deferred (post-OTA self-test): keep the icon "connecting" — the saved
+        // s_ui_state from above already reflects that — and wait for the OTA
+        // self-test to fire wstunnelApply() once the image is marked valid.
+        ESP_LOGI(TAG, "connect deferred until post-OTA self-test completes");
+    }
     xSemaphoreGive(s_lock);
 
     xTaskCreate(supervisor_task, "wstsup",  4096, nullptr, 4, nullptr);

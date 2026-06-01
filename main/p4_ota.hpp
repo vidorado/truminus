@@ -34,6 +34,12 @@ struct P4OtaStatus {
 // bootTask after WiFi has been started.
 void p4OtaStart();
 
+// True when the running image has not yet been validated (just OTA-flashed,
+// self-test pending).  bootTask uses it to defer heavy DRAM consumers (the WSS
+// tunnel) out of the self-test heap-floor window.  Safe to call before
+// p4OtaStart().
+bool p4OtaPendingVerify();
+
 // Thread-safe snapshot of the current OTA status.
 void p4OtaGetStatus(P4OtaStatus& out);
 

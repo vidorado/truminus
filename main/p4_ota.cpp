@@ -572,6 +572,13 @@ static void report_prior_rollback() {
     nvs_close(h);
 }
 
+bool p4OtaPendingVerify() {
+    const esp_partition_t* run = esp_ota_get_running_partition();
+    esp_ota_img_states_t st = ESP_OTA_IMG_UNDEFINED;
+    return run && esp_ota_get_state_partition(run, &st) == ESP_OK &&
+           st == ESP_OTA_IMG_PENDING_VERIFY;
+}
+
 static void selftest_task(void*) {
     const esp_partition_t* run = esp_ota_get_running_partition();
     esp_ota_img_states_t st = ESP_OTA_IMG_UNDEFINED;
@@ -603,19 +610,21 @@ static void selftest_task(void*) {
 
     int heap_breach = 0;   // consecutive samples below the floor
     uint32_t last_log_ms = now0;
+    size_t   min_free    = SIZE_MAX;   // lowest internal-DRAM sample seen
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(SELFTEST_SAMPLE_MS));
         uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
 
         // Liveness/progress log every ~15 s so the silent PENDING_VERIFY wait
-        // is visible and we can watch the real heap value while it runs.
+        // is visible and we can watch the real heap value while it runs.  The
+        // min watermark is the number that actually matters for the floor.
         if (now - last_log_ms >= 15000) {
             last_log_ms = now;
-            ESP_LOGI(TAG, "self-test running %lus — free_int=%u, env_ready=%d",
+            ESP_LOGI(TAG, "self-test running %lus — free_int=%u, min=%u, env_ready=%d",
                      (unsigned long)((now - t0) / 1000),
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-                     (int)env_ready());
+                     (unsigned)min_free, (int)env_ready());
         }
 
         // Hard gate 1: internal DRAM floor — must be *sustained*.  A single
@@ -623,6 +632,7 @@ static void selftest_task(void*) {
         // transiently needs internal DMA buffers); only a persistent breach
         // signals a real leak.  Require HEAP_BREACH_LIMIT consecutive samples.
         size_t free_int = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        if (free_int < min_free) min_free = free_int;
         if (free_int < HEAP_FLOOR) {
             if (++heap_breach >= HEAP_BREACH_LIMIT) rollback("heap floor breached");
         } else {
@@ -659,7 +669,17 @@ static void selftest_task(void*) {
     }
 
     esp_ota_mark_app_valid_cancel_rollback();
-    ESP_LOGI(TAG, "image marked valid — rollback cancelled");
+    ESP_LOGI(TAG, "image marked valid — rollback cancelled (min free_int during "
+                  "self-test was %u B, floor %u B)",
+             (unsigned)min_free, (unsigned)HEAP_FLOOR);
+
+    // The WSS tunnel was deferred for this PENDING_VERIFY boot (its TLS
+    // handshake is the heaviest internal-DRAM/SRAM consumer and, coinciding
+    // with WiFi/BLE bring-up, is what sustained the heap below the floor).
+    // Now the image is valid, so the handshake can no longer roll us back —
+    // bring the tunnel up.  No-op if the tunnel is disabled in NVS.
+    wstunnelApply();
+
     vTaskDelete(nullptr);
 }
 
