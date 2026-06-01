@@ -1,6 +1,8 @@
 #include "cli.hpp"
 #include "esp_console.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "linenoise/linenoise.h"
 #include "victronble.hpp"
 #include "ultimatronble.hpp"
@@ -9,9 +11,11 @@
 #include "wifi_manager.hpp"
 #include "wstunnel.hpp"
 #include "p4_ota.hpp"
+#include <algorithm>
 #include <strings.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <string>
 
@@ -138,6 +142,60 @@ static int cmd_ota(int argc, char** argv) {
     return 0;
 }
 
+// One-shot BLE scan: list every advertiser in range with its RSSI, strongest
+// first.  Reuses the discovery scanner (victron_only=false returns ALL
+// devices) and blocks the console task until the results arrive.
+struct ScanCtx {
+    SemaphoreHandle_t done;
+    BleDevice         devs[32];
+    int               count;
+};
+
+static void cmd_scan_cb(const BleDevice* devs, int count, void* user) {
+    auto* c = (ScanCtx*)user;
+    const int cap = (int)(sizeof(c->devs) / sizeof(c->devs[0]));
+    c->count = count > cap ? cap : count;
+    for (int i = 0; i < c->count; i++) c->devs[i] = devs[i];
+    xSemaphoreGive(c->done);
+}
+
+static int cmd_scan(int argc, char** argv) {
+    uint32_t dur_ms = 5000;
+    if (argc >= 2) {
+        int s = atoi(argv[1]);
+        if (s < 1 || s > 30) { printf("usage: scan [seconds 1..30]\n"); return 1; }
+        dur_ms = (uint32_t)s * 1000;
+    }
+    ScanCtx ctx = {};
+    ctx.done = xSemaphoreCreateBinary();
+    if (!ctx.done) { printf("scan: out of memory\n"); return 1; }
+
+    printf("scanning %u s...\n", (unsigned)(dur_ms / 1000));
+    bleDiscoveryScan(false, cmd_scan_cb, &ctx, dur_ms);
+
+    // Discovery may wait up to ~6 s for an in-progress supervisor scan first.
+    if (xSemaphoreTake(ctx.done, pdMS_TO_TICKS(dur_ms + 9000)) != pdTRUE) {
+        printf("scan: timed out (another scan in progress?)\n");
+        vSemaphoreDelete(ctx.done);
+        return 1;
+    }
+    vSemaphoreDelete(ctx.done);
+
+    std::sort(ctx.devs, ctx.devs + ctx.count,
+              [](const BleDevice& a, const BleDevice& b) { return a.rssi > b.rssi; });
+
+    printf("\n  RSSI  ADV  MAC           NAME\n");
+    printf("  ----  ---  ------------  ----------------------------\n");
+    for (int i = 0; i < ctx.count; i++) {
+        const BleDevice& d = ctx.devs[i];
+        printf("  %4d  %3u  %-12s  %s\n",
+               (int)d.rssi, (unsigned)d.seen, d.mac, d.name);
+    }
+    printf("%d device%s in range (ADV = adverts heard in %u s).\n",
+           ctx.count, ctx.count == 1 ? "" : "s", (unsigned)(dur_ms / 1000));
+    return 0;
+}
+
 static int cmd_show(int, char**) {
     TunnelConfig tc{}; wstunnelLoadConfig(tc);
     printf("tunnel:     %s server=%s\n",
@@ -200,6 +258,7 @@ void cliStart() {
     esp_console_cmd_t c_tank       = {}; c_tank.command       = "tank";       c_tank.help       = "tank <mac>|clear: bind BTHome tank sensor MAC";   c_tank.func       = cmd_tank;
     esp_console_cmd_t c_multiplus  = {}; c_multiplus.command  = "multiplus";  c_multiplus.help  = "multiplus <mac> <key32hex>|clear: VE.Bus dongle"; c_multiplus.func  = cmd_multiplus;
     esp_console_cmd_t c_ota        = {}; c_ota.command        = "ota";        c_ota.help        = "ota [check|install]: check for / install firmware update"; c_ota.func        = cmd_ota;
+    esp_console_cmd_t c_scan       = {}; c_scan.command       = "scan";       c_scan.help       = "scan [secs]: list BLE devices in range with RSSI";   c_scan.func       = cmd_scan;
     esp_console_cmd_t c_show       = {}; c_show.command       = "show";       c_show.help       = "show: print stored BLE config";                      c_show.func       = cmd_show;
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_wifi));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_tunnel));
@@ -208,6 +267,7 @@ void cliStart() {
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_tank));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_multiplus));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_ota));
+    ESP_ERROR_CHECK(esp_console_cmd_register(&c_scan));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_show));
     esp_console_register_help_command();
 

@@ -15,9 +15,11 @@ struct VictronData {
 
 // Discovered BLE device (used by one-shot settings scan).
 struct BleDevice {
-    char name[64];
-    char mac[13];        // "AABBCCDDEEFF\0"
-    bool is_victron;     // manufacturer ID matches Victron (0x02E1)
+    char    name[64];
+    char    mac[13];     // "AABBCCDDEEFF\0"
+    bool     is_victron; // manufacturer ID matches Victron (0x02E1)
+    int8_t   rssi;       // strongest advert RSSI [dBm] this scan (0 = unknown)
+    uint16_t seen;       // adverts heard this scan (reception-quality metric)
 };
 
 typedef void (*BleDiscoveryCb)(const BleDevice* devs, int count, void* user);

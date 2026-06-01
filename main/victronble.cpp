@@ -170,7 +170,8 @@ class VictronScanCb : public NimBLEScanCallbacks {
                         sizeof(s_seenMacs[0]) - 1);
                 s_seenMacs[s_seenCount][sizeof(s_seenMacs[0]) - 1] = '\0';
                 s_seenCount++;
-                uint8_t b0 = 0, b1 = 0; unsigned mlen = 0;
+                [[maybe_unused]] uint8_t b0 = 0, b1 = 0;
+                [[maybe_unused]] unsigned mlen = 0;
                 if (dev->haveManufacturerData()) {
                     const std::string& m = dev->getManufacturerData();
                     mlen = (unsigned)m.size();
@@ -199,8 +200,8 @@ class VictronScanCb : public NimBLEScanCallbacks {
         if (addrMatch) {
             if (dev->haveManufacturerData()) {
                 const std::string& mfr = dev->getManufacturerData();
-                uint8_t b0 = mfr.size() >= 1 ? (uint8_t)mfr[0] : 0;
-                uint8_t b1 = mfr.size() >= 2 ? (uint8_t)mfr[1] : 0;
+                [[maybe_unused]] uint8_t b0 = mfr.size() >= 1 ? (uint8_t)mfr[0] : 0;
+                [[maybe_unused]] uint8_t b1 = mfr.size() >= 2 ? (uint8_t)mfr[1] : 0;
                 LOG_BLE_PF("[ble] adv target mfr_len=%u mfr_id=%02X%02X\n",
                            (unsigned)mfr.size(), b1, b0);
             } else {
@@ -250,12 +251,18 @@ class DiscoveryScanCb : public NimBLEScanCallbacks {
 public:
     explicit DiscoveryScanCb(bool victronOnly) : _victronOnly(victronOnly) {}
     void onResult(const NimBLEAdvertisedDevice* dev) override {
-        if (s_discCount >= MAX_DISCOVERED) return;
         std::string mac = normaliseAddr(dev->getAddress().toString());
-        // Deduplicate
+        int8_t rssi = (int8_t)dev->getRSSI();
+        // Deduplicate — keep the strongest RSSI and count every advert heard
+        // (the count is a reception-quality metric: more adverts = better link).
         for (int i = 0; i < s_discCount; i++) {
-            if (mac == s_disc[i].mac) return;
+            if (mac == s_disc[i].mac) {
+                if (rssi > s_disc[i].rssi) s_disc[i].rssi = rssi;
+                if (s_disc[i].seen < 0xFFFF) s_disc[i].seen++;
+                return;
+            }
         }
+        if (s_discCount >= MAX_DISCOVERED) return;
         bool isVictron = false;
         if (dev->haveManufacturerData()) {
             const std::string& mfr = dev->getManufacturerData();
@@ -276,6 +283,8 @@ public:
         strncpy(d.mac, mac.c_str(), sizeof(d.mac) - 1);
         d.mac[sizeof(d.mac) - 1] = '\0';
         d.is_victron = isVictron;
+        d.rssi = rssi;
+        d.seen = 1;
     }
 };
 
@@ -314,6 +323,10 @@ static void discovery_scan_task(void* arg) {
     scan->setInterval(160);
     scan->setWindow(160);
     scan->setMaxResults(0);
+    // Count EVERY advert (no controller dedup) so BleDevice::seen reflects the
+    // true reception rate — the metric used to A/B reception tweaks. Restored
+    // to the default (filtered) below so the supervisor scan is unaffected.
+    scan->setDuplicateFilter(0);
     scan->clearResults();
     // NimBLE 2.x: start() is non-blocking and returns as soon as the GAP
     // procedure is queued. We need to wait for the duration window (during
@@ -326,6 +339,8 @@ static void discovery_scan_task(void* arg) {
         }
         if (scan->isScanning()) scan->stop();
     }
+
+    scan->setDuplicateFilter(1);   // restore default for the supervisor scan
 
     // Restore supervisor's scan callback (if configured).
     if (s_configured && s_bleScan) {
