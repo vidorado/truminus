@@ -78,7 +78,15 @@ signals** (IP, tunnel CONNECTED, fresh LIN frame, BLE advert):
   back after `HEAP_BREACH_LIMIT=5` consecutive 2 s samples below it, so a
   transient handshake dip doesn't false-trip. Steady-state free internal DRAM
   here is ~24 KB, so an earlier 24 KB floor rolled back a *healthy* image; the
-  floor must sit well below normal operation.
+  floor must sit well below normal operation. **`1.2.0` still rolled back on a
+  fully-provisioned board** (tunnel enabled + BLE configured) while passing on a
+  bare test bench: the boot-time *concurrent* DRAM peak — WSS tunnel TLS
+  handshake + Ultimatron GATT connect + WiFi bring-up all at once — sat below
+  the floor long enough to trip. The fix wasn't the floor value; it was
+  removing the tunnel from the critical window (see *Boot sequencing* below).
+  The self-test logs the **minimum** internal-DRAM watermark (`min=…`) every
+  ~15 s and on pass (`min free_int during self-test was N B, floor 12288 B`) —
+  that number, not a breach, is what tells you the real margin.
 - *Heartbeats* via `p4OtaBeat()` from the main loop / wsPump / LIN task; a task
   not beating for `BEAT_STALL_MS=20 s` rolls back. (Critical tasks must call
   `p4OtaBeat()` so the self-test can confirm liveness.)
@@ -93,6 +101,37 @@ signals** (IP, tunnel CONNECTED, fresh LIN frame, BLE advert):
   never ready). A ~15 s progress log shows elapsed / free heap / `env_ready`.
   The net is one-shot for the first ~minute; it does **not** guard a crash after
   validation.
+
+## Boot sequencing (PENDING_VERIFY only)
+
+The self-test floor is measured during the first ~minute, exactly when boot
+brings up everything at once. The heaviest internal-DRAM/SRAM consumer is the
+**WSS tunnel TLS handshake** (esp-aes DMA contexts must live in SRAM). So on a
+PENDING_VERIFY boot we **defer the tunnel**: `bootTask` calls
+`wstunnelInit(p4OtaPendingVerify())` — `deferConnect=true` sets up the task +
+event handlers but skips the handshake (icon stays CONNECTING). The self-test
+calls `wstunnelApply()` right after `esp_ota_mark_app_valid_cancel_rollback()`,
+so the handshake then runs **alone**, with WiFi/BLE already settled. Normal
+(already-validated) boots pass `deferConnect=false` and are unchanged.
+
+Side effect: with the tunnel deferred, `env_ready()` sees it CONNECTING (not
+CONNECTED), so the 30 s fast-pass can't fire — a PENDING_VERIFY boot validates
+at the **60 s ceiling**, then the tunnel comes up. Acceptable; the ceiling is
+the guarantee. If a board still rolls back with the tunnel deferred, the next
+suspect is the **Ultimatron GATT connect** — defer/suspend BLE similarly.
+
+## CI / release builds (one build per release)
+
+`.github/workflows/release.yml` builds on every `X.Y.Z` tag and is the **only**
+auto-running build. `ci.yml` is **`workflow_dispatch`-only**: it used to run on
+every push to master purely to warm the default-branch ccache, but the
+`commit + push master + push tag` flow then fired *two* builds for one commit.
+Releases are not forced cold by this: caches are scoped per ref and any ref can
+restore the **default-branch** cache, so `release.yml`'s `restore-keys:
+ccache-esp32p4-` still picks up the most recent surviving master cache (left by
+the last manual `ci` run) and stays ~1–2 min until GitHub evicts it (7 days
+idle / LRU past 10 GB). When a release goes cold, run `ci` manually once
+(Actions → ci → Run workflow on master) to refresh that cache.
 
 ## UI surfaces
 
