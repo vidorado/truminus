@@ -125,11 +125,16 @@ CONFIG_BT_NIMBLE_TRANSPORT_UART=n
 CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
 CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y
 # Scan extended (BLE 5) advertisements as well as legacy ones.  Modern Victron
-# devices advertise Instant Readout on extended adverts; a legacy-only scan
-# silently misses them (a phone sees them, the board does not).  EXT_ADV scan
-# is a superset — it still delivers legacy adverts.  Depends on the already-set
-# CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT.
+# devices (and BLE-5 phones) advertise on extended adverts; a legacy-only scan
+# silently misses them (a phone sees them, the board does not).  Three knobs,
+# all required — enabling EXT_ADV alone is NOT enough:
+#   EXT_ADV  — compile extended advertising/scanning support (5.0 feature).
+#   EXT_SCAN — actually scan for extended adverts (superset: still gets legacy).
+#   EVT_SIZE — HCI event buffer.  Extended-adv reports exceed the legacy 70 B
+#              and are truncated/dropped over the C6 VHCI transport otherwise.
 CONFIG_BT_NIMBLE_EXT_ADV=y
+CONFIG_BT_NIMBLE_EXT_SCAN=y
+CONFIG_BT_NIMBLE_TRANSPORT_EVT_SIZE=257
 
 # Web server: enable native WebSocket support in esp_http_server.
 CONFIG_HTTPD_WS_SUPPORT=y
