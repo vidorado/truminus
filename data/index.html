@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="TruMinus" />
 <link rel="manifest" href="/icons/site.webmanifest" />
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=1ec42c82">
+<link rel="stylesheet" href="styles.css?v=9a9b1526">
 </head>
 <body>
 
@@ -219,12 +219,30 @@
     <span id="deviceIp"  class="sb-ip"></span>
     <span id="error_line" class="err-txt"></span>
   </div>
-  <span class="footer-logo" aria-label="TruMinus">TruMinus</span>
+  <span class="footer-logo" aria-label="TruMinus" role="button" tabindex="0"
+        onclick="openAbout()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openAbout();}">TruMinus</span>
 </footer>
+
+<!-- ── About / manual OTA overlay ─────────────────────────────────────── -->
+<div id="about-modal" class="err-modal-overlay hidden" onclick="if(event.target===this)closeAbout()">
+  <div class="err-modal-box about-box">
+    <div class="about-title">TruMinus</div>
+    <div class="about-ver"><span data-i18n="ota_current">Version</span>:
+         v<span id="about-current">--</span></div>
+    <div id="about-latest" class="about-latest" hidden></div>
+    <div id="about-progress" class="about-progress" hidden></div>
+    <button id="about-check" class="err-modal-btn" onclick="otaCheck()"
+            data-i18n="ota_check">Check for updates</button>
+    <button id="about-install" class="err-modal-btn" onclick="otaInstall()"
+            data-i18n="ota_update" hidden>Update</button>
+    <button class="err-modal-btn" onclick="closeAbout()"
+            data-i18n="close">Close</button>
+  </div>
+</div>
 
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=ddd3f31a"></script>
-<script src="i18n.js?v=ad8541f1"></script>
-<script src="script.js?v=30c2f4c7"></script>
+<script src="i18n.js?v=a87446a0"></script>
+<script src="script.js?v=11c75101"></script>
 </body>
 </html>

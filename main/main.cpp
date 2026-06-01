@@ -139,6 +139,21 @@ static void onWsCommand(const char* id, const char* value) {
     }
 }
 
+// Build and queue the current OTA status frame.  Shared by the on-connect
+// snapshot and the live broadcaster so both emit an identical envelope.
+static void sendOtaFrame() {
+    P4OtaStatus ota;
+    p4OtaGetStatus(ota);
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"ota\",\"available\":%s,\"installing\":%s,"
+             "\"progress\":%d,\"current\":\"%s\",\"latest\":\"%s\",\"error\":\"%s\"}",
+             ota.available ? "true" : "false",
+             ota.installing ? "true" : "false",
+             ota.progress, ota.currentVer, ota.latestVer, ota.error);
+    wsQueueSend(buf);
+}
+
 // Browser just connected and sent "settings": push a snapshot of the
 // current control state so the page reflects the LCD without waiting for
 // the next user interaction.
@@ -261,15 +276,7 @@ static void onWsConnected() {
 
     // OTA status so the page can show an "update available" banner without
     // waiting for the next periodic check.
-    P4OtaStatus ota;
-    p4OtaGetStatus(ota);
-    snprintf(buf, sizeof(buf),
-             "{\"command\":\"ota\",\"available\":%s,\"installing\":%s,"
-             "\"progress\":%d,\"current\":\"%s\",\"latest\":\"%s\",\"error\":\"%s\"}",
-             ota.available ? "true" : "false",
-             ota.installing ? "true" : "false",
-             ota.progress, ota.currentVer, ota.latestVer, ota.error);
-    wsQueueSend(buf);
+    sendOtaFrame();
 }
 
 // ── Broadcast LCD-originated changes ─────────────────────────────────────
@@ -544,6 +551,28 @@ static void broadcastIconStates() {
     }
 }
 
+// Live-push OTA status when any user-visible field changes, so a manual
+// "Check" result and install progress stream without a reconnect.  Diffing
+// is mandatory: otherwise we'd queue an ota frame every 100 ms tick.
+static void broadcastOtaStatus() {
+    static P4OtaStatus prev;
+    static bool inited = false;
+
+    P4OtaStatus ota;
+    p4OtaGetStatus(ota);
+    bool changed = !inited
+                || ota.available  != prev.available
+                || ota.installing != prev.installing
+                || ota.progress   != prev.progress
+                || strcmp(ota.latestVer, prev.latestVer) != 0
+                || strcmp(ota.error,     prev.error)     != 0;
+    if (changed) {
+        sendOtaFrame();
+        prev = ota;
+        inited = true;
+    }
+}
+
 static void wsPumpTask(void* /*arg*/) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -556,6 +585,7 @@ static void wsPumpTask(void* /*arg*/) {
         broadcastMultiplusData();
         broadcastLinTemps();
         broadcastIconStates();
+        broadcastOtaStatus();
         wsQueueDrain();
         p4OtaBeat(P4OTA_BEAT_WEB);   // liveness for the post-OTA self-test
     }

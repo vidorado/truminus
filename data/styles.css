@@ -643,6 +643,28 @@ body {
 }
 .err-modal-btn:active { background: var(--heat-on); }
 
+/* ── About / manual OTA overlay ──────────────────────────────────────── */
+.footer-logo[role="button"] { cursor: pointer; }
+.about-box .about-title {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 1.35em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.about-ver {
+  font-size: .92em;
+  color: var(--txt);
+}
+.about-latest {
+  font-size: .92em;
+  font-weight: 700;
+  color: var(--ok);
+}
+.about-progress {
+  font-size: .92em;
+  color: var(--lbl);
+}
+
 /* ── Right panel: HOT WATER + SOLAR/BATTERY layout ───────────────────── */
 .panel-right {
   gap: 4px;

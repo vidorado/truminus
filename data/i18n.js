@@ -58,6 +58,11 @@ var LANG_STRINGS = {
         ota_updating: 'Updating…',
         ota_reboot:   'Rebooting…',
         ota_failed:   'Update failed',
+        ota_check:    'Check for updates',
+        ota_checking: 'Checking…',
+        ota_uptodate: 'Up to date',
+        ota_current:  'Version',
+        close:        'Close',
     },
     es: {
         solar:        'SOLAR',
@@ -116,6 +121,11 @@ var LANG_STRINGS = {
         ota_updating: 'Actualizando…',
         ota_reboot:   'Reiniciando…',
         ota_failed:   'Error al actualizar',
+        ota_check:    'Buscar actualizaciones',
+        ota_checking: 'Comprobando…',
+        ota_uptodate: 'Estás al día',
+        ota_current:  'Versión',
+        close:        'Cerrar',
     }
 };
 

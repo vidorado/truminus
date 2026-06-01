@@ -95,6 +95,10 @@ ws.onclose = function () {
 document.addEventListener('visibilitychange', function () {
     if (!document.hidden && ws.readyState === 1) ws.send('settings');
 });
+// Escape closes the About overlay.
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeAbout();
+});
 ws.onmessage = function (event) {
     var d = JSON.parse(event.data);
     if (!d.command) return;
@@ -161,7 +165,10 @@ function applyIcon(d) {
 // broadcast from main/p4_ota.cpp.  Shown only when an update is available or
 // an install is in progress; the button triggers /ota_install on the device.
 var s_otaInstalling = false;
+var s_ota = null;            // last OTA frame, for the About overlay
 function applyOta(d) {
+    s_ota = d;
+    updateAbout(d);
     var banner = document.getElementById('ota-banner');
     var msg    = document.getElementById('ota-msg');
     var btn    = document.getElementById('ota-btn');
@@ -205,6 +212,77 @@ function otaInstall() {
     var btn = document.getElementById('ota-btn');
     if (btn) { btn.disabled = true; btn.textContent = t('ota_updating'); }
     send('/ota_install', '1');
+}
+
+// ── About / manual OTA overlay ────────────────────────────────────────────
+// The footer logo opens this; it offers a manual "Check" and an "Install"
+// button for any newer release (including patch X.Y.Z, which raise no banner
+// nor LCD modal).  Live status arrives via the broadcast `ota` frame.
+function openAbout() {
+    var modal = document.getElementById('about-modal');
+    if (!modal) return;
+    updateAbout(s_ota);
+    modal.classList.remove('hidden');
+}
+
+function closeAbout() {
+    var modal = document.getElementById('about-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function otaCheck() {
+    var btn = document.getElementById('about-check');
+    if (btn) { btn.disabled = true; btn.textContent = t('ota_checking'); }
+    send('/ota_check', '1');
+}
+
+// Render the overlay from an OTA frame (or null before the first one).
+function updateAbout(d) {
+    var cur     = document.getElementById('about-current');
+    var latest  = document.getElementById('about-latest');
+    var prog    = document.getElementById('about-progress');
+    var check   = document.getElementById('about-check');
+    var install = document.getElementById('about-install');
+    if (!cur || !latest || !prog || !check || !install) return;
+
+    if (!d) { cur.textContent = '--'; return; }
+
+    cur.textContent = d.current || '?';
+
+    if (d.installing) {
+        var pct = (typeof d.progress === 'number') ? d.progress : 0;
+        prog.textContent = t('ota_updating') + ' ' + pct + '%' +
+                           (pct >= 100 ? ' — ' + t('ota_reboot') : '');
+        prog.hidden = false;
+        latest.hidden = true;
+        check.hidden = true;
+        install.hidden = true;
+        return;
+    }
+
+    prog.hidden = true;
+    check.hidden = false;
+    check.disabled = false;
+    check.textContent = t('ota_check');
+
+    if (d.error) {
+        latest.textContent = t('ota_failed') + ': ' + d.error;
+        latest.hidden = false;
+        install.hidden = true;
+        return;
+    }
+
+    if (d.available) {
+        latest.textContent = t('ota_available') + ': v' + (d.latest || '?');
+        latest.hidden = false;
+        install.hidden = false;
+        install.disabled = false;
+        install.textContent = t('ota_update');
+    } else {
+        latest.textContent = t('ota_uptodate');
+        latest.hidden = false;
+        install.hidden = true;
+    }
 }
 
 // ── Settings received from device ─────────────────────────────────────────
