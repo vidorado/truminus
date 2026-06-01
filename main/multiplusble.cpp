@@ -286,8 +286,10 @@ void multiplusBleHandleAd(const NimBLEAdvertisedDevice* dev) {
     d.error       = er;
     d.acInState   = ai;
     d.alarm       = al;
-    d.acInW       = rawInW;
-    d.acOutW      = rawOutW;
+    // 0x3FFFF is the 19-bit "not available" sentinel (inverter off / not
+    // reporting); keep it distinct from a real 0 W reading.
+    d.acInW       = (rawInW  == 0x3FFFF) ? MULTI_POWER_NA : rawInW;
+    d.acOutW      = (rawOutW == 0x3FFFF) ? MULTI_POWER_NA : rawOutW;
     d.battA       = (rawA == 0x7FFF)  ? 0.0f           : rawA * 0.1f;
     d.battV       = (rawV == 0x3FFF)  ? NAN            : rawV * 0.01f;
     d.battTempC   = (rawT == 0x7F)    ? (int8_t)-128   : (int8_t)((int)rawT - 40);

@@ -1,4 +1,5 @@
 #include "p4display.hpp"
+#include "multiplusble.hpp"   // MULTI_POWER_NA sentinel
 #include "p4settings.hpp"
 #include "p4_ota.hpp"
 #include "i18n.hpp"
@@ -101,7 +102,7 @@ static constexpr int AGUA_W  = 224;
 // Vertical bar dimensions
 static constexpr int TANK_W        = 64;
 static constexpr int TANK_H_WATER  = 118;
-static constexpr int TANK_H_BATT   = 101;
+static constexpr int TANK_H_BATT   = 60;   // shortened to fit the CARGA/DESCARGA port below
 
 // ── Colour palette (matches original CYD aesthetic) ───────────────────────────
 #define C_BG          lv_color_hex(0x1a1a2e)
@@ -182,6 +183,12 @@ static struct {
     lv_obj_t* lbl_solar_power;
     lv_obj_t* bar_batt;
     lv_obj_t* lbl_batt_soc;
+    // Battery power port (CARGA/DESCARGA) below the SOC bar + its flow line
+    lv_obj_t* box_bpwr;   lv_obj_t* hdr_bpwr;   lv_obj_t* hdr_bpwr_lbl;
+    lv_obj_t* lbl_bpwr_w;
+    lv_obj_t* flow_bpwr;       // vertical ghost line bar ↔ port
+    lv_obj_t* flow_bpwr_str;   // zebra overlay (animated when power flows)
+    int8_t    flow_bpwr_dir;   // 0=idle, +1=charging (up), -1=discharging (down)
 
     // AGUA LIMPIA panel (fresh-water tank, BTHome)
     lv_obj_t* bar_tank;
@@ -298,6 +305,59 @@ static lv_obj_t* make_label(lv_obj_t* parent, const char* text,
     lv_obj_set_style_text_color(l, color, 0);
     lv_obj_set_pos(l, x, y);
     return l;
+}
+
+// Rounded I/O port box: a coloured header strip over a body with a centred
+// value label.  Shared by the INVERSOR ports and the battery power port; the
+// caller recolours `head`/`box` and rewrites `head_lbl`/`val` at runtime.
+struct IoBoxOut { lv_obj_t* box; lv_obj_t* head; lv_obj_t* head_lbl; lv_obj_t* val; };
+static IoBoxOut make_io_box(lv_obj_t* parent, int x, int y, int w, int h,
+                            const char* hdr, int hdr_h = 22)
+{
+    // Wrapper with clip_corner provides the rounded outline shared by head
+    // (top corners) and box (bottom corners) — LVGL has no per-corner radius
+    // so we round the parent and let it clip.
+    lv_obj_t* wrap = lv_obj_create(parent);
+    lv_obj_set_pos(wrap, x, y - hdr_h);
+    lv_obj_set_size(wrap, w, hdr_h + h);
+    lv_obj_set_style_bg_opa(wrap, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(wrap, 0, 0);
+    lv_obj_set_style_radius(wrap, 5, 0);
+    lv_obj_set_style_pad_all(wrap, 0, 0);
+    lv_obj_set_style_clip_corner(wrap, true, 0);
+    lv_obj_clear_flag(wrap, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* head = lv_obj_create(wrap);
+    lv_obj_set_pos(head, 0, 0);
+    lv_obj_set_size(head, w, hdr_h);
+    lv_obj_set_style_bg_color(head, C_PORT_GREY_HDR, 0);
+    lv_obj_set_style_bg_opa(head, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(head, 0, 0);
+    lv_obj_set_style_radius(head, 0, 0);
+    lv_obj_set_style_pad_all(head, 0, 0);
+    lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* hl = lv_label_create(head);
+    lv_label_set_text(hl, hdr);
+    lv_obj_set_style_text_color(hl, C_TEXT, 0);
+    lv_obj_set_style_text_font(hl, s_font_14, 0);
+    lv_obj_center(hl);
+
+    lv_obj_t* box = lv_obj_create(wrap);
+    lv_obj_set_pos(box, 0, hdr_h);
+    lv_obj_set_size(box, w, h);
+    lv_obj_set_style_bg_color(box, C_PORT_GREY_BODY, 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(box, 0, 0);
+    lv_obj_set_style_radius(box, 0, 0);
+    lv_obj_set_style_pad_all(box, 0, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* v = lv_label_create(box);
+    lv_label_set_text(v, "--");
+    lv_obj_set_style_text_color(v, C_TEXT, 0);
+    lv_obj_set_style_text_font(v, s_font_20, 0);
+    lv_obj_center(v);
+    return {box, head, hl, v};
 }
 
 
@@ -637,7 +697,7 @@ static void build_main_screen()
     lv_obj_t* p_sol = make_section(scr, SOLAR_X, ROW2_Y, SOLAR_W, ROW2_H);
 
     static constexpr int BATT_X = 165;
-    static constexpr int BATT_Y = 58;
+    static constexpr int BATT_Y = 46;
     static constexpr int NUB_W  = 12, NUB_H = 7;
 
     make_label(p_sol, "SOLAR", s_font_title, C_DIM, 12, 12);
@@ -646,7 +706,7 @@ static void build_main_screen()
     lv_label_set_text(ui.lbl_batt_soc, "--%");
     lv_obj_set_style_text_font(ui.lbl_batt_soc, s_font_22, 0);
     lv_obj_set_style_text_color(ui.lbl_batt_soc, C_TEXT, 0);
-    lv_obj_set_pos(ui.lbl_batt_soc, BATT_X, 20);
+    lv_obj_set_pos(ui.lbl_batt_soc, BATT_X, 8);
     lv_obj_set_width(ui.lbl_batt_soc, TANK_W);
     lv_obj_set_style_text_align(ui.lbl_batt_soc, LV_TEXT_ALIGN_CENTER, 0);
 
@@ -682,6 +742,66 @@ static void build_main_screen()
     lv_obj_set_style_border_width(ui.bar_batt, 2, LV_PART_MAIN);
     lv_obj_set_style_pad_all(ui.bar_batt, 2, 0);
 
+    // ── Battery power port (CARGA / DESCARGA) ─────────────────────────────────
+    // Mirrors the web BATERÍA panel: a green/red port below the SOC bar whose
+    // header and body recolour with charge direction, fed by a vertical flow
+    // line that animates while power moves.  Driven by Ultimatron V × A.
+    constexpr int BFLOW_X = BATT_X + TANK_W / 2 - 3;   // centred under the bar
+    constexpr int BFLOW_Y = BATT_Y + TANK_H_BATT;      // bar bottom
+    constexpr int BFLOW_W = 6;
+    constexpr int BFLOW_H = 18;
+
+    ui.flow_bpwr = lv_obj_create(p_sol);
+    lv_obj_set_pos(ui.flow_bpwr, BFLOW_X, BFLOW_Y);
+    lv_obj_set_size(ui.flow_bpwr, BFLOW_W, BFLOW_H);
+    lv_obj_set_style_bg_color(ui.flow_bpwr, lv_color_hex(0xaed7f2), 0);
+    lv_obj_set_style_bg_opa(ui.flow_bpwr, LV_OPA_30, 0);
+    lv_obj_set_style_border_width(ui.flow_bpwr, 0, 0);
+    lv_obj_set_style_radius(ui.flow_bpwr, 0, 0);
+    lv_obj_set_style_pad_all(ui.flow_bpwr, 0, 0);
+    lv_obj_clear_flag(ui.flow_bpwr, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Stripe overlay — rows every 8 px (4 px stripe + 4 px gap); the timer
+    // below translates the container by phase to animate vertical motion.
+    ui.flow_bpwr_str = lv_obj_create(p_sol);
+    lv_obj_set_pos(ui.flow_bpwr_str, BFLOW_X, BFLOW_Y);
+    lv_obj_set_size(ui.flow_bpwr_str, BFLOW_W, BFLOW_H);
+    lv_obj_set_style_bg_opa(ui.flow_bpwr_str, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(ui.flow_bpwr_str, 0, 0);
+    lv_obj_set_style_pad_all(ui.flow_bpwr_str, 0, 0);
+    lv_obj_clear_flag(ui.flow_bpwr_str, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(ui.flow_bpwr_str, LV_OBJ_FLAG_HIDDEN);
+    for (int sy = -8; sy <= BFLOW_H; sy += 8) {
+        lv_obj_t* r = lv_obj_create(ui.flow_bpwr_str);
+        lv_obj_set_pos(r, 0, sy);
+        lv_obj_set_size(r, BFLOW_W, 4);
+        lv_obj_set_style_bg_color(r, lv_color_hex(0xaed7f2), 0);
+        lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(r, 0, 0);
+        lv_obj_set_style_radius(r, 0, 0);
+        lv_obj_set_style_pad_all(r, 0, 0);
+        lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE);
+    }
+
+    {
+        // Port spans 16 px wider than the bar so "DESCARGA" fits; stays
+        // centred on the bar (and thus on the flow line) above it.
+        auto r = make_io_box(p_sol, BATT_X - 8, 142, TANK_W + 16, 28,
+                             t(TK::BATT_CHARGE), 18);
+        ui.lbl_bpwr_w = r.val;
+        ui.box_bpwr = r.box; ui.hdr_bpwr = r.head; ui.hdr_bpwr_lbl = r.head_lbl;
+    }
+
+    // Vertical zebra driver: +dir = charging (stripes climb toward the bar),
+    // −dir = discharging (stripes fall toward the port).  60 ms × 8 phases.
+    lv_timer_create([](lv_timer_t*) {
+        if (!ui.flow_bpwr_str || ui.flow_bpwr_dir == 0) return;
+        static uint8_t phase = 0;
+        phase = (phase + 1) & 7;
+        lv_obj_set_style_translate_y(ui.flow_bpwr_str,
+            ui.flow_bpwr_dir > 0 ? -(int)phase : (int)phase, 0);
+    }, 60, NULL);
+
     // ── INVERSOR panel (Victron VE.Bus / Multiplus dongle) ───────────────────
     // Right slot of row 2 (283 × ROW2_H).  Layout copied from the EEZ
     // project: MAINS box on the left, Multiplus icon in the middle, LOAD
@@ -692,68 +812,18 @@ static void build_main_screen()
 
         make_label(p_inv, t(TK::INVERTER), s_font_title, C_DIM, 10, 12);
 
-        // ON / OFF placeholder buttons.  They render so the panel looks
-        struct IoBoxOut { lv_obj_t* box; lv_obj_t* head; lv_obj_t* head_lbl; lv_obj_t* val; };
-        auto make_io_box = [&](int x, int y, int w, int h,
-                               const char* hdr, int hdr_h = 22) -> IoBoxOut {
-            // Wrapper with clip_corner provides the rounded outline shared
-            // by head (top corners) and box (bottom corners) — LVGL has no
-            // per-corner radius so we round the parent and let it clip.
-            lv_obj_t* wrap = lv_obj_create(p_inv);
-            lv_obj_set_pos(wrap, x, y - hdr_h);
-            lv_obj_set_size(wrap, w, hdr_h + h);
-            lv_obj_set_style_bg_opa(wrap, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_border_width(wrap, 0, 0);
-            lv_obj_set_style_radius(wrap, 5, 0);
-            lv_obj_set_style_pad_all(wrap, 0, 0);
-            lv_obj_set_style_clip_corner(wrap, true, 0);
-            lv_obj_clear_flag(wrap, LV_OBJ_FLAG_SCROLLABLE);
-
-            lv_obj_t* head = lv_obj_create(wrap);
-            lv_obj_set_pos(head, 0, 0);
-            lv_obj_set_size(head, w, hdr_h);
-            lv_obj_set_style_bg_color(head, lv_color_hex(0x969ba3), 0);
-            lv_obj_set_style_bg_opa(head, LV_OPA_COVER, 0);
-            lv_obj_set_style_border_width(head, 0, 0);
-            lv_obj_set_style_radius(head, 0, 0);
-            lv_obj_set_style_pad_all(head, 0, 0);
-            lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_t* hl = lv_label_create(head);
-            lv_label_set_text(hl, hdr);
-            lv_obj_set_style_text_color(hl, C_TEXT, 0);
-            lv_obj_set_style_text_font(hl, s_font_14, 0);
-            lv_obj_center(hl);
-
-            lv_obj_t* box = lv_obj_create(wrap);
-            lv_obj_set_pos(box, 0, hdr_h);
-            lv_obj_set_size(box, w, h);
-            lv_obj_set_style_bg_color(box, lv_color_hex(0x6a727f), 0);
-            lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
-            lv_obj_set_style_border_width(box, 0, 0);
-            lv_obj_set_style_radius(box, 0, 0);
-            lv_obj_set_style_pad_all(box, 0, 0);
-            lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
-
-            lv_obj_t* v = lv_label_create(box);
-            lv_label_set_text(v, "--");
-            lv_obj_set_style_text_color(v, C_TEXT, 0);
-            lv_obj_set_style_text_font(v, s_font_20, 0);
-            lv_obj_center(v);
-            return {box, head, hl, v};
-        };
-
         {
-            auto r = make_io_box(15, 103, 95, 29, t(TK::INV_MAINS));
+            auto r = make_io_box(p_inv, 15, 103, 95, 29, t(TK::INV_MAINS));
             ui.lbl_inv_mains_w = r.val;
             ui.box_mains = r.box; ui.hdr_mains = r.head; ui.hdr_mains_lbl = r.head_lbl;
         }
         {
-            auto r = make_io_box(248, 56, 90, 29, t(TK::INV_LOADS));
+            auto r = make_io_box(p_inv, 248, 56, 90, 29, t(TK::INV_LOADS));
             ui.lbl_inv_load_w = r.val;
             ui.box_load = r.box; ui.hdr_load = r.head;
         }
         {
-            auto r = make_io_box(248, 120, 90, 29, "BAT.");
+            auto r = make_io_box(p_inv, 248, 120, 90, 29, "BAT.");
             ui.lbl_inv_batt_w = r.val;
             ui.box_batt = r.box; ui.hdr_batt = r.head; ui.hdr_batt_lbl = r.head_lbl;
         }
@@ -1694,9 +1764,38 @@ void p4DisplayUpdate(const P4DisplayData& d)
         lv_color_t bc = (soc < 20) ? C_RED : (soc < 50) ? C_AMBER_BAR : C_GREEN;
         lv_obj_set_style_bg_color(ui.bar_batt, bc, LV_PART_INDICATOR);
         lv_label_set_text_fmt(ui.lbl_batt_soc, "%d%%", soc);
+
+        // CARGA / DESCARGA port — same V×A > 0 = charging convention as the web.
+        int battW = (int)lroundf(d.batt.voltageV * d.batt.currentA);
+        lv_label_set_text_fmt(ui.lbl_bpwr_w, "%d W", abs(battW));
+        if (battW > 5) {
+            lv_obj_set_style_bg_color(ui.box_bpwr, C_PORT_GREEN_BODY, 0);
+            lv_obj_set_style_bg_color(ui.hdr_bpwr, C_PORT_GREEN_HDR, 0);
+            lv_label_set_text(ui.hdr_bpwr_lbl, t(TK::BATT_CHARGE));
+            ui.flow_bpwr_dir = 1;
+            lv_obj_clear_flag(ui.flow_bpwr_str, LV_OBJ_FLAG_HIDDEN);
+        } else if (battW < -5) {
+            lv_obj_set_style_bg_color(ui.box_bpwr, C_PORT_RED_BODY, 0);
+            lv_obj_set_style_bg_color(ui.hdr_bpwr, C_PORT_RED_HDR, 0);
+            lv_label_set_text(ui.hdr_bpwr_lbl, t(TK::BATT_DISCHARGE));
+            ui.flow_bpwr_dir = -1;
+            lv_obj_clear_flag(ui.flow_bpwr_str, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_set_style_bg_color(ui.box_bpwr, C_PORT_GREY_BODY, 0);
+            lv_obj_set_style_bg_color(ui.hdr_bpwr, C_PORT_GREY_HDR, 0);
+            lv_label_set_text(ui.hdr_bpwr_lbl, t(TK::BATT_CHARGE));
+            ui.flow_bpwr_dir = 0;
+            lv_obj_add_flag(ui.flow_bpwr_str, LV_OBJ_FLAG_HIDDEN);
+        }
     } else {
         lv_label_set_text(ui.lbl_batt_soc, "--%");
         lv_bar_set_value(ui.bar_batt, 0, LV_ANIM_OFF);
+        lv_label_set_text(ui.lbl_bpwr_w, "--");
+        lv_obj_set_style_bg_color(ui.box_bpwr, C_PORT_GREY_BODY, 0);
+        lv_obj_set_style_bg_color(ui.hdr_bpwr, C_PORT_GREY_HDR, 0);
+        lv_label_set_text(ui.hdr_bpwr_lbl, t(TK::BATT_CHARGE));
+        ui.flow_bpwr_dir = 0;
+        lv_obj_add_flag(ui.flow_bpwr_str, LV_OBJ_FLAG_HIDDEN);
     }
 
     // Multiplus / VE.Bus inverter — render mains / load / battery flow.
@@ -1709,9 +1808,15 @@ void p4DisplayUpdate(const P4DisplayData& d)
         };
         if (d.multi.valid) {
             lv_label_set_text(ui.lbl_inv_state, translate_multi_state(d.multi.deviceState));
-            snprintf(tb, sizeof(tb), "%d W", (int)d.multi.acInW);
+            // MULTI_POWER_NA = inverter off / not reporting → show "--" instead
+            // of a bogus number, and treat the port as idle below.
+            bool mainsNa = (d.multi.acInW  == MULTI_POWER_NA);
+            bool loadNa  = (d.multi.acOutW == MULTI_POWER_NA);
+            if (mainsNa) snprintf(tb, sizeof(tb), "--");
+            else         snprintf(tb, sizeof(tb), "%d W", (int)d.multi.acInW);
             lv_label_set_text(ui.lbl_inv_mains_w, tb);
-            snprintf(tb, sizeof(tb), "%d W", (int)d.multi.acOutW);
+            if (loadNa) snprintf(tb, sizeof(tb), "--");
+            else        snprintf(tb, sizeof(tb), "%d W", (int)d.multi.acOutW);
             lv_label_set_text(ui.lbl_inv_load_w, tb);
             int battW = (int)lroundf((std::isnan(d.multi.battV) ? 0.0f : d.multi.battV)
                                      * d.multi.battA);
@@ -1727,8 +1832,8 @@ void p4DisplayUpdate(const P4DisplayData& d)
                 if (dir != 0) lv_obj_clear_flag(stripes, LV_OBJ_FLAG_HIDDEN);
                 else          lv_obj_add_flag(stripes,   LV_OBJ_FLAG_HIDDEN);
             };
-            drive_flow(ui.flow_mains_str, &ui.flow_mains_dir, d.multi.acInW);
-            drive_flow(ui.flow_load_str,  &ui.flow_load_dir,  d.multi.acOutW);
+            drive_flow(ui.flow_mains_str, &ui.flow_mains_dir, mainsNa ? 0 : d.multi.acInW);
+            drive_flow(ui.flow_load_str,  &ui.flow_load_dir,  loadNa  ? 0 : d.multi.acOutW);
             drive_flow(ui.flow_batt_str,  &ui.flow_batt_dir,  battW);
 
             // RED: green when AC input connected (ac_in_state 0 or 1)
@@ -1740,7 +1845,7 @@ void p4DisplayUpdate(const P4DisplayData& d)
             else      lv_label_set_text(ui.hdr_mains_lbl, t(TK::INV_MAINS));
 
             // CARGA: red when delivering power, grey when idle
-            bool loadOn = abs(d.multi.acOutW) > 5;
+            bool loadOn = !loadNa && abs(d.multi.acOutW) > 5;
             set_port_color(ui.box_load, ui.hdr_load,
                            loadOn ? C_PORT_RED_BODY : C_PORT_GREY_BODY,
                            loadOn ? C_PORT_RED_HDR  : C_PORT_GREY_HDR);

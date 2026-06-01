@@ -44,6 +44,23 @@ extern "C" {
 
 static const char* TAG = "main";
 
+// Format a Multiplus AC power field for JSON: a plain integer, or "null"
+// when the value is the VE.Bus "not available" sentinel (inverter off / not
+// reporting), so the web UI shows no reading instead of a bogus number.
+static const char* multiPowerJson(int32_t w, char* buf, size_t n) {
+    if (w == MULTI_POWER_NA) return "null";
+    snprintf(buf, n, "%d", (int)w);
+    return buf;
+}
+
+// True when two AC power readings differ enough to rebroadcast.  Treats the
+// no-data sentinel as its own state and avoids the abs() overflow that
+// MULTI_POWER_NA (INT32_MIN) would cause in a plain delta.
+static bool multiPowerChanged(int32_t a, int32_t b) {
+    if (a == MULTI_POWER_NA || b == MULTI_POWER_NA) return a != b;
+    return abs(a - b) > 5;
+}
+
 // ── String ↔ int helpers for the wire protocol ───────────────────────────
 //
 // The web UI uses string values for fan/boiler ("eco"/"high"/"1".."10"/etc.);
@@ -178,14 +195,16 @@ static void onWsConnected() {
     wsQueueSend(buf);
 
     MultiplusData mp = multiplusGetData();
+    char mpInW[12], mpOutW[12];
     snprintf(buf, sizeof(buf),
              "{\"command\":\"multi\",\"valid\":%s,\"state\":%u,"
-             "\"ac_in_w\":%d,\"ac_out_w\":%d,"
+             "\"ac_in_w\":%s,\"ac_out_w\":%s,"
              "\"batt_v\":%.2f,\"batt_a\":%.1f,"
              "\"ac_in_state\":%u,\"alarm\":%u,\"soc\":%u}",
              mp.valid ? "true" : "false",
              (unsigned)mp.deviceState,
-             (int)mp.acInW, (int)mp.acOutW,
+             multiPowerJson(mp.acInW, mpInW, sizeof(mpInW)),
+             multiPowerJson(mp.acOutW, mpOutW, sizeof(mpOutW)),
              std::isnan(mp.battV) ? 0.0 : mp.battV, mp.battA,
              (unsigned)mp.acInState, (unsigned)mp.alarm,
              (unsigned)mp.soc);
@@ -382,21 +401,23 @@ static void broadcastMultiplusData() {
                    || (m.valid && (m.deviceState != prev.deviceState
                                    || m.alarm       != prev.alarm
                                    || m.acInState   != prev.acInState
-                                   || abs(m.acInW  - prev.acInW)  > 5
-                                   || abs(m.acOutW - prev.acOutW) > 5
+                                   || multiPowerChanged(m.acInW,  prev.acInW)
+                                   || multiPowerChanged(m.acOutW, prev.acOutW)
                                    || (!std::isnan(m.battV) &&
                                        fabsf(m.battV - prev.battV) > 0.05f)
                                    || fabsf(m.battA - prev.battA) > 0.1f
                                    || m.soc         != prev.soc));
     if (!changed) return;
+    char mInW[12], mOutW[12];
     snprintf(buf, sizeof(buf),
              "{\"command\":\"multi\",\"valid\":%s,\"state\":%u,"
-             "\"ac_in_w\":%d,\"ac_out_w\":%d,"
+             "\"ac_in_w\":%s,\"ac_out_w\":%s,"
              "\"batt_v\":%.2f,\"batt_a\":%.1f,"
              "\"ac_in_state\":%u,\"alarm\":%u,\"soc\":%u}",
              m.valid ? "true" : "false",
              (unsigned)m.deviceState,
-             (int)m.acInW, (int)m.acOutW,
+             multiPowerJson(m.acInW, mInW, sizeof(mInW)),
+             multiPowerJson(m.acOutW, mOutW, sizeof(mOutW)),
              std::isnan(m.battV) ? 0.0 : m.battV, m.battA,
              (unsigned)m.acInState, (unsigned)m.alarm,
              (unsigned)m.soc);
@@ -713,6 +734,7 @@ extern "C" void app_main(void)
             d.batt.valid    = true;
             d.batt.soc      = (int)ud.soc;
             d.batt.voltageV = ud.battV;
+            d.batt.currentA = ud.battA;
         } else {
             d.batt.valid = false;
         }
