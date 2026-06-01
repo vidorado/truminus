@@ -84,9 +84,12 @@ signals** (IP, tunnel CONNECTED, fresh LIN frame, BLE advert):
   handshake + Ultimatron GATT connect + WiFi bring-up all at once — sat below
   the floor long enough to trip. The fix wasn't the floor value; it was
   removing the tunnel from the critical window (see *Boot sequencing* below).
-  The self-test logs the **minimum** internal-DRAM watermark (`min=…`) every
-  ~15 s and on pass (`min free_int during self-test was N B, floor 12288 B`) —
-  that number, not a breach, is what tells you the real margin.
+  `1.2.1` validated cleanly on the real board with **min=22 KB** — i.e. with
+  the tunnel deferred the worst dip sits near the ~24 KB steady-state, ~10 KB
+  above the floor. The self-test logs that **minimum** internal-DRAM watermark
+  (`min=…`) every ~15 s and on pass (`min free_int during self-test was N B,
+  floor 12288 B`) — that number, not a breach, is what tells you the real
+  margin.
 - *Heartbeats* via `p4OtaBeat()` from the main loop / wsPump / LIN task; a task
   not beating for `BEAT_STALL_MS=20 s` rolls back. (Critical tasks must call
   `p4OtaBeat()` so the self-test can confirm liveness.)
