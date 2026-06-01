@@ -3,6 +3,10 @@
 Technical reference for the Victron Solar Charger Instant Readout protocol over BLE.
 Everything below was confirmed by capturing real packets from device `D8AC8D2C49FA` with key `67c338518c8cadb1d4c141a9771eb672`.
 
+> BLE **reception** problems (weak/missing adverts, extended-advertising, the
+> `scan` CLI diagnostic, C6 antenna/coexistence) live in the `pio-idf-p4` skill
+> §15 + §3, not here — this file is the byte-level protocol only.
+
 ---
 
 ## Two advertisement types (same company ID 0x02E1)

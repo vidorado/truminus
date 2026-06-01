@@ -101,11 +101,16 @@ void wifi_manager_start(void) {
 
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    // Disable WiFi power save (default is WIFI_PS_MIN_MODEM, which sleeps
-    // between DTIM beacons).  This is a mains-powered controller, and modem
-    // sleep throttled bulk transfers badly — OTA downloads crawled at ~30 KB/s.
-    // PS_NONE keeps the radio awake → much higher throughput and lower latency
-    // for OTA, the web UI and the WSS tunnel.  Proxied to the C6 via esp_wifi_remote.
+    // Keep the WiFi radio always awake (no modem sleep).  Two reasons, both
+    // measured on this C6/esp_hosted board:
+    //   1. Throughput/latency: MIN_MODEM throttled bulk transfers badly
+    //      (OTA crawled at ~30 KB/s), web UI janky, tunnel laggy.
+    //   2. BLE coexistence: counter-intuitively, MIN_MODEM made BLE RX *worse*
+    //      — a phone advert visible at point-blank under PS_NONE vanished
+    //      entirely under MIN_MODEM.  On this shared front end, modem sleep
+    //      disrupts the BLE scan windows rather than freeing airtime for them.
+    // So PS_NONE wins for both WiFi throughput AND BLE.  Don't switch to
+    // MIN_MODEM expecting a BLE win — it's the opposite here.
     esp_err_t ps = esp_wifi_set_ps(WIFI_PS_NONE);
     if (ps != ESP_OK) ESP_LOGW(TAG, "esp_wifi_set_ps(NONE) failed: %s", esp_err_to_name(ps));
 

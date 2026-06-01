@@ -53,6 +53,12 @@ There is now a single `sdkconfig` (project root), used by `idf.py`. The
 
 Project-specific overrides are in `sdkconfig.defaults`:
 - `CONFIG_HTTPD_WS_SUPPORT=y` — required for the WebSocket server.
+- Extended-advertising **reception** needs three NimBLE knobs, not just
+  `CONFIG_BT_NIMBLE_EXT_ADV=y` (that only compiles the feature):
+  `CONFIG_BT_NIMBLE_EXT_SCAN=y` (actually scan for ext adverts) **and**
+  `CONFIG_BT_NIMBLE_TRANSPORT_EVT_SIZE=257` (the legacy 70 B truncates ext-adv
+  HCI reports over the C6 VHCI → they're dropped). The build prints an `info:`
+  warning when these are stale vs Kconfig. See §15.
 
 If you need to change `sdkconfig`: run `idf.py menuconfig`, or edit
 `sdkconfig.defaults` for options that should be preserved across `fullclean`.
@@ -296,10 +302,17 @@ holding the port from a monitor makes `esptool`/flash report the port busy).
 The default `WIFI_PS_MIN_MODEM` sleeps the station between DTIM beacons and
 adds ~100 ms latency to every receive cycle. Symptoms: OTA downloads crawl at
 ~30 KB/s, the web UI feels janky, the WSS tunnel is laggy — all the same root
-cause. This is a mains-powered controller, so `wifi_manager.cpp` calls
-`esp_wifi_set_ps(WIFI_PS_NONE)` right after `esp_wifi_start()` (proxied to the
-C6 via `esp_wifi_remote`). Big throughput + latency win. Don't re-enable PS
-unless the board ever goes battery-powered.
+cause. This is a mains-powered controller, so `wifi_manager.cpp` sets the PS
+mode right after `esp_wifi_start()` (proxied to the C6 via `esp_wifi_remote`).
+
+**BLE coexistence — `MIN_MODEM` makes BLE *worse*, not better (measured
+2026-06):** intuition says modem sleep frees airtime for the shared BLE radio,
+so it should help reception. It does the opposite here — a phone advert visible
+at point-blank under `PS_NONE` vanished entirely under `MIN_MODEM`. On this
+C6/esp_hosted shared front end, modem sleep disrupts the BLE scan windows. So
+`PS_NONE` wins for **both** WiFi throughput and BLE; keep it. The BLE-reception
+problem is sensitivity/antenna (§15), not power-save tuning — don't reach for
+`MIN_MODEM` here.
 
 ## 13. LittleFS image rebuilds every cmake run; VSCode Flash button bypasses our args
 
@@ -336,3 +349,42 @@ must exceed your own start-low pulse (RX is armed first and captures it) while
 still ending the frame on the indefinite trailing high. The first read after
 power-up routinely fails while the sensor settles — retry, don't treat it as an
 error.
+
+## 15. BLE reception on the C6 — sensitivity, ext-adv, `scan` tool
+
+BLE runs on the **ESP32-C6 co-processor** over SDIO (the P4 has no radio); it
+time-shares one RF front end with WiFi. Field symptom: weak/flaky reception of
+the Victron gear (SmartSolar, Multiplus, Ultimatron) — seen, but at the edge.
+
+**Reception is sensitivity-limited — it's the antenna.** Clean cross-check
+(2026-06): put a phone (nRF Connect *Scanner*) where the board sits and compare
+RSSI on the **same far devices**. Measured: far devices read **~12-18 dB weaker
+on the board** than on the phone (e.g. a beacon at −68 phone / −84 board;
+another −60 / −72). ~16 dB ≈ ~6× range — exactly the "seen but very weak at 3 m
+through wood" symptom. A *very close* device showed almost no gap (−60 phone /
+−63 board): **near-field (<~20 cm ≈ 1.6λ) masks the antenna deficit**, so
+point-blank comparisons lie — don't use them. No firmware knob recovers this
+(scan window, power-save, ext-scan are all correctness/coexistence, not range).
+Also don't compare RSSI/advert-rate across *different* devices (each has its own
+TX power + advertising interval); only the **same** device across a change is
+comparable. **Fix is the C6 antenna** — the BSP documents none; check the board
+for a u.FL/IPEX connector or an antenna-select jumper near the C6 (a board
+shipped on an unconnected external-antenna path explains the stock deficit).
+WiFi power save is **not** a lever — `MIN_MODEM` made BLE worse (§12).
+
+**Extended advertising was a real gap (fixed 2026-06).** The Multiplus VE.Bus
+dongle advertises with BLE-5 *extended* advertising; SmartSolar/Ultimatron are
+legacy/connectable. A legacy-only scan silently misses ext adverts — see §3 for
+the three sdkconfig knobs. Signature of the bug (or of a too-weak link): the
+device shows as a **nameless-MAC ghost** — the primary `ADV_EXT_IND` (MAC+RSSI)
+is caught but the `AUX_ADV_IND` carrying the name/payload is dropped. Verified
+end-to-end: a non-connectable extended advert from a phone is invisible at
+range, nameless-MAC at the margin, full name when touching the board.
+
+**Diagnostic tool — serial CLI `scan [secs]`** (`main/cli.cpp`): lists every
+advertiser with RSSI + **ADV** (adverts heard this window = reception-quality
+metric). It disables the controller's duplicate filter for the scan window
+(restored after) so ADV reflects the true received rate. Reuses
+`bleDiscoveryScan(false, …)` (victron_only=false returns **all** devices).
+Pair it with a phone running a fixed advertiser (nRF Connect → Advertiser) at a
+fixed marginal distance as a stable reference for A/B-ing reception tweaks.
