@@ -126,6 +126,8 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "INVERSOR",                                                      // INVERTER
     "RED",                                                           // INV_MAINS
     "CARGAS",                                                        // INV_LOADS
+    "CARGA",                                                         // BATT_CHARGE
+    "DESCARGA",                                                      // BATT_DISCHARGE
     "Actualizaciones",                                               // UPDATES_CFG
     "TruMinus - Actualizaciones",                                    // UPDATES_TITLE
     "Versi\xC3\xB3n actual",                                         // OTA_CURRENT
@@ -262,6 +264,8 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "INVERTER",                                                      // INVERTER
     "SHORE",                                                         // INV_MAINS
     "LOADS",                                                         // INV_LOADS
+    "CHARGE",                                                        // BATT_CHARGE
+    "DISCHARGE",                                                     // BATT_DISCHARGE
     "Updates",                                                       // UPDATES_CFG
     "TruMinus - Updates",                                            // UPDATES_TITLE
     "Current version",                                               // OTA_CURRENT

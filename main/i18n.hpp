@@ -128,6 +128,8 @@ enum class TK : uint8_t {
     INVERTER,          // "INVERSOR" / "INVERTER"
     INV_MAINS,         // INVERSOR I/O port: "RED" / "SHORE"
     INV_LOADS,         // INVERSOR I/O port: "CARGAS" / "LOADS"
+    BATT_CHARGE,       // battery power port: "CARGA" / "CHARGE"
+    BATT_DISCHARGE,    // battery power port: "DESCARGA" / "DISCHARGE"
     // ── Firmware updates (self-OTA) ────────────────────────────────────────
     UPDATES_CFG,       // settings menu item: "Actualizaciones" / "Updates"
     UPDATES_TITLE,     // updates screen title
