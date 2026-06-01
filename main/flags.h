@@ -32,8 +32,8 @@
 // Gates the LOG_<CAT>_PF / LOG_<CAT>_PL / LOG_<CAT>_P helpers.  Disabled by
 // default; the macros expand to ((void)0).  Uncomment to compile in.
 //
-#define LOG_BLE_ENABLED         // Victron BLE / Multiplus / tank — chatty per advert
-#define LOG_ULT_ENABLED         // Ultimatron BMS — chatty per poll
+// #define LOG_BLE_ENABLED         // Victron BLE / Multiplus / tank — chatty per advert
+// #define LOG_ULT_ENABLED         // Ultimatron BMS — chatty per poll
 // #define LOG_WIFI_ENABLED        // (not used by current wifi_manager — see §3)
 // #define LOG_WEB_ENABLED         // (not used by current webserver  — see §3)
 // #define LOG_LIN_ENABLED         // dormant Arduino LIN frame layer
@@ -41,7 +41,7 @@
 // #define LOG_MEM_ENABLED
 // #define LOG_LVGL_ENABLED
 // #define LOG_SNIFF_ENABLED
-#define LOG_AM2301_ENABLED      // external AM2301/DHT22 — per-read temp/RH
+// #define LOG_AM2301_ENABLED      // external AM2301/DHT22 — per-read temp/RH
 // #define LOG_CLI_ENABLED
 
 // ── 3. Runtime ESP_LOG levels per TAG ────────────────────────────────────

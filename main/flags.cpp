@@ -41,5 +41,5 @@ void flags_apply_log_levels(void) {
     esp_log_level_set("esp_netif_handlers",  LOG_LEVEL_NET);
     esp_log_level_set("websocket_client",    LOG_LEVEL_NET);
     esp_log_level_set("esp-x509-crt-bundle", LOG_LEVEL_NET);
-    esp_log_level_set("NimBLE",              ESP_LOG_INFO);   // BLE connect debug
+    esp_log_level_set("NimBLE",              LOG_LEVEL_NET);  // WARN: silence per-scan GAP chatter
 }
