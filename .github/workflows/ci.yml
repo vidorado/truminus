@@ -1,16 +1,26 @@
-# Build the firmware on every push to master.  This exists mainly to keep a
-# warm ccache on the *default branch*: GitHub Actions caches are scoped per
-# ref, and a release runs on a tag ref (refs/tags/X.Y.Z) which can only
-# restore caches from its own tag or from the default branch.  Tag runs alone
-# never share a cache, so without this every release compiled cold (~5-6 min).
-# A master build populates the default-branch-scoped cache that release.yml's
-# tag runs then restore (same key prefix), cutting releases to ~1-2 min.  It
-# also validates that master builds on every push.
+# Firmware build — MANUAL ONLY (workflow_dispatch).
+#
+# This used to run on every push to master to keep a warm ccache on the
+# default branch, which release.yml's tag runs then restored (same key prefix),
+# cutting releases from ~5-6 min cold to ~1-2 min.  But the usual flow is
+# "commit + push master + push tag" in one go, which fired BOTH this build and
+# the release build for the same commit — two builds per release.  So this no
+# longer auto-runs; releases are a single build.
+#
+# This does NOT mean releases are always cold.  GitHub caches are scoped per
+# ref: a tag ref can't read another tag's cache, but ANY ref can read the
+# default-branch (master) cache.  release.yml's `restore-keys: ccache-esp32p4-`
+# therefore still restores the most recent surviving master-scoped cache — the
+# one left by the last run of THIS workflow — so tag builds stay ~1-2 min while
+# that cache lives (GitHub evicts caches after 7 days idle, or by LRU past the
+# 10 GB repo limit).  Only once it's evicted does a release compile cold.
+#
+# Run this manually (Actions → ci → Run workflow on master) to refresh that
+# default-branch cache whenever a release build has gone (or is about to go)
+# cold.
 name: ci
 
 on:
-  push:
-    branches: [ master ]
   workflow_dispatch:
 
 # A newer push to master cancels an in-progress build so rapid commits don't
