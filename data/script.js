@@ -87,6 +87,14 @@ ws.onclose = function () {
         setDot('dot-lin',  'err');
     }, 3000);
 };
+// Re-request the full snapshot whenever the tab returns to the foreground.
+// A phone that slept may have missed broadcasts (or hold a half-open socket
+// that hasn't reconnected yet); this refreshes the state without waiting for
+// TCP to notice the dead peer.  When the socket is already gone, onopen will
+// send 'settings' on reconnect anyway, so we only act on a live socket.
+document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && ws.readyState === 1) ws.send('settings');
+});
 ws.onmessage = function (event) {
     var d = JSON.parse(event.data);
     if (!d.command) return;
@@ -582,22 +590,26 @@ function applyMulti(d) {
         return;
     }
     if (st) st.textContent = t(MULTI_STATES[d.state] || 'inv_st_off');
+    // ac_in_w / ac_out_w arrive as null when the inverter is off / not
+    // reporting (VE.Bus no-data sentinel) — show "--" and keep the flow idle.
+    var inNa  = (d.ac_in_w  === null || d.ac_in_w  === undefined);
+    var outNa = (d.ac_out_w === null || d.ac_out_w === undefined);
     var inW  = parseInt(d.ac_in_w)  || 0;
     var outW = parseInt(d.ac_out_w) || 0;
     var battV = parseFloat(d.batt_v) || 0;
     var battA = parseFloat(d.batt_a) || 0;
     var battW = Math.round(battV * battA);
-    if (rm) rm.textContent = inW;
-    if (rl) rl.textContent = outW;
+    if (rm) rm.textContent = inNa  ? '--' : inW;
+    if (rl) rl.textContent = outNa ? '--' : outW;
     if (rb) rb.textContent = battW;
     if (fm) {
-        var fmOn = Math.abs(inW) > 5;
+        var fmOn = !inNa && Math.abs(inW) > 5;
         fm.classList.toggle('active', fmOn);
         fm.classList.toggle('flow-r', fmOn && inW > 0);
         fm.classList.toggle('flow-l', fmOn && inW < 0);
     }
     if (fl) {
-        var flOn = Math.abs(outW) > 5;
+        var flOn = !outNa && Math.abs(outW) > 5;
         fl.classList.toggle('active', flOn);
         fl.classList.toggle('flow-r', flOn);
         fl.classList.remove('flow-l');
