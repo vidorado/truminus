@@ -247,8 +247,14 @@ body {
      can freely reorder the 6 panels across rows. */
   body {
     min-height: 0 !important;
-    max-height: 100dvh;
-    height: 100dvh;
+    /* svh (smallest viewport) is stable across reloads; 100dvh resolves to the
+       *large* viewport when an Android standalone PWA reloads, making body
+       taller than the visible area and pushing the status bar off-screen.
+       100vh is the fallback for engines without svh. */
+    max-height: 100vh;
+    max-height: 100svh;
+    height: 100vh;
+    height: 100svh;
     display: flex;
     flex-direction: column;
     padding-top: 0;
