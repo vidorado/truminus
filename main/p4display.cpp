@@ -117,7 +117,6 @@ static constexpr int TANK_H_BATT   = 60;   // shortened to fit the CARGA/DESCARG
 #define C_AMBER       lv_color_hex(0xffcc88)
 #define C_BTN         lv_color_hex(0x2a2a4a)
 #define C_BTN_ACTIVE  lv_color_hex(0x3a7bd5)
-#define C_HEAT_ON     lv_color_hex(0x1a8a3a)
 #define C_GREEN       lv_color_hex(0x44ff44)
 #define C_RED         lv_color_hex(0xff4444)
 #define C_AMBER_BAR   lv_color_hex(0xffaa00)
@@ -160,8 +159,7 @@ static struct {
     lv_obj_t* lbl_room_sp;
     lv_obj_t* btn_sp_dn;
     lv_obj_t* btn_sp_up;
-    lv_obj_t* btn_heat;
-    lv_obj_t* lbl_btn_heat;
+    lv_obj_t* btnmx_heat;
     lv_obj_t* row_sp;
 
     // VENTILADOR panel
@@ -223,7 +221,7 @@ static struct {
 static void refresh_controls();
 static void on_sp_dn(lv_event_t* e);
 static void on_sp_up(lv_event_t* e);
-static void on_heat_toggle(lv_event_t* e);
+static void on_heat_changed(lv_event_t* e);
 static void on_fan_heat_changed(lv_event_t* e);
 static void on_fan_off_changed(lv_event_t* e);
 static void on_fan_dn(lv_event_t* e);
@@ -423,6 +421,7 @@ static bool      s_mainBuilt = false;
 
 // Btnmatrix maps filled from i18n strings each time build_main_screen() runs.
 // Stored as module-level arrays so LVGL's pointer reference stays valid.
+static const char* s_heat_map[3]     = {};
 static const char* s_fan_heat_map[3] = {};
 static const char* s_fan_off_map[3]  = {};
 static const char* s_boiler_map[6]   = {};
@@ -430,6 +429,9 @@ static const char* s_boiler_map[6]   = {};
 static void build_main_screen()
 {
     // Fill btnmatrix maps with current-language strings.
+    s_heat_map[0]     = t(TK::OFF);
+    s_heat_map[1]     = t(TK::ON);
+    s_heat_map[2]     = "";
     s_fan_heat_map[0] = t(TK::FAN_ECO);
     s_fan_heat_map[1] = t(TK::FAN_HIGH);
     s_fan_heat_map[2] = "";
@@ -553,16 +555,16 @@ static void build_main_screen()
 
     make_label(p_heat, t(TK::HEATING), s_font_title, C_DIM, 12, 8);
 
-    ui.btn_heat = lv_button_create(p_heat);
-    lv_obj_set_size(ui.btn_heat, HEAT_W - 24, 56);
-    lv_obj_set_pos(ui.btn_heat, 12, 52);
-    lv_obj_add_flag(ui.btn_heat, LV_OBJ_FLAG_CHECKABLE);
-    style_button(ui.btn_heat);
-    ui.lbl_btn_heat = lv_label_create(ui.btn_heat);
-    lv_label_set_text(ui.lbl_btn_heat, "APAGADO");
-    lv_obj_set_style_text_font(ui.lbl_btn_heat, s_font_24, 0);
-    lv_obj_center(ui.lbl_btn_heat);
-    lv_obj_add_event_cb(ui.btn_heat, on_heat_toggle, LV_EVENT_VALUE_CHANGED, NULL);
+    // Off | On toggle as a 2-button matrix, mirroring the FAN standby row.
+    ui.btnmx_heat = lv_buttonmatrix_create(p_heat);
+    lv_obj_set_pos(ui.btnmx_heat, 12, 52);
+    lv_obj_set_size(ui.btnmx_heat, HEAT_W - 24, 56);
+    lv_buttonmatrix_set_map(ui.btnmx_heat, s_heat_map);
+    lv_buttonmatrix_set_button_ctrl_all(ui.btnmx_heat, LV_BUTTONMATRIX_CTRL_CHECKABLE);
+    lv_buttonmatrix_set_one_checked(ui.btnmx_heat, true);
+    lv_buttonmatrix_set_selected_button(ui.btnmx_heat, 0);
+    style_btnmatrix(ui.btnmx_heat, s_font_24);
+    lv_obj_add_event_cb(ui.btnmx_heat, on_heat_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
     ui.row_sp = lv_obj_create(p_heat);
     lv_obj_remove_style_all(ui.row_sp);
@@ -1076,16 +1078,16 @@ static void refresh_controls()
     snprintf(buf, sizeof(buf), "%.1f°C", st.roomSetpoint);
     lv_label_set_text(ui.lbl_room_sp, buf);
 
-    if (st.heatingOn) {
-        lv_obj_add_state(ui.btn_heat, LV_STATE_CHECKED);
-        lv_label_set_text(ui.lbl_btn_heat, t(TK::HEAT_ON));
-        lv_obj_set_style_bg_color(ui.btn_heat, C_HEAT_ON, 0);
-        lv_obj_remove_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_remove_state(ui.btn_heat, LV_STATE_CHECKED);
-        lv_label_set_text(ui.lbl_btn_heat, t(TK::HEAT_OFF));
-        lv_obj_set_style_bg_color(ui.btn_heat, C_BTN, 0);
-        lv_obj_add_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
+    {
+        int sel = st.heatingOn ? 1 : 0;
+        for (uint32_t i = 0; i < 2; i++) {
+            if ((int)i == sel)
+                lv_buttonmatrix_set_button_ctrl(ui.btnmx_heat, i, LV_BUTTONMATRIX_CTRL_CHECKED);
+            else
+                lv_buttonmatrix_clear_button_ctrl(ui.btnmx_heat, i, LV_BUTTONMATRIX_CTRL_CHECKED);
+        }
+        if (st.heatingOn) lv_obj_remove_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
+        else              lv_obj_add_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
     }
 
     if (st.heatingOn) {
@@ -1155,10 +1157,11 @@ static void on_sp_up(lv_event_t*)
     refresh_controls();
 }
 
-static void on_heat_toggle(lv_event_t* e)
+static void on_heat_changed(lv_event_t* e)
 {
-    lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
-    st.heatingOn = lv_obj_has_state(btn, LV_STATE_CHECKED);
+    lv_obj_t* bm = (lv_obj_t*)lv_event_get_target(e);
+    uint32_t  idx = lv_buttonmatrix_get_selected_button(bm);
+    st.heatingOn = (idx == 1);
     if (st.heatingOn && (st.fanMode < 1 || st.fanMode > 2)) st.fanMode = 1;
     if (!st.heatingOn && st.fanMode >= 1 && st.fanMode <= 2) st.fanMode = 0;
     refresh_controls();
@@ -1673,6 +1676,24 @@ static const char* translate_multi_state(uint8_t mode)
     }
 }
 
+// Write the decimal of `v` into `buf` grouping thousands with a dot
+// ("-1.234"), preserving the sign. Returns buf for inline use in *_fmt calls.
+static const char* group_int(char* buf, size_t n, int v)
+{
+    char num[16];
+    bool neg = v < 0;
+    snprintf(num, sizeof(num), "%d", neg ? -v : v);
+    int len = (int)strlen(num);
+    size_t gi = 0;
+    if (neg && gi + 1 < n) buf[gi++] = '-';
+    for (int i = 0; i < len && gi + 1 < n; i++) {
+        if (i > 0 && (len - i) % 3 == 0 && gi + 1 < n) buf[gi++] = '.';
+        buf[gi++] = num[i];
+    }
+    buf[gi] = '\0';
+    return buf;
+}
+
 void p4DisplayUpdate(const P4DisplayData& d)
 {
     static char buf[40];
@@ -1744,9 +1765,11 @@ void p4DisplayUpdate(const P4DisplayData& d)
         lv_label_set_text(ui.lbl_solar_status, translate_solar_status(d.solar.status));
         snprintf(buf, sizeof(buf), "%.1f V", d.solar.voltageV);
         lv_label_set_text(ui.lbl_solar_volts, buf);
-        snprintf(buf, sizeof(buf), "%.1f A / %d W", d.solar.currentA, d.solar.powerW);
+        char g[20];
+        snprintf(buf, sizeof(buf), "%.1f A / %s W", d.solar.currentA,
+                 group_int(g, sizeof(g), d.solar.powerW));
         lv_label_set_text(ui.lbl_solar_current, buf);
-        snprintf(buf, sizeof(buf), "%d W", d.solar.powerW);
+        snprintf(buf, sizeof(buf), "%s W", group_int(g, sizeof(g), d.solar.powerW));
         lv_label_set_text(ui.lbl_solar_power, buf);
     } else {
         lv_label_set_text(ui.lbl_solar_status,  "--");
@@ -1767,7 +1790,8 @@ void p4DisplayUpdate(const P4DisplayData& d)
 
         // CARGA / DESCARGA port — same V×A > 0 = charging convention as the web.
         int battW = (int)lroundf(d.batt.voltageV * d.batt.currentA);
-        lv_label_set_text_fmt(ui.lbl_bpwr_w, "%d W", abs(battW));
+        char gb[20];
+        lv_label_set_text_fmt(ui.lbl_bpwr_w, "%s W", group_int(gb, sizeof(gb), battW));
         if (battW > 5) {
             lv_obj_set_style_bg_color(ui.box_bpwr, C_PORT_GREEN_BODY, 0);
             lv_obj_set_style_bg_color(ui.hdr_bpwr, C_PORT_GREEN_HDR, 0);
@@ -1801,6 +1825,7 @@ void p4DisplayUpdate(const P4DisplayData& d)
     // Multiplus / VE.Bus inverter — render mains / load / battery flow.
     {
         char tb[24];
+        char g[20];
         auto set_port_color = [](lv_obj_t* box, lv_obj_t* hdr,
                                  lv_color_t bc, lv_color_t hc) {
             lv_obj_set_style_bg_color(box, bc, 0);
@@ -1813,14 +1838,14 @@ void p4DisplayUpdate(const P4DisplayData& d)
             bool mainsNa = (d.multi.acInW  == MULTI_POWER_NA);
             bool loadNa  = (d.multi.acOutW == MULTI_POWER_NA);
             if (mainsNa) snprintf(tb, sizeof(tb), "--");
-            else         snprintf(tb, sizeof(tb), "%d W", (int)d.multi.acInW);
+            else         snprintf(tb, sizeof(tb), "%s W", group_int(g, sizeof(g), (int)d.multi.acInW));
             lv_label_set_text(ui.lbl_inv_mains_w, tb);
             if (loadNa) snprintf(tb, sizeof(tb), "--");
-            else        snprintf(tb, sizeof(tb), "%d W", (int)d.multi.acOutW);
+            else        snprintf(tb, sizeof(tb), "%s W", group_int(g, sizeof(g), (int)d.multi.acOutW));
             lv_label_set_text(ui.lbl_inv_load_w, tb);
             int battW = (int)lroundf((std::isnan(d.multi.battV) ? 0.0f : d.multi.battV)
                                      * d.multi.battA);
-            snprintf(tb, sizeof(tb), "%d W", battW);
+            snprintf(tb, sizeof(tb), "%s W", group_int(g, sizeof(g), battW));
             lv_label_set_text(ui.lbl_inv_batt_w, tb);
 
             // Drive the zebra-stripe animation.  Positive direction = flow
