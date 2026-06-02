@@ -80,7 +80,7 @@
   gap: 12px;
   max-width: 92vw;
   padding: 8px 14px;
-  border-radius: 999px;
+  border-radius: 16px;
   background: var(--on);
   color: var(--txt);
   font-size: .9rem;
@@ -89,16 +89,24 @@
 }
 .ota-banner[hidden] { display: none; }
 .ota-banner.ota-err { background: var(--err); }
-.ota-msg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ota-msg { min-width: 0; line-height: 1.35; overflow-wrap: anywhere; text-align: center; }
+.ota-title { font-weight: 700; font-size: 1.05em; margin-bottom: 2px; }
+.ota-actions { display: flex; flex: none; gap: 8px; align-items: center; }
 .ota-btn {
+  display: inline-block;
   flex: none;
-  padding: 5px 14px;
+  padding: 10px 16px;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--txt);
   color: var(--on);
   font-weight: 700;
   cursor: pointer;
+}
+.ota-btn-sec {
+  background: transparent;
+  color: var(--txt);
+  border: 1px solid rgba(255, 255, 255, .55);
 }
 .ota-btn:disabled { opacity: .6; cursor: default; }
 
@@ -286,7 +294,11 @@ body {
      bars (kept from the default rule) so the page bg fills the screen
      even when content is short. */
   .row      { flex: 0 0 auto; min-height: 0; }
-  .row .panel        { min-height: auto; }
+  /* Grid items must be allowed to shrink to their fr track (min-height:0) and
+     clip the overflow — exactly like the landscape rule below. Using
+     min-height:auto here lets a tall panel (e.g. HOT WATER) refuse to shrink,
+     overflow its track and push the static status bar off-screen. */
+  .row .panel        { min-height: 0; overflow: hidden; }
   .btn-heat, .sp-row, .btn-row {
     flex: 0 0 auto;
     min-height: 0;
@@ -296,6 +308,9 @@ body {
   .panel-water > .water-temp-bar-wrap { width: 100%; max-width: none; align-items: flex-start; }
   .btn-heat   { padding: 16px 10px; }
   .btn-fan    { padding: 16px 6px; }
+  /* HEATING + FAN sit in the first stacked row; drop their bottom padding so
+     the grid is more compact and the status bar isn't pushed off-screen. */
+  .row .panel-heat, .row .panel-fan { padding-bottom: 0; }
   /* HOT WATER buttons 1.5× taller than the rest in this layout — they're
      the primary touch target when the page is on a phone in portrait. */
   .btn-boiler { padding: 4px 6px; }
@@ -310,13 +325,13 @@ body {
   .water-temp-bar-wrap { width: 64px; max-width: none; min-width: 0; }
   .water-temp-body     { width: 44px; height: 50px; flex: 0 0 auto; min-height: 0; }
   .batt-col            { width: 64px; max-width: none; min-width: 0; }
-  .batt-body           { width: 42px; height: 72px; flex: 0 0 auto; min-height: 0; }
+  .batt-body           { width: 42px; height: 54px; flex: 0 0 auto; min-height: 0; }
   .boiler-grid         { grid-template-rows: auto auto; }
   /* Same trick for the AGUA L. tank: without a row height to fill, the
      `flex:1` on .tank-wrap collapses to 0.  Pin a fixed pixel size when
      the page is stacked. */
   .panel-tank          { align-items: center; }
-  .tank-wrap           { width: 80%; max-width: 220px; flex: 0 0 auto; min-height: 0; aspect-ratio: 106 / 71; }
+  .tank-wrap           { width: auto; height: clamp(44px, 11vh, 74px); max-width: 90%; flex: 0 0 auto; min-height: 0; aspect-ratio: 106 / 71; }
   /* Unify all panel titles to the same viewport-based size */
   .sec-lbl             { font-size: clamp(14px, 2.3vw, 20px); }
   /* Topbar: tighter badges with smaller icons */
@@ -332,6 +347,10 @@ body {
   .panel-inv .inv-flow { width: 29px; }
   .row .panel-inv { border-bottom: none; flex: 1; }
   .panel-inv .inv-diagram  { flex: 1; }
+  /* OTA banner: wider box and the Update button stacked below the message
+     instead of to its right. */
+  .ota-banner { flex-direction: column; align-items: center; width: 84vw; max-width: 84vw; gap: 10px; }
+  .ota-actions { justify-content: center; }
 }
 
 /* ── Landscape on phones: compact topbar, smaller badges ─────────────── */
@@ -427,8 +446,10 @@ body {
   border-radius: var(--radius);
   cursor: pointer;
   color: var(--txt);
+  background: var(--off);
   transition: background .2s;
 }
+.btn-heat.btn-sel { background: var(--on); }
 .btn-off     { background: var(--off); }
 /* Heat ON uses the same active-blue as every other "selected" button on the
    LCD (see C_BTN_ACTIVE in main/p4display.cpp).  The legacy --heat-on green

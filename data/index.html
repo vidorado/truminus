@@ -14,14 +14,17 @@
 <meta name="apple-mobile-web-app-title" content="TruMinus" />
 <link rel="manifest" href="/icons/site.webmanifest" />
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=9a9b1526">
+<link rel="stylesheet" href="styles.css?v=1ffc35de">
 </head>
 <body>
 
 <!-- ── OTA update banner (hidden until the firmware reports one) ─────────── -->
 <div id="ota-banner" class="ota-banner" hidden>
-  <span id="ota-msg" class="ota-msg"></span>
-  <button id="ota-btn" class="ota-btn" onclick="otaInstall()"></button>
+  <div id="ota-msg" class="ota-msg"></div>
+  <div class="ota-actions">
+    <button id="ota-btn" class="ota-btn" onclick="otaInstall()"></button>
+    <button id="ota-later" class="ota-btn ota-btn-sec" onclick="otaDismiss()" data-i18n="ota_later">Más tarde</button>
+  </div>
 </div>
 
 <!-- ── Top bar — mirrors main/p4display.cpp top band ─────────────────────── -->
@@ -52,7 +55,11 @@
     <section class="panel panel-heat">
       <div class="p-title" data-i18n="heating">CALEFACCIÓN</div>
 
-      <button id="heatBtn" class="btn-heat btn-off" onclick="toggleHeating()">APAGADO</button>
+      <!-- Off | On toggle (mirrors the FAN standby row) -->
+      <div class="btn-row">
+        <button id="hBtnOff" class="btn-heat btn-sel" onclick="setHeating(false)" data-i18n="heat_off">Apag.</button>
+        <button id="hBtnOn"  class="btn-heat"         onclick="setHeating(true)"  data-i18n="heat_on">Enc.</button>
+      </div>
 
       <!-- Setpoint row (visible only when heat is on) -->
       <div id="spRow" class="sp-row sp-hidden">
@@ -242,7 +249,7 @@
 
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=ddd3f31a"></script>
-<script src="i18n.js?v=a87446a0"></script>
-<script src="script.js?v=11c75101"></script>
+<script src="i18n.js?v=1466afa3"></script>
+<script src="script.js?v=62cfd345"></script>
 </body>
 </html>

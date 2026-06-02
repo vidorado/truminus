@@ -166,21 +166,29 @@ function applyIcon(d) {
 // an install is in progress; the button triggers /ota_install on the device.
 var s_otaInstalling = false;
 var s_ota = null;            // last OTA frame, for the About overlay
+var s_otaDismissedVer = null; // "Later"-dismissed version (banner stays hidden for it)
 function applyOta(d) {
     s_ota = d;
     updateAbout(d);
     var banner = document.getElementById('ota-banner');
     var msg    = document.getElementById('ota-msg');
     var btn    = document.getElementById('ota-btn');
+    var later  = document.getElementById('ota-later');
     if (!banner || !msg || !btn) return;
 
     s_otaInstalling = !!d.installing;
+
+    // While the About overlay is open it already shows the OTA status, so the
+    // banner would be redundant — keep it hidden until the overlay closes.
+    var about = document.getElementById('about-modal');
+    if (about && !about.classList.contains('hidden')) { banner.hidden = true; return; }
 
     if (d.installing) {
         var pct = (typeof d.progress === 'number') ? d.progress : 0;
         msg.textContent = t('ota_updating') + ' ' + pct + '%' +
                           (pct >= 100 ? ' — ' + t('ota_reboot') : '');
         btn.hidden = true;
+        if (later) later.hidden = true;
         banner.classList.remove('ota-err');
         banner.hidden = false;
         return;
@@ -189,6 +197,7 @@ function applyOta(d) {
     btn.hidden = false;
     btn.disabled = false;
     btn.textContent = t('ota_update');
+    if (later) later.hidden = false;
 
     if (d.error) {
         msg.textContent = t('ota_failed') + ': ' + d.error;
@@ -198,13 +207,26 @@ function applyOta(d) {
     }
 
     banner.classList.remove('ota-err');
-    if (d.available) {
-        msg.textContent = t('ota_available') + ': ' +
-                          (d.current || '?') + ' → ' + (d.latest || '?');
+    if (d.available && d.latest !== s_otaDismissedVer) {
+        msg.textContent = '';
+        var ttl = document.createElement('div');
+        ttl.className = 'ota-title';
+        ttl.textContent = t('ota_available');
+        msg.appendChild(ttl);
+        msg.appendChild(document.createTextNode(
+            (d.current || '?') + ' → ' + (d.latest || '?')));
         banner.hidden = false;
     } else {
         banner.hidden = true;
     }
+}
+
+// "Later": dismiss the banner for this version (the About overlay still offers
+// the manual install). A newer release re-shows it.
+function otaDismiss() {
+    if (s_ota) s_otaDismissedVer = s_ota.latest || null;
+    var banner = document.getElementById('ota-banner');
+    if (banner) banner.hidden = true;
 }
 
 function otaInstall() {
@@ -223,11 +245,16 @@ function openAbout() {
     if (!modal) return;
     updateAbout(s_ota);
     modal.classList.remove('hidden');
+    // Hide the banner right away (don't wait for the next OTA push).
+    var banner = document.getElementById('ota-banner');
+    if (banner) banner.hidden = true;
 }
 
 function closeAbout() {
     var modal = document.getElementById('about-modal');
     if (modal) modal.classList.add('hidden');
+    // Re-evaluate the banner now the overlay no longer covers the OTA status.
+    if (s_ota) applyOta(s_ota);
 }
 
 function otaCheck() {
@@ -383,10 +410,8 @@ function refreshSetpoint() {
 }
 
 function refreshHeat() {
-    var btn = document.getElementById('heatBtn');
-    btn.textContent = s_heat ? t('heat_on') : t('heat_off');
-    btn.classList.toggle('btn-heat-on', s_heat);
-    btn.classList.toggle('btn-off',    !s_heat);
+    cls('hBtnOn',  'btn-sel',  s_heat);
+    cls('hBtnOff', 'btn-sel', !s_heat);
     cls('spRow',      'sp-hidden', !s_heat);
     cls('fanHeatRow', 'vis-hidden', !s_heat);
     cls('fanSbyRow',  'vis-hidden',  s_heat);
@@ -496,8 +521,8 @@ function changeTemp(delta) {
 
 // All button actions use sendDebounced (300 ms) so rapid taps coalesce to
 // the last state — matches the physical screen's touch behaviour.
-function toggleHeating() {
-    s_heat = !s_heat;
+function setHeating(on) {
+    s_heat = on;
     if (!s_heat) { s_fan = 'off'; sendDebounced('/fan', 'off'); }
     sendDebounced('/heating', s_heat ? '1' : '0');
     refreshHeat();
@@ -587,6 +612,14 @@ function acknowledgeError() {
 
 // ── Solar charge / Battery BMS ────────────────────────────────────────────
 
+// Format an integer watt value grouping thousands with a dot ("1.234"),
+// preserving the sign. Used for every panel port reading.
+function fmtW(n) {
+    n = Math.round(Number(n) || 0);
+    var s = Math.abs(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return (n < 0 ? '-' : '') + s;
+}
+
 var SOLAR_STATES = {
     0: 'sol_off', 2: 'sol_fault', 3: 'sol_bulk',
     4: 'sol_abs', 5: 'sol_float', 7: 'sol_equalize',
@@ -605,7 +638,7 @@ function applySolar(d) {
         return;
     }
     stateLbl.textContent = t(SOLAR_STATES[d.state] || 'sol_off');
-    document.getElementById('solar_pvW').textContent   = d.pvW;
+    document.getElementById('solar_pvW').textContent   = fmtW(d.pvW);
     document.getElementById('solar_kWh').textContent   = d.kWh;
     document.getElementById('solar_battA').textContent = d.battA;
 }
@@ -677,9 +710,9 @@ function applyMulti(d) {
     var battV = parseFloat(d.batt_v) || 0;
     var battA = parseFloat(d.batt_a) || 0;
     var battW = Math.round(battV * battA);
-    if (rm) rm.textContent = inNa  ? '--' : inW;
-    if (rl) rl.textContent = outNa ? '--' : outW;
-    if (rb) rb.textContent = battW;
+    if (rm) rm.textContent = inNa  ? '--' : fmtW(inW);
+    if (rl) rl.textContent = outNa ? '--' : fmtW(outW);
+    if (rb) rb.textContent = fmtW(battW);
     if (fm) {
         var fmOn = !inNa && Math.abs(inW) > 5;
         fm.classList.toggle('active', fmOn);
@@ -756,7 +789,7 @@ function applyBatt(d) {
     var charging = battW > 5;
     var discharging = battW < -5;
 
-    if (bpw) bpw.textContent = Math.abs(battW);
+    if (bpw) bpw.textContent = fmtW(battW);
     if (bfl) {
         var bfOn = Math.abs(battW) > 5;
         bfl.classList.toggle('active', bfOn);
