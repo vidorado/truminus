@@ -11,16 +11,34 @@ is separate (`c6_ota.cpp`, reflashes the C6 from an embedded binary). Origin:
 
 ## Versioning
 
-`PROJECT_VER` is derived from `git describe --tags` in the root `CMakeLists.txt`
-*before* `project()`, so it lands in `esp_app_desc_t.version`. On a clean tag it
-is exactly `X.Y.Z`; in a dirty tree it is `X.Y.Z-<n>-g<sha>-dirty`.
-`parse_semver()` reads the leading `X.Y.Z` from both the running version and the
-GitHub tag. `git describe` runs at **configure** time and cmake won't
-reconfigure on a git change by itself — so the root `CMakeLists.txt` lists
-`.git/logs/HEAD` + `.git/packed-refs` in `CMAKE_CONFIGURE_DEPENDS`, forcing a
-reconfigure after a commit/checkout (we once flashed `1.1.0-dirty` from a stale
-cached `PROJECT_VER`). It's reconfigure-only; ninja still builds incrementally.
-`.git/index` is deliberately **not** watched (it changes on every `git add`).
+`PROJECT_VER` is derived from `git describe --tags --dirty --always` in the root
+`CMakeLists.txt` *before* `project()`, so it lands in `esp_app_desc_t.version`.
+On a clean tag it is exactly `X.Y.Z`; off-tag it is `X.Y.Z-g<sha>-dirty`. We
+strip git describe's "commits since tag" count with
+`string(REGEX REPLACE "-[0-9]+-g" "-g" …)` — `1.2.2-2-g3fe4ecf` → `1.2.2-g3fe4ecf`
+— purely cosmetic, since `parse_semver()` reads only the leading `X.Y.Z` from
+both the running version and the GitHub tag (the suffix is ignored). The `g<sha>`
+is the **leading** abbreviated commit hash (GitHub-style short SHA, first 7
+chars), not the trailing chars.
+
+`git describe` runs at **configure** time and cmake won't reconfigure on a git
+change by itself — so the root `CMakeLists.txt` lists `.git/logs/HEAD`,
+`.git/packed-refs` **and `.git/refs/tags`** in `CMAKE_CONFIGURE_DEPENDS`, forcing
+a reconfigure after a commit/checkout/tag. It's reconfigure-only; ninja still
+builds incrementally. `.git/index` is deliberately **not** watched (it changes
+on every `git add`).
+
+**Gotcha — tagging an already-built commit bakes a stale version.** `git tag`
+does not move HEAD (no `logs/HEAD` change) and a loose tag does not touch
+`packed-refs`. Before `refs/tags` was watched, `git tag X.Y.Z` on the current
+HEAD did **not** trigger a reconfigure, so the board kept the previous
+`X.Y.(Z-1)-<n>-g<sha>-dirty` baked from the last configure. Editing source files
+recompiles via ninja but does **not** reconfigure, so a plain `make build` after
+tagging would not fix it either — only a commit/checkout, a `CMakeLists.txt`
+edit, or `idf.py reconfigure`/`fullclean`. Watching `refs/tags` (its dir mtime
+bumps when a loose tag is created/deleted) closes this; packed tags are still
+covered by `packed-refs`. We once flashed `1.1.0-dirty` (and later
+`1.2.2-2-g3fe4ecf-dirty` while tag `1.2.3` already existed on HEAD) this way.
 See also pio-idf-p4 SKILL §10.
 
 ## Discovery without the API

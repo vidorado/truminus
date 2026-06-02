@@ -51,7 +51,11 @@ idf_build_set_property(COMPILE_DEFINITIONS "JC4880_P4"         APPEND)
 # (the version only changes on commit/checkout, captured by logs/HEAD; a
 # bare `git tag` is picked up by the reconfigure already pending from the
 # commit that precedes it).
-foreach(_gitfile logs/HEAD packed-refs)
+# refs/tags is watched as a directory: creating/deleting a loose tag bumps its
+# mtime even when HEAD doesn't move and the tag isn't packed — without it,
+# tagging an already-built commit (e.g. `git tag 1.2.3` on the current HEAD)
+# would not re-run git describe, leaving a stale "1.2.2-N-g<sha>" baked in.
+foreach(_gitfile logs/HEAD packed-refs refs/tags)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git/${_gitfile}")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                      "${CMAKE_CURRENT_SOURCE_DIR}/.git/${_gitfile}")
@@ -65,7 +69,10 @@ execute_process(
     ERROR_QUIET
 )
 if(TRUMINUS_GIT_VER)
-    set(PROJECT_VER "${TRUMINUS_GIT_VER}")
+    # Drop git describe's "commits since tag" count for a cleaner string:
+    # "1.2.2-2-g3fe4ecf[-dirty]" -> "1.2.2-g3fe4ecf[-dirty]". The OTA semver
+    # parser reads only the leading X.Y.Z, so this is purely cosmetic.
+    string(REGEX REPLACE "-[0-9]+-g" "-g" PROJECT_VER "${TRUMINUS_GIT_VER}")
 else()
     set(PROJECT_VER "0.0.0")
 endif()
