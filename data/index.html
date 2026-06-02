@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="TruMinus" />
 <link rel="manifest" href="/icons/site.webmanifest" />
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=5ba192f6">
+<link rel="stylesheet" href="styles.css?v=91531e4f">
 </head>
 <body>
 
@@ -85,6 +85,7 @@
         <div class="water-temp-lbl"><span id="water_temp_val">--</span>&thinsp;°C</div>
         <div class="water-temp-body">
           <div id="water_temp_fill" class="water-temp-fill"></div>
+          <div class="water-temp-ticks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
         </div>
       </div>
     </section>
@@ -136,9 +137,8 @@
       <div class="p-title" data-i18n="solar">SOLAR</div>
       <div class="solar-col">
         <div id="solar_state" class="solar-line solar-status">--</div>
-        <div class="solar-line solar-load">
-          <span id="solar_battA">--</span>&thinsp;A&ensp;/&ensp;<span id="solar_pvW">--</span>&thinsp;W
-        </div>
+        <div class="solar-line solar-current"><span id="solar_battA">--</span>&thinsp;A</div>
+        <div class="solar-line solar-power"><span id="solar_pvW">--</span>&thinsp;W</div>
         <div class="solar-line solar-prod">
           <span id="solar_kWh">--</span>&thinsp;kWh&ensp;<span data-i18n="today">hoy</span>
         </div>
@@ -250,6 +250,6 @@
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=ddd3f31a"></script>
 <script src="i18n.js?v=1466afa3"></script>
-<script src="script.js?v=62cfd345"></script>
+<script src="script.js?v=71f02690"></script>
 </body>
 </html>

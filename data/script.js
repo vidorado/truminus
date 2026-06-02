@@ -471,10 +471,11 @@ function refreshIndicators() {
         }
     }
     if (wTempFill) {
-        // Fixed 0-70 °C scale and absolute colour thresholds, independent
-        // of boiler state. The bar reads the same temperature regardless
-        // of setpoint, matching how a household water heater gauge reads.
-        var WTEMP_SCALE = 70;
+        // Scale tops out at the selected boiler target (40 °C in eco, 60 °C
+        // otherwise) so the fill rescales with the setpoint, matching the LCD
+        // boiler indicator (see main/p4display.cpp). Colour thresholds below
+        // stay absolute.
+        var WTEMP_SCALE = (s_boiler === 'eco') ? 40 : 60;
         var pct = 0;
         if (s_waterTemp !== null && s_waterTemp > 0) {
             pct = Math.min(100, Math.max(0, (s_waterTemp / WTEMP_SCALE) * 100));

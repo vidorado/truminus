@@ -329,7 +329,7 @@ body {
   /* Tanks/batteries back to fixed pixel sizes — they no longer have a
      row height to fill on stacked layouts. */
   .water-temp-bar-wrap { width: 64px; max-width: none; min-width: 0; }
-  .water-temp-body     { width: 44px; height: 50px; flex: 0 0 auto; min-height: 0; }
+  .water-temp-body     { width: 24px; height: 64px; flex: 0 0 auto; min-height: 0; }
   .batt-col            { width: 64px; max-width: none; min-width: 0; }
   .batt-body           { width: 42px; height: 54px; flex: 0 0 auto; min-height: 0; }
   .boiler-grid         { grid-template-rows: auto auto; }
@@ -340,6 +340,10 @@ body {
   .tank-wrap           { width: auto; height: clamp(44px, 11vh, 74px); max-width: 90%; flex: 0 0 auto; min-height: 0; aspect-ratio: 106 / 71; }
   /* Unify all panel titles to the same viewport-based size */
   .sec-lbl             { font-size: clamp(14px, 2.3vw, 20px); }
+  /* Panel titles larger in portrait — there's room when stacked.  Needs the
+     `.panel` prefix to outrank the base `.p-title` rule, which is declared
+     later in the file (equal specificity would otherwise let it win). */
+  .panel .p-title      { font-size: clamp(15px, 4.2vw, 19px); }
   /* Topbar: tighter badges with smaller icons */
   .topbar-temps        { gap: 12px; }
   .tbadge              { font-size: 0.95em; gap: 4px; }
@@ -381,13 +385,14 @@ body {
   .btn-heat    { padding: 4px 8px; }
   .btn-fan     { padding: 4px 4px; }
   .panel-inv .inv-mpx       { width: 78px; min-height: 60px; }
-  .panel-inv .inv-mpx-state { font-size: 0.7em; }
+  .panel-inv .inv-mpx-state { font-size: 0.62em; }
   .panel-inv .inv-mpx-top   { padding: 6px 4px; gap: 5px; }
   .panel-inv .inv-mid       { padding: 8px 0; overflow: visible; }
   .panel-inv .inv-flow-left  { left: 0; right: calc(50% + 40px); width: auto; }
   .panel-inv .inv-flow-right { right: 0; left: calc(50% + 40px); width: auto; }
-  .panel-inv .inv-port-hdr  { padding: 4px 0; font-size: 0.55em; }
+  .panel-inv .inv-port-hdr  { padding: 4px 0; font-size: 0.68em; }   /* the 3 INVERSOR headers, a bit larger */
   .panel-inv .inv-port-val  { padding: 4px 2px; font-size: 0.65em; }
+  .batt-pwr-port .inv-port-hdr { font-size: 0.6em; }                 /* CARGA: a touch smaller */
   .panel-inv .inv-diagram   { grid-template-columns: 0.4fr auto 0.4fr; }
   .panel-inv .inv-btn       { padding: 2px 6px; font-size: 0.75em; }
   .panel-inv .inv-right     { gap: 4px; }
@@ -445,9 +450,8 @@ body {
   flex: 1;                       /* fills the heating panel's free area */
   min-height: 0;
   padding: 6px 10px;
-  font-size: 0.95em;
-  font-weight: 700;
-  letter-spacing: .05em;
+  font-size: 1.05em;             /* match the FAN buttons */
+  font-weight: 400;
   border: none;
   border-radius: var(--radius);
   cursor: pointer;
@@ -539,7 +543,7 @@ body {
 
 .btn-boiler {
   padding: 2px 6px;
-  font-size: 0.9em;
+  font-size: 1em;
   border: none;
   border-radius: var(--radius);
   cursor: pointer;
@@ -547,6 +551,8 @@ body {
   color: var(--txt);
   transition: background .15s;
 }
+/* The ⚡ on "60 °C ⚡" — a touch smaller than the now-larger button text. */
+.btn-boiler .fi { font-size: 0.78em; }
 .btn-boiler.btn-sel { background: var(--on); }
 
 /* ── Selector de energía ─────────────────────────────────────────────── */
@@ -710,6 +716,8 @@ body {
 .panel-water > .p-title          { grid-column: 1; grid-row: 1; }
 .panel-water > .boiler-grid      { grid-column: 1; grid-row: 2; min-width: 0; }
 .panel-water > .water-temp-bar-wrap {
+  /* Spans both rows so the pill is tall in the landscape mirror (a short
+     thermometer looks puny).  Label on top, pill fills the rest. */
   grid-column: 2; grid-row: 1 / span 2;
   min-width: 48px;
   max-width: 90px;
@@ -727,12 +735,15 @@ body {
   flex: 0 0 auto;
 }
 
+/* Thermometer pill: a narrow capsule whose overflow:hidden clips the fill to
+   the rounded outline — rounded at the bottom, flat on top while rising, and
+   rounding off at the top once full.  Mirrors the LCD boiler indicator. */
 .water-temp-body {
-  width: 70%;
-  flex: 1;                         /* fills remaining wrap height */
+  width: 24px;                     /* narrow — thermometer-like */
+  flex: 1;                         /* fills the panel height below the label */
   min-height: 0;
   border: 2px solid #888888;
-  border-radius: 3px;
+  border-radius: 999px;
   position: relative;
   background: transparent;
   display: flex;
@@ -745,8 +756,31 @@ body {
 .water-temp-fill {
   width: 100%;
   background: #4488ff;
-  border-radius: 2px;
+  /* Rounded bottom to match the capsule; flat top while rising.  The body's
+     overflow:hidden rounds the top too once the fill reaches the upper cap. */
+  border-radius: 0 0 999px 999px;
   transition: height 0.4s ease;
+}
+
+/* Scale ticks (6 marks) down the right side, inside the pill and over the
+   fill.  Coloured like the panel background so they read as notches in the
+   fill and vanish into the empty (dark) track.  space-evenly centres the 6
+   marks at 1/7…6/7 of the height. */
+.water-temp-ticks {
+  position: absolute;
+  inset: 2px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  align-items: flex-end;
+  pointer-events: none;
+}
+.water-temp-ticks i {
+  width: 7px;
+  height: 2px;
+  margin-right: 2px;               /* never touches the border */
+  border-radius: 1px;
+  background: var(--bg);
 }
 
 /* Horizontal separator inside right panel */
@@ -828,10 +862,11 @@ body {
   line-height: 1.25;
 }
 
-/* Per-line colours mirror C_TEXT / C_CYAN_BR / C_YELLOW. */
-.solar-line.solar-status { color: #ffffff; font-size: 0.95em; }
-.solar-line.solar-load   { color: #88ccff; }   /* C_CYAN_BR */
-.solar-line.solar-prod   { color: #ffdd66; }   /* C_YELLOW */
+/* Per-line colours mirror C_TEXT / C_CYAN / C_CYAN_BR / C_YELLOW. */
+.solar-line.solar-status  { color: #ffffff; font-size: 0.95em; }
+.solar-line.solar-current { color: #aaccff; }   /* C_CYAN — A on its own line */
+.solar-line.solar-power   { color: #88ccff; }   /* C_CYAN_BR — W on its own line */
+.solar-line.solar-prod    { color: #ffdd66; }   /* C_YELLOW */
 
 /* Battery SOC label */
 .batt-soc-lbl {
