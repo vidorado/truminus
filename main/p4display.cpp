@@ -1286,6 +1286,16 @@ static void screen_timeout_cb(lv_timer_t*) {
         bsp_display_brightness_set(s_brightness);
     }
 
+    // Keep the panel fully awake while a firmware update is running, so the
+    // download/flash progress stays visible regardless of the screen timeout.
+    if (p4OtaInstalling()) {
+        s_target  = s_brightness_normal;
+        s_dimmed  = false;
+        s_blanked = false;
+        lv_display_trigger_activity(s_disp);   // reset idle so it won't dim/blank
+        return;
+    }
+
     if (s_timeout_ms == 0) return;
 
     uint32_t now  = lv_tick_get();
