@@ -154,7 +154,14 @@ static esp_err_t serveFile(httpd_req_t* req, const char* relpath) {
     }
 
     httpd_resp_set_type(req, mimeOf(relpath));
-    httpd_resp_set_hdr(req, "Cache-Control", "max-age=31536000, immutable");
+    // The HTML entry document is requested at "/" without a cache-busting
+    // querystring, so it must NOT be cached immutably or new builds never
+    // reach the browser (it pulls the fresh ?v=<sha1> asset URLs). Fingerprinted
+    // assets keep the long immutable TTL.
+    const size_t rl = strlen(relpath);
+    const bool isHtml = rl >= 5 && strcmp(relpath + rl - 5, ".html") == 0;
+    httpd_resp_set_hdr(req, "Cache-Control",
+                       isHtml ? "no-cache" : "max-age=31536000, immutable");
     if (gzipped) {
         httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     }
