@@ -65,6 +65,22 @@ redirect URL → "HTTP_CLIENT: Out of buffer"). A throughput log
 bottleneck is the network or the serialized flash writes. The dominant
 real-world speed fix was **WiFi power save** (pio-idf-p4 SKILL §12).
 
+**SDIO RX mode must NOT be streaming, or the download hard-asserts.**
+`esp_hosted`'s default `CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE`
+makes `sdio_rx_get_buffer()` (sdio_drv.c) do a dynamic, burst-sized
+`_h_malloc_align()` and then `assert(*buf)` — so when that internal-DRAM
+allocation fails under the load of a high-throughput OTA download, the device
+*panics* (`assert failed: sdio_rx_get_buffer (*buf)`) instead of degrading.
+This hit a fully-provisioned board mid-download (begin/get_img_desc had already
+succeeded) and left it unable to self-update. Fix: select
+`CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_MAX_SIZE=y` in `sdkconfig.defaults` +
+the tracked `sdkconfig` (the driver keys off the `ESP_HOSTED_` symbol →
+`H_SDIO_HOST_RX_MODE`), so each RX reads a fixed 1536 B into a one-time buffer —
+no mid-stream realloc, no assert. It's in the *running* image's download path,
+so a stuck board has to be **USB-flashed once** onto a fixed build before its
+OTAs survive; the suspend-during-download (tunnel + BLE) was already present
+and is not enough on its own.
+
 ## Rollback safety net
 
 `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` (+ the pre-existing
