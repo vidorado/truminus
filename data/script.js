@@ -71,6 +71,8 @@ var ws = new ReconnectingWebSocket(gateway);
 // The physical CYD display never shows transient drops, mirror that UX.
 var s_wsDownTimer = null;
 ws.onopen = function () {
+    // The device just rebooted after an OTA — reload to pick up new web assets.
+    if (s_otaReloadPending) { location.reload(); return; }
     if (s_wsDownTimer) { clearTimeout(s_wsDownTimer); s_wsDownTimer = null; }
     wserror = false;
     updateStatusBar();
@@ -78,6 +80,9 @@ ws.onopen = function () {
     ws.send('settings');
 };
 ws.onclose = function () {
+    // If the socket drops mid-install, the device is rebooting into the new
+    // image — arm a one-shot page reload for when the socket comes back.
+    if (s_otaInstalling) s_otaReloadPending = true;
     if (s_wsDownTimer) return;   // already counting down
     s_wsDownTimer = setTimeout(function () {
         s_wsDownTimer = null;
@@ -167,6 +172,7 @@ function applyIcon(d) {
 var s_otaInstalling = false;
 var s_ota = null;            // last OTA frame, for the About overlay
 var s_otaDismissedVer = null; // "Later"-dismissed version (banner stays hidden for it)
+var s_otaReloadPending = false; // reload the page once the device reboots after an install
 function applyOta(d) {
     s_ota = d;
     updateAbout(d);
@@ -231,8 +237,11 @@ function otaDismiss() {
 
 function otaInstall() {
     if (s_otaInstalling) return;
-    var btn = document.getElementById('ota-btn');
-    if (btn) { btn.disabled = true; btn.textContent = t('ota_updating'); }
+    // Feedback on whichever button was used (banner or About overlay).
+    ['ota-btn', 'about-install'].forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) { b.disabled = true; b.textContent = t('ota_updating'); }
+    });
     send('/ota_install', '1');
 }
 
