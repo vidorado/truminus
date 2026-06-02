@@ -45,6 +45,7 @@ VictronData victronGetData();
 bool        victronIsConfigured();
 void        victronBleSuspend();
 void        victronBleResume();
+bool        victronBleSuspended();
 void        victronBleSetAggressive(bool aggressive);
 void        victronBleStop();
 void        victronBleStart();

@@ -258,6 +258,7 @@ UltimatronData ultimatronGetData() {
 
 void ultimatronBleSuspend() { s_ultSuspended = true;  }
 void ultimatronBleResume()  { s_ultSuspended = false; }
+bool ultimatronBleSuspended() { return s_ultSuspended; }
 
 #else // !ENABLE_BLE
 
@@ -284,6 +285,7 @@ void ultimatronBleHandleAd(const NimBLEAdvertisedDevice*) {}
 uint32_t ultimatronLastSeenMs() { return 0; }
 void ultimatronBleSuspend()   {}
 void ultimatronBleResume()    {}
+bool ultimatronBleSuspended() { return false; }
 bool ultimatronLoadConfig(std::string& addr, std::string& pass) { (void)addr; (void)pass; return false; }
 void ultimatronSaveConfig(const std::string& addr, const std::string& pass) { (void)addr; (void)pass; }
 

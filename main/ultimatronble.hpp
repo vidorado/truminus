@@ -33,6 +33,7 @@ uint32_t ultimatronLastSeenMs();   // 0 = never seen this boot
 
 void ultimatronBleSuspend();
 void ultimatronBleResume();
+bool ultimatronBleSuspended();
 
 bool ultimatronLoadConfig(std::string& addr, std::string& pass);
 void ultimatronSaveConfig(const std::string& addr, const std::string& pass);

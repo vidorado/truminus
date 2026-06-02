@@ -300,8 +300,20 @@ static void do_check() {
     xSemaphoreGive(s_lock);
     broadcast_status();
 
+    // Pause BLE for the duration of the network check so WiFi gets the shared
+    // C6 radio to itself (the physical Updates screen does the same on entry).
+    // Only resume what we paused, so a concurrent screen/install that already
+    // suspended it isn't un-paused out from under us.
+    bool vicWas = victronBleSuspended();
+    bool ultWas = ultimatronBleSuspended();
+    if (!vicWas) victronBleSuspend();
+    if (!ultWas) ultimatronBleSuspend();
+
     char tag[32] = "";
     bool got = fetch_latest_tag(tag, sizeof(tag));
+
+    if (!vicWas) victronBleResume();
+    if (!ultWas) ultimatronBleResume();
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_status.checking = false;
