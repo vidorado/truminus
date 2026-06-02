@@ -48,6 +48,22 @@ See also pio-idf-p4 SKILL §10.
 `Location` header. Tiny, no JSON, no token, immune to the 60 req/h
 unauthenticated API limit.
 
+**Gotcha — "latest" is the most recently *published* release, not the highest
+semver.** GitHub picks `/releases/latest` by the release's `published_at`
+timestamp (equivalently the last `make_latest:true`), *not* by version number or
+commit date. `action-gh-release@v2` defaults to `make_latest: true`, so **the
+release whose workflow finishes last wins**. Pushing several tags at once (e.g.
+`1.2.4` + `1.2.5` together) runs the build workflows concurrently; if the older
+tag's run happens to finish last, GitHub serves *it* as latest and the firmware
+never sees the newer one. Operational rule: **release one tag at a time, and if
+you push several, let the highest version's run finish last.** To repair after
+the fact, force it: `gh api -X PATCH repos/<o>/<r>/releases/<id> -f make_latest=true`
+on the higher version (the `api.github.com` `/releases/latest` updates
+immediately; the `github.com` web redirect the firmware follows is CDN-cached
+and lags a few minutes). We hit this with `1.2.4` finishing ~10 s after `1.2.5`.
+A semver-correct alternative would enumerate `/releases` and pick the max
+version, but that needs the rate-limited JSON API this design deliberately avoids.
+
 ## Asset name is a contract
 
 The release **must** carry an asset named exactly `truminus.bin`; the firmware
