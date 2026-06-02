@@ -107,17 +107,6 @@ CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
 CONFIG_ESP_HOSTED_SDIO_PIN_D2=16
 CONFIG_ESP_HOSTED_SDIO_PIN_D3=17
 CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
-# SDIO RX optimization: the component default (streaming mode) does a dynamic
-# variable-size _h_malloc_align() per burst in sdio_rx_get_buffer(); under
-# memory pressure that alloc returns NULL and the driver does a hard
-# assert(*buf) (sdio_drv.c:957) instead of degrading.  A high-throughput OTA
-# download reliably triggered it on a fully-provisioned board ("assert failed:
-# sdio_rx_get_buffer (*buf)" mid-download, on 1.1.8).  RX_MAX_SIZE reads a
-# fixed 1536 B per transaction into a buffer allocated once, so the mid-stream
-# realloc — and its assert — can never happen.  Slightly less throughput than
-# streaming; OTA reliability wins.
-CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_MAX_SIZE=y
-# CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE is not set
 CONFIG_ESP_WIFI_REMOTE_ENABLED=y
 CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
