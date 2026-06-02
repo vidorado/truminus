@@ -146,6 +146,7 @@ enum class TK : uint8_t {
     OTA_AUTOCHECK,     // settings switch: "Comprobación automática" / "Auto-check"
     OTA_PROMPT,        // update modal title: "¿Actualizar ahora?" / "Update now?"
     OTA_FAILED,        // status bar after a failed install: "Error al actualizar" / "Update failed"
+    TODAY,             // solar yield suffix: "hoy" / "today"
     _COUNT
 };
 

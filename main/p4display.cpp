@@ -87,12 +87,13 @@ static constexpr int WATER_W = 320;
 // Row 2: VENTILADOR | SOLAR | INVERSOR
 static constexpr int FAN_W   = 203;
 static constexpr int SOLAR_X = 203;
-static constexpr int SOLAR_W = 242;
+static constexpr int SOLAR_W = 230;
 // INVERSOR panel — right slot of ROW 2 (was empty), wider after SOLAR/FAN
-// were narrowed (SOLAR lost its "Volt:/Carga:/Prod:" prefix labels).
+// were narrowed (SOLAR lost its "Volt:/Carga:/Prod:" prefix labels, and its
+// readout units were shrunk so the battery column could shift left).
 // Layout copied from ui/truminus_ui.eez-project ("INVERTER" panel).
-static constexpr int INV_X   = 445;
-static constexpr int INV_W   = 355;
+static constexpr int INV_X   = SOLAR_X + SOLAR_W;   // 433
+static constexpr int INV_W   = W - INV_X;           // 367
 // "AGUA LIMPIA" panel — right-most slot of ROW 1 (next to AGUA CALIENTE).
 // 214 × ROW1_H, flush against the right edge.  Layout matches
 // ui/truminus_ui.eez-project (EMPTY 1 / SOLAR_1 panel).
@@ -101,8 +102,16 @@ static constexpr int AGUA_W  = 224;
 
 // Vertical bar dimensions
 static constexpr int TANK_W        = 64;
-static constexpr int TANK_H_WATER  = 118;
+static constexpr int TANK_H_WATER  = 84;   // shortened so its top clears the temp label
 static constexpr int TANK_H_BATT   = 60;   // shortened to fit the CARGA/DESCARGA port below
+// Boiler thermometer pill: a narrow capsule (radius = W/2) with the fill
+// clipped to its rounded outline, plus scale ticks drawn inside the pill,
+// over the fill.  The fill lives inside the 2 px border, so its drawable
+// area is inset by 2 px on each side.
+static constexpr int WATER_PILL_W  = 24;
+static constexpr int WATER_TICK_W  = 7;
+static constexpr int WATER_FILL_W  = WATER_PILL_W - 4;    // inside the border
+static constexpr int WATER_FILL_H  = TANK_H_WATER - 4;    // inside the border
 
 // ── Colour palette (matches original CYD aesthetic) ───────────────────────────
 #define C_BG          lv_color_hex(0x1a1a2e)
@@ -171,14 +180,15 @@ static struct {
 
     // AGUA CALIENTE panel
     lv_obj_t* lbl_water_temp;
-    lv_obj_t* bar_water;
+    lv_obj_t* water_track;   // pill outline
+    lv_obj_t* water_fill;    // bottom-anchored fill, clipped to the pill
     lv_obj_t* btnmx_boiler;
 
     // SOLAR panel
     lv_obj_t* lbl_solar_status;
-    lv_obj_t* lbl_solar_volts;
-    lv_obj_t* lbl_solar_current;
-    lv_obj_t* lbl_solar_power;
+    lv_obj_t* lbl_solar_current;   lv_obj_t* lbl_solar_current_u;
+    lv_obj_t* lbl_solar_power;     lv_obj_t* lbl_solar_power_u;
+    lv_obj_t* lbl_solar_yield;     lv_obj_t* lbl_solar_yield_u;
     lv_obj_t* bar_batt;
     lv_obj_t* lbl_batt_soc;
     // Battery power port (CARGA/DESCARGA) below the SOC bar + its flow line
@@ -563,7 +573,7 @@ static void build_main_screen()
     lv_buttonmatrix_set_button_ctrl_all(ui.btnmx_heat, LV_BUTTONMATRIX_CTRL_CHECKABLE);
     lv_buttonmatrix_set_one_checked(ui.btnmx_heat, true);
     lv_buttonmatrix_set_selected_button(ui.btnmx_heat, 0);
-    style_btnmatrix(ui.btnmx_heat, s_font_24);
+    style_btnmatrix(ui.btnmx_heat, s_font_20);   // match the FAN buttons
     lv_obj_add_event_cb(ui.btnmx_heat, on_heat_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
     ui.row_sp = lv_obj_create(p_heat);
@@ -667,23 +677,56 @@ static void build_main_screen()
     lv_label_set_text(ui.lbl_water_temp, "--°C");
     lv_obj_set_style_text_font(ui.lbl_water_temp, s_font_22, 0);
     lv_obj_set_style_text_color(ui.lbl_water_temp, C_TEXT, 0);
-    lv_obj_set_pos(ui.lbl_water_temp, 247, 15);
+    lv_obj_set_pos(ui.lbl_water_temp, 247, 53);   // top aligned with the boiler buttons
     lv_obj_set_width(ui.lbl_water_temp, TANK_W);
     lv_obj_set_style_text_align(ui.lbl_water_temp, LV_TEXT_ALIGN_CENTER, 0);
 
-    ui.bar_water = lv_bar_create(p_water);
-    lv_obj_set_pos(ui.bar_water, 247, 49);
-    lv_obj_set_size(ui.bar_water, TANK_W, TANK_H_WATER);
-    lv_bar_set_range(ui.bar_water, 0, 70);
-    lv_bar_set_value(ui.bar_water, 0, LV_ANIM_OFF);
-    lv_bar_set_orientation(ui.bar_water, LV_BAR_ORIENTATION_VERTICAL);
-    lv_obj_set_style_bg_color(ui.bar_water, C_BG, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(ui.bar_water, C_WATER_COLD, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(ui.bar_water, 3, LV_PART_MAIN);
-    lv_obj_set_style_radius(ui.bar_water, 0, LV_PART_INDICATOR);
-    lv_obj_set_style_border_color(ui.bar_water, C_BORDER_BAT, LV_PART_MAIN);
-    lv_obj_set_style_border_width(ui.bar_water, 2, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(ui.bar_water, 2, 0);
+    // Thermometer pill, centred under the temperature label (inside the 64 px
+    // column at x=247).
+    constexpr int WP_X = 247 + (TANK_W - WATER_PILL_W) / 2;
+    constexpr int WP_Y = 85;   // below the temp label; bottom (169) matches the buttons
+
+    ui.water_track = lv_obj_create(p_water);
+    lv_obj_set_pos(ui.water_track, WP_X, WP_Y);
+    lv_obj_set_size(ui.water_track, WATER_PILL_W, TANK_H_WATER);
+    lv_obj_set_style_radius(ui.water_track, WATER_PILL_W / 2, 0);
+    lv_obj_set_style_clip_corner(ui.water_track, true, 0);
+    lv_obj_set_style_bg_color(ui.water_track, C_BG, 0);
+    lv_obj_set_style_bg_opa(ui.water_track, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(ui.water_track, C_BORDER_BAT, 0);
+    lv_obj_set_style_border_width(ui.water_track, 2, 0);
+    lv_obj_set_style_pad_all(ui.water_track, 0, 0);
+    lv_obj_clear_flag(ui.water_track, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Bottom-anchored rectangular fill.  The track's clip_corner rounds it to
+    // the pill outline: round at the bottom, flat on top while rising, and
+    // rounding off at the top once it reaches the capsule's upper end.
+    ui.water_fill = lv_obj_create(ui.water_track);
+    lv_obj_set_size(ui.water_fill, WATER_FILL_W, 0);
+    lv_obj_set_align(ui.water_fill, LV_ALIGN_BOTTOM_MID);
+    lv_obj_set_style_radius(ui.water_fill, 0, 0);
+    lv_obj_set_style_bg_color(ui.water_fill, C_WATER_COLD, 0);
+    lv_obj_set_style_bg_opa(ui.water_fill, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(ui.water_fill, 0, 0);
+    lv_obj_set_style_pad_all(ui.water_fill, 0, 0);
+    lv_obj_clear_flag(ui.water_fill, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Scale ticks (6 marks) down the right side, inside the pill.  Created
+    // after the fill so they draw on top of it; coloured like the panel
+    // background so they read as notches cut into the fill, and inset 2 px
+    // from the right edge so they never touch the border.
+    for (int k = 1; k <= 6; k++) {
+        lv_obj_t* tk = lv_obj_create(ui.water_track);
+        lv_obj_set_pos(tk, WATER_FILL_W - WATER_TICK_W - 2,
+                       WATER_FILL_H - (WATER_FILL_H * k) / 7 - 1);
+        lv_obj_set_size(tk, WATER_TICK_W, 2);
+        lv_obj_set_style_bg_color(tk, C_BG, 0);
+        lv_obj_set_style_bg_opa(tk, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(tk, 0, 0);
+        lv_obj_set_style_radius(tk, 1, 0);
+        lv_obj_set_style_pad_all(tk, 0, 0);
+        lv_obj_clear_flag(tk, LV_OBJ_FLAG_SCROLLABLE);
+    }
 
     ui.btnmx_boiler = lv_buttonmatrix_create(p_water);
     lv_obj_set_pos(ui.btnmx_boiler, 12, 53);
@@ -698,7 +741,7 @@ static void build_main_screen()
     // ── SOLAR panel (col2 row2) ───────────────────────────────────────────────
     lv_obj_t* p_sol = make_section(scr, SOLAR_X, ROW2_Y, SOLAR_W, ROW2_H);
 
-    static constexpr int BATT_X = 165;
+    static constexpr int BATT_X = 150;
     static constexpr int BATT_Y = 46;
     static constexpr int NUB_W  = 12, NUB_H = 7;
 
@@ -712,10 +755,36 @@ static void build_main_screen()
     lv_obj_set_width(ui.lbl_batt_soc, TANK_W);
     lv_obj_set_style_text_align(ui.lbl_batt_soc, LV_TEXT_ALIGN_CENTER, 0);
 
-    ui.lbl_solar_status  = make_label(p_sol, "--", s_font_22, C_TEXT,    12,  52);
-    ui.lbl_solar_volts   = make_label(p_sol, "--", s_font_20, C_CYAN,    12,  82);
-    ui.lbl_solar_current = make_label(p_sol, "--", s_font_20, C_CYAN_BR, 12, 111);
-    ui.lbl_solar_power   = make_label(p_sol, "--", s_font_20, C_YELLOW,  12, 140);
+    ui.lbl_solar_status  = make_label(p_sol, "--", s_font_22, C_TEXT, 12, 52);
+
+    // Each reading is a flex row [value (s_font_20) | unit (s_font_14)] whose
+    // children are bottom-aligned so the small unit sits on the value baseline.
+    // The smaller unit narrows the readout, freeing room for the battery column.
+    auto make_reading = [&](int y, lv_color_t color,
+                            lv_obj_t** val_out, lv_obj_t** unit_out) {
+        lv_obj_t* row = lv_obj_create(p_sol);
+        lv_obj_set_pos(row, 12, y);
+        lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_set_style_pad_column(row, 3, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START,
+                              LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+        *val_out  = make_label(row, "--", s_font_20, color, 0, 0);
+        *unit_out = make_label(row, "",   s_font_14, color, 0, 0);
+        // Nudge the unit up 3 px: bottom-aligned boxes don't share a baseline
+        // because the two fonts have different descender heights.
+        lv_obj_set_style_translate_y(*unit_out, -3, 0);
+    };
+    make_reading( 82, C_CYAN,    &ui.lbl_solar_current, &ui.lbl_solar_current_u);
+    make_reading(111, C_CYAN_BR, &ui.lbl_solar_power,   &ui.lbl_solar_power_u);
+    make_reading(140, C_YELLOW,  &ui.lbl_solar_yield,   &ui.lbl_solar_yield_u);
+    // Per-unit baseline tweaks (make_reading lifts every unit by 3 px).
+    lv_obj_set_style_translate_y(ui.lbl_solar_current_u, -2, 0);  // "A"
+    lv_obj_set_style_translate_y(ui.lbl_solar_yield_u,   -2, 0);  // "kWh"
 
     auto make_nub = [&](int x) {
         lv_obj_t* n = lv_obj_create(p_sol);
@@ -786,9 +855,9 @@ static void build_main_screen()
     }
 
     {
-        // Port spans 16 px wider than the bar so "DESCARGA" fits; stays
+        // Port spans 24 px wider than the bar so "DESCARGA" fits; stays
         // centred on the bar (and thus on the flow line) above it.
-        auto r = make_io_box(p_sol, BATT_X - 8, 142, TANK_W + 16, 28,
+        auto r = make_io_box(p_sol, BATT_X - 12, 142, TANK_W + 24, 28,
                              t(TK::BATT_CHARGE), 18);
         ui.lbl_bpwr_w = r.val;
         ui.box_bpwr = r.box; ui.hdr_bpwr = r.head; ui.hdr_bpwr_lbl = r.head_lbl;
@@ -820,12 +889,12 @@ static void build_main_screen()
             ui.box_mains = r.box; ui.hdr_mains = r.head; ui.hdr_mains_lbl = r.head_lbl;
         }
         {
-            auto r = make_io_box(p_inv, 248, 56, 90, 29, t(TK::INV_LOADS));
+            auto r = make_io_box(p_inv, 248, 56, 98, 29, t(TK::INV_LOADS));
             ui.lbl_inv_load_w = r.val;
             ui.box_load = r.box; ui.hdr_load = r.head;
         }
         {
-            auto r = make_io_box(p_inv, 248, 120, 90, 29, "BAT.");
+            auto r = make_io_box(p_inv, 248, 120, 98, 29, "BAT.");
             ui.lbl_inv_batt_w = r.val;
             ui.box_batt = r.box; ui.hdr_batt = r.head; ui.hdr_batt_lbl = r.head_lbl;
         }
@@ -1032,7 +1101,11 @@ static void build_main_screen()
     lv_obj_clear_flag(statusbar, LV_OBJ_FLAG_SCROLLABLE);
 
     ui.lbl_status = lv_label_create(statusbar);
-    lv_label_set_text(ui.lbl_status, t(TK::STATUS_INIT));
+    // Start empty: this slot is for actions/errors only.  The main screen is
+    // built after the 2 s splash, by which point the boot "Iniciando…" phase
+    // is over — baking it in here left it stuck (the clear in main.cpp fires
+    // its -1→0 transition before this label exists).
+    lv_label_set_text(ui.lbl_status, "");
     lv_obj_set_style_text_font(ui.lbl_status, s_font_20, 0);
     lv_obj_set_style_text_color(ui.lbl_status, C_LABEL, 0);
     lv_label_set_long_mode(ui.lbl_status, LV_LABEL_LONG_DOT);
@@ -1754,38 +1827,45 @@ void p4DisplayUpdate(const P4DisplayData& d)
         lv_obj_set_style_text_color(ui.icon_bt, btc, 0);
     }
 
-    // Water tank
+    // Boiler thermometer.  The scale tops out at the selected boiler target
+    // (40 °C in eco, 60 °C otherwise) so the fill rescales with the setpoint.
     if (!std::isnan(d.waterTemp)) {
         lv_label_set_text_fmt(ui.lbl_water_temp, "%.0f°C", d.waterTemp);
-        int wv = (int)d.waterTemp;
-        if (wv < 0)  wv = 0;
-        if (wv > 70) wv = 70;
-        lv_bar_set_value(ui.bar_water, wv, LV_ANIM_ON);
+        float scaleMax = (d.boilerMode == 1) ? 40.0f : 60.0f;
+        float frac = d.waterTemp / scaleMax;
+        if (frac < 0.0f) frac = 0.0f;
+        if (frac > 1.0f) frac = 1.0f;
+        lv_obj_set_height(ui.water_fill, (int)(frac * WATER_FILL_H + 0.5f));
         lv_color_t wc = (d.waterTemp < 30.0f) ? C_WATER_COLD
                       : (d.waterTemp < 51.0f) ? C_WATER_WARM
                                               : C_WATER_HOT;
-        lv_obj_set_style_bg_color(ui.bar_water, wc, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(ui.water_fill, wc, 0);
     } else {
         lv_label_set_text(ui.lbl_water_temp, "--°C");
-        lv_bar_set_value(ui.bar_water, 0, LV_ANIM_OFF);
+        lv_obj_set_height(ui.water_fill, 0);
     }
 
     // Solar data — when invalid show "--" everywhere
     if (d.solar.valid) {
         lv_label_set_text(ui.lbl_solar_status, translate_solar_status(d.solar.status));
-        snprintf(buf, sizeof(buf), "%.1f V", d.solar.voltageV);
-        lv_label_set_text(ui.lbl_solar_volts, buf);
         char g[20];
-        snprintf(buf, sizeof(buf), "%.1f A / %s W", d.solar.currentA,
-                 group_int(g, sizeof(g), d.solar.powerW));
+        snprintf(buf, sizeof(buf), "%.1f", d.solar.currentA);
         lv_label_set_text(ui.lbl_solar_current, buf);
-        snprintf(buf, sizeof(buf), "%s W", group_int(g, sizeof(g), d.solar.powerW));
-        lv_label_set_text(ui.lbl_solar_power, buf);
+        lv_label_set_text(ui.lbl_solar_current_u, "A");
+        lv_label_set_text(ui.lbl_solar_power, group_int(g, sizeof(g), d.solar.powerW));
+        lv_label_set_text(ui.lbl_solar_power_u, "W");
+        snprintf(buf, sizeof(buf), "%.2f", d.solar.kWhToday);
+        lv_label_set_text(ui.lbl_solar_yield, buf);
+        snprintf(buf, sizeof(buf), "kWh %s", t(TK::TODAY));
+        lv_label_set_text(ui.lbl_solar_yield_u, buf);
     } else {
         lv_label_set_text(ui.lbl_solar_status,  "--");
-        lv_label_set_text(ui.lbl_solar_volts,   "--");
         lv_label_set_text(ui.lbl_solar_current, "--");
+        lv_label_set_text(ui.lbl_solar_current_u, "");
         lv_label_set_text(ui.lbl_solar_power,   "--");
+        lv_label_set_text(ui.lbl_solar_power_u,   "");
+        lv_label_set_text(ui.lbl_solar_yield,   "--");
+        lv_label_set_text(ui.lbl_solar_yield_u,   "");
     }
 
     // Battery

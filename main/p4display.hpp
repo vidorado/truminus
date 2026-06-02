@@ -25,6 +25,7 @@ struct P4SolarData {
     float       voltageV;
     float       currentA;
     int         powerW;
+    float       kWhToday;  // yield today [kWh]
 };
 
 struct P4BattData {

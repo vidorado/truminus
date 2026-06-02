@@ -713,7 +713,8 @@ extern "C" void app_main(void)
     // main screen still renders, just with empty fields that fill in as
     // each subsystem comes online).
     p4DisplayInit();
-    p4DisplaySetStatus(t(TK::STATUS_INIT));
+    // (No boot status here: the status bar belongs to build_main_screen, which
+    // runs after the splash — setting it now would target a not-yet-built label.)
 
     // Spawn the heavy init in a background task so the splash is on screen
     // immediately and the LVGL refresh task is not starved by app_main.
@@ -759,6 +760,7 @@ extern "C" void app_main(void)
             d.solar.voltageV = vd.battV;
             d.solar.currentA = vd.battA;
             d.solar.powerW   = (int)vd.pvW;
+            d.solar.kWhToday = vd.kWhToday;
         } else {
             d.solar.valid = false;
         }
