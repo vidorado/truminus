@@ -1607,6 +1607,9 @@ static void upd_stop_timer() {
 
 static void upd_back_cb(lv_event_t*) {
     upd_stop_timer();
+    // Resume BLE scanning we paused on entry (see show_updates).
+    victronBleResume();
+    ultimatronBleResume();
     lv_obj_t* cur = lv_screen_active();
     lv_screen_load(s_upd_prev);
     lv_obj_delete(cur);
@@ -1664,6 +1667,15 @@ static void upd_timer_cb(lv_timer_t*) { upd_refresh(); }
 static void show_updates(lv_obj_t* from) {
     const P4Fonts* f = p4GetFonts();
     s_upd_prev = from;
+
+    // Free the shared C6 radio for the duration of this screen.  BLE runs a
+    // continuous scan window (RX-range recovery under coex), which starves
+    // WiFi enough that the GitHub version check stalls on "Checking…" — and an
+    // install download would crawl.  Pause BLE on entry; upd_back_cb resumes
+    // it (the install path manages BLE itself and reboots / returns to main,
+    // so it never comes back to this screen with BLE left paused).
+    victronBleSuspend();
+    ultimatronBleSuspend();
 
     lv_obj_t* scr = build_title_bar(t(TK::UPDATES_TITLE), upd_back_cb);
 

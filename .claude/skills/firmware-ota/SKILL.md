@@ -180,3 +180,11 @@ idle / LRU past 10 GB). When a release goes cold, run `ci` manually once
 ## UI surfaces
 
 Install progress on the LCD OTA screen + WS `{"command":"ota",…,"installing":true,"progress":N}`.
+
+The LCD **"Actualizaciones" settings screen** (`show_updates` in
+`main/p4settings.cpp`) **pauses BLE on entry and resumes it in `upd_back_cb`**
+(`victronBleSuspend()`/`ultimatronBleSuspend()` — flag-only, idempotent). BLE's
+continuous scan window (RX-range recovery under C6 coex) otherwise starves WiFi
+enough that the GitHub version check hangs on "Checking…" and a download
+crawls. The install path manages BLE itself (suspend + resume-on-fail / reboot)
+and never returns to this screen, so it can't be left paused.
