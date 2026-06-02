@@ -65,21 +65,37 @@ redirect URL → "HTTP_CLIENT: Out of buffer"). A throughput log
 bottleneck is the network or the serialized flash writes. The dominant
 real-world speed fix was **WiFi power save** (pio-idf-p4 SKILL §12).
 
-**SDIO RX mode must NOT be streaming, or the download hard-asserts.**
-`esp_hosted`'s default `CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE`
-makes `sdio_rx_get_buffer()` (sdio_drv.c) do a dynamic, burst-sized
-`_h_malloc_align()` and then `assert(*buf)` — so when that internal-DRAM
-allocation fails under the load of a high-throughput OTA download, the device
-*panics* (`assert failed: sdio_rx_get_buffer (*buf)`) instead of degrading.
-This hit a fully-provisioned board mid-download (begin/get_img_desc had already
-succeeded) and left it unable to self-update. Fix: select
-`CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_MAX_SIZE=y` in `sdkconfig.defaults` +
-the tracked `sdkconfig` (the driver keys off the `ESP_HOSTED_` symbol →
-`H_SDIO_HOST_RX_MODE`), so each RX reads a fixed 1536 B into a one-time buffer —
-no mid-stream realloc, no assert. It's in the *running* image's download path,
-so a stuck board has to be **USB-flashed once** onto a fixed build before its
-OTAs survive; the suspend-during-download (tunnel + BLE) was already present
-and is not enough on its own.
+**OPEN ISSUE — SDIO RX streaming asserts on a memory-tight download.**
+`esp_hosted`'s streaming RX mode makes `sdio_rx_get_buffer()` (sdio_drv.c) do a
+dynamic, burst-sized DMA-capable `_h_malloc_align()` and then `assert(*buf)` —
+so when that internal-DRAM allocation fails under a high-throughput OTA
+download the device *panics* (`assert failed: sdio_rx_get_buffer (*buf)`,
+sdio_drv.c:953/957) instead of degrading. A fully-provisioned board (tunnel +
+BLE) hit this mid-download (begin/get_img_desc had already succeeded) on 1.1.8,
+**even though mbedtls is already moved to PSRAM** (`sdkconfig.defaults` lines
+~20-41, which previously fixed this same assert during the WSS handshake) and
+the install task already suspends the tunnel + Victron + Ultimatron BLE. So the
+remaining internal-DRAM headroom is still too thin on a busy board.
+
+**Do NOT "fix" it by switching the host to packet mode**
+(`CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_MAX_SIZE`/`_RX_NONE`). The C6 *slave*
+firmware (`main/slave_fw/network_adapter.bin`, built by `make build-c6`) is
+compiled in streaming mode, and the transport does a startup handshake that
+**aborts** on mismatch: `transport: SDIO mode mismatch: slave is in streaming
+mode, but host is in packet mode. Aborting.` → `assert failed:
+process_init_event transport_drv.c:879`. Both sides must agree, and a config-
+only slave change does **not** bump the slave version, so `c6OtaNeeded()`
+(version compare) won't auto-reflash the C6 to match. (Tried + reverted in the
+1f52192/83753d1 pair.)
+
+Candidate real fixes, to pick once the watermark log narrows it down — the
+install loop now logs `free_int`/`min` per decile + `OTA transfer min free
+internal DRAM = N B`: (a) free more internal DRAM during the window; (b) pace
+`esp_https_ota_perform` so the streaming buffer stays small; (c) the clean but
+heavy route — rebuild the C6 slave in packet mode *and* bump its version so the
+C6-OTA migrates it, then set packet mode on the host too. Any fix lives in the
+*running* image's download path, so a stuck board must be **USB-flashed once**
+onto the fixed build first.
 
 ## Rollback safety net
 

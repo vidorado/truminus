@@ -396,7 +396,18 @@ static void install_task(void*) {
         int64_t t_start    = esp_timer_get_time();
         int64_t t_seg      = t_start;   // start of the current decile segment
         int     seg_bytes0 = 0;         // bytes read at the segment start
+        // Track the lowest free internal DRAM seen during the transfer.  The
+        // esp_hosted SDIO RX path (streaming mode) does a dynamic DMA-capable
+        // alloc per burst in sdio_rx_get_buffer() and HARD-ASSERTS if it
+        // returns NULL — a fully-provisioned board hit exactly this mid-
+        // download even with mbedtls already moved to PSRAM.  Logging the
+        // watermark every decile shows how close to zero we run, so the real
+        // fix (free more internal RAM / pace the transfer / packet mode on
+        // both C6 + host) can be chosen from data rather than guesswork.
+        size_t dl_min_int = SIZE_MAX;
         while ((err = esp_https_ota_perform(h)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
+            size_t fi = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+            if (fi < dl_min_int) dl_min_int = fi;
             int read = esp_https_ota_get_image_len_read(h);
             int pct  = (total > 0) ? (int)((int64_t)read * 100 / total) : 0;
             if (pct != last_pct) {
@@ -411,13 +422,15 @@ static void install_task(void*) {
                     double  dt  = (now - t_seg) / 1e6;          // s in this decile
                     int     db  = read - seg_bytes0;            // bytes in decile
                     if (dt > 0)
-                        ESP_LOGI(TAG, "OTA %3d%%  segment %.1f KB/s",
-                                 pct, (db / 1024.0) / dt);
+                        ESP_LOGI(TAG, "OTA %3d%%  segment %.1f KB/s  free_int=%u min=%u",
+                                 pct, (db / 1024.0) / dt,
+                                 (unsigned)fi, (unsigned)dl_min_int);
                     t_seg      = now;
                     seg_bytes0 = read;
                 }
             }
         }
+        ESP_LOGI(TAG, "OTA transfer min free internal DRAM = %u B", (unsigned)dl_min_int);
 
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "ota_perform failed: %s", esp_err_to_name(err));
