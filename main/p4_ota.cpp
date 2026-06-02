@@ -69,6 +69,17 @@ static constexpr uint32_t SELFTEST_FAST_MIN_MS = 30 * 1000;   // earliest valida
 static constexpr uint32_t SELFTEST_CEILING_MS  = 60 * 1000;   // validate regardless
 static constexpr uint32_t SELFTEST_SAMPLE_MS   = 2000;
 
+// Download backpressure.  esp_hosted's streaming SDIO RX does a burst-sized
+// DMA-capable alloc per transaction and HARD-ASSERTS on a NULL (sdio_drv.c).
+// Measured steady free internal DRAM during a real download is ~14 KB — thin
+// enough that a fragmentation-unlucky burst can fail intermittently (it did,
+// once).  When headroom drops below the floor we add a small delay in the
+// perform loop: the consumer slows, TCP backpressure shrinks the incoming
+// bursts, and the streaming alloc stays small.  Adaptive, so a board with
+// plenty of headroom still downloads at full speed.
+static constexpr size_t   OTA_DL_PACE_FLOOR = 20 * 1024;   // free-int below this → pace
+static constexpr uint32_t OTA_DL_PACE_MS    = 5;
+
 // ── Shared status ───────────────────────────────────────────────────────
 // Created at static-init time (C++ global constructors run on the main task
 // with the FreeRTOS scheduler already up) so the public getters are safe to
@@ -408,6 +419,10 @@ static void install_task(void*) {
         while ((err = esp_https_ota_perform(h)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
             size_t fi = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
             if (fi < dl_min_int) dl_min_int = fi;
+            // Adaptive backpressure when internal DRAM is tight (see constants):
+            // slows the consumer so the SDIO streaming bursts — and their
+            // assert-prone DMA alloc — stay small.  No-op on a roomy board.
+            if (fi < OTA_DL_PACE_FLOOR) vTaskDelay(pdMS_TO_TICKS(OTA_DL_PACE_MS));
             int read = esp_https_ota_get_image_len_read(h);
             int pct  = (total > 0) ? (int)((int64_t)read * 100 / total) : 0;
             if (pct != last_pct) {

@@ -65,7 +65,7 @@ redirect URL → "HTTP_CLIENT: Out of buffer"). A throughput log
 bottleneck is the network or the serialized flash writes. The dominant
 real-world speed fix was **WiFi power save** (pio-idf-p4 SKILL §12).
 
-**OPEN ISSUE — SDIO RX streaming asserts on a memory-tight download.**
+**Memory-tight download — SDIO RX streaming can assert intermittently.**
 `esp_hosted`'s streaming RX mode makes `sdio_rx_get_buffer()` (sdio_drv.c) do a
 dynamic, burst-sized DMA-capable `_h_malloc_align()` and then `assert(*buf)` —
 so when that internal-DRAM allocation fails under a high-throughput OTA
@@ -74,8 +74,16 @@ sdio_drv.c:953/957) instead of degrading. A fully-provisioned board (tunnel +
 BLE) hit this mid-download (begin/get_img_desc had already succeeded) on 1.1.8,
 **even though mbedtls is already moved to PSRAM** (`sdkconfig.defaults` lines
 ~20-41, which previously fixed this same assert during the WSS handshake) and
-the install task already suspends the tunnel + Victron + Ultimatron BLE. So the
-remaining internal-DRAM headroom is still too thin on a busy board.
+the install task already suspends the tunnel + Victron + Ultimatron BLE.
+Measured: steady free internal DRAM during a real download is **~14 KB**
+(`OTA transfer min free internal DRAM = 14055 B`) — and the *same* image
+downloaded fine on the next try, so the assert is **intermittent**
+(fragmentation-/burst-unlucky), not deterministic. Mitigation (not a switch to
+packet mode — that bricks the transport, see below): **adaptive download
+backpressure** — when `free_int < OTA_DL_PACE_FLOOR` (20 KB) the perform loop
+adds a `OTA_DL_PACE_MS` (5 ms) delay, so the consumer slows, TCP backpressure
+shrinks the SDIO bursts, and the streaming alloc stays small. A roomy board
+still downloads full speed.
 
 **Do NOT "fix" it by switching the host to packet mode**
 (`CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_MAX_SIZE`/`_RX_NONE`). The C6 *slave*
@@ -88,13 +96,14 @@ only slave change does **not** bump the slave version, so `c6OtaNeeded()`
 (version compare) won't auto-reflash the C6 to match. (Tried + reverted in the
 1f52192/83753d1 pair.)
 
-Candidate real fixes, to pick once the watermark log narrows it down — the
-install loop now logs `free_int`/`min` per decile + `OTA transfer min free
-internal DRAM = N B`: (a) free more internal DRAM during the window; (b) pace
-`esp_https_ota_perform` so the streaming buffer stays small; (c) the clean but
-heavy route — rebuild the C6 slave in packet mode *and* bump its version so the
-C6-OTA migrates it, then set packet mode on the host too. Any fix lives in the
-*running* image's download path, so a stuck board must be **USB-flashed once**
+The install loop logs `free_int`/`min` per decile + `OTA transfer min free
+internal DRAM = N B` so the margin stays visible. If the adaptive pacing turns
+out not to be enough on an even busier board, the remaining levers are: (a)
+free more internal DRAM during the window (what else to suspend?); (c) the
+clean but heavy route — rebuild the C6 slave in packet mode *and* bump its
+version so the C6-OTA migrates it, then set packet mode on the host too (note
+the transport-mode bootstrap trap above makes this risky). Any download-side
+fix lives in the *running* image, so a stuck board must be **USB-flashed once**
 onto the fixed build first.
 
 ## Rollback safety net
