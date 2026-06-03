@@ -1,7 +1,9 @@
 #include "truma_lin.hpp"
 #include "lin_driver.hpp"
+#include "lin_codec.hpp"
 #include "p4display.hpp"
 #include "p4_ota.hpp"
+#include "mode_controller.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -39,11 +41,10 @@ uint8_t masterTx[8];
 uint8_t masterRx[8];
 
 // ── Encoding helpers (ported from trumaframes.cpp) ────────────────────────
-
-void encodeTempKelvinX10(double celsius, uint8_t* dest /*2 bytes*/) {
-    uint16_t raw = (uint16_t)htole16((uint16_t)lround((celsius + 273.0) * 10.0));
-    memcpy(dest, &raw, 2);
-}
+// The stateless value codec (encodeTempKelvinX10, parseF21*, parseF22*) lives
+// in the IDF-free lin_codec.{hpp,cpp} module so it can be host-tested against
+// the real code. The frame-assembly helpers below stay here: they mutate the
+// shared f02/f20/… frame buffers.
 
 // Frame 0x20 bytes 0-1: room setpoint as 12-bit K×10 + flags nibble 0xA.
 // celsius outside [5,30] → 0xAA 0xAA (heating-off sentinel from CP-Plus capture).
@@ -100,27 +101,8 @@ void f07_setPumpOrFan(uint8_t pumpOrFan) {
     f07.data[1] = 0xFE;
 }
 
-// ── Frame 0x21 parse ──────────────────────────────────────────────────────
-//
-// byte 0   = Kelvin×10 LSB (bits 7:0 of room temp 12-bit value)
-// byte 1   = bits 3:0 → room K×10 bits 11:8, bits 7:4 → water K×10 bits 3:0
-// byte 2   = water K×10 bits 11:4
-// Range gates: room ∈ [0,50] °C, water ∈ [0,100] °C — anything else → -273.
-double parseF21RoomTemp(const uint8_t* d) {
-    uint16_t raw = (uint16_t)d[0] | ((uint16_t)(d[1] & 0x0F) << 8);
-    double t = raw / 10.0 - 273.0;
-    return (t < 0.0 || t > 50.0) ? NAN : t;
-}
-double parseF21WaterTemp(const uint8_t* d) {
-    uint16_t raw = (uint16_t)(d[1] >> 4) | ((uint16_t)d[2] << 4);
-    double t = raw / 10.0 - 273.0;
-    return (t < 0.0 || t > 100.0) ? NAN : t;
-}
-
-// 0x22 byte1: 0x40/0x50 = water heating, 0x00=off, 0xD0=idle.
-bool parseF22WaterHeating(const uint8_t* d) {
-    return (d[1] & 0xC0) == 0x40;
-}
+// Frame 0x21/0x22 parsers (parseF21RoomTemp/parseF21WaterTemp/
+// parseF22WaterHeating) now live in lin_codec.{hpp,cpp}.
 
 // ── Master frame helpers (transport over 0x3C / 0x3D) ─────────────────────
 
@@ -158,48 +140,6 @@ void publish_snapshot(const TrumaLinSnapshot& s) {
     if (g_lock && xSemaphoreTake(g_lock, pdMS_TO_TICKS(10)) == pdTRUE) {
         g_snap = s;
         xSemaphoreGive(g_lock);
-    }
-}
-
-// ── Operating-mode derivation (port of legacy linBusTask logic) ───────────
-//
-// Maps the LCD's (heatingOn, fanMode 0/1/2/3..12, boilerMode 0..3, roomSetpoint)
-// to the byte-level values the Truma expects:
-//   *pumpOrFan: 0x10..0x1A for fan-only modes, 1=eco-heat, 2=high-heat
-//   *roomSp:    0 when heating off, else roomSetpoint
-//   *waterSp:   from boilerMode (0=off, 1=40°C, 2/3=60°C)
-//
-// Legacy fan int encoding was 0=off / -1=eco / -2=high / 1..10=level.
-// p4display uses 0=off / 1=eco / 2=high / 3..12=level — translated here.
-void derive_mode(const P4ControlState& cs,
-                 uint8_t& pumpOrFan, double& roomSp, double& waterSp)
-{
-    int legacyFan;  // 0=off, -1=eco, -2=high, 1..10=level
-    if      (cs.fanMode == 0) legacyFan = 0;
-    else if (cs.fanMode == 1) legacyFan = -1;
-    else if (cs.fanMode == 2) legacyFan = -2;
-    else                      legacyFan = cs.fanMode - 2;   // 1..10
-
-    if (!cs.heatingOn) {
-        // Heating off → fan-only modes use the 0x10 base; eco/high stay
-        // mapped to 0x11 / 0x12 (Truma still expects those even without heat).
-        if      (legacyFan > 0)   pumpOrFan = 0x10 | legacyFan;
-        else if (legacyFan == -1) pumpOrFan = 0x11;
-        else if (legacyFan == -2) pumpOrFan = 0x12;
-        else                      pumpOrFan = 0x10;
-        roomSp = 0.0;
-    } else {
-        roomSp = cs.roomSetpoint;
-        // Heating on + numeric fan level: legacy code forced level→eco/high.
-        // Keep that compromise — Truma rejects level numbers in heat mode.
-        pumpOrFan = (legacyFan == -2) ? 2 : 1;
-    }
-
-    switch (cs.boilerMode) {
-        case 1:  waterSp = 40.0; break;
-        case 2:  waterSp = 60.0; break;
-        case 3:  waterSp = 60.0; break;   // boost (no waterboost cycle in MVP)
-        default: waterSp = 0.0;  break;
     }
 }
 
@@ -348,20 +288,18 @@ void lin_task(void*) {
         P4ControlState cs;
         p4GetControlState(cs);
 
-        uint8_t pumpOrFan;
-        double  roomSp, waterSp;
-        derive_mode(cs, pumpOrFan, roomSp, waterSp);
+        TrumaLinSetpoints setpoints = derive_mode(cs);
 
         // 2. Encode setpoint frames.
         encodeTempKelvinX10(-273.0,            &f02.data[0]);   // no simulated temp
-        encodeTempKelvinX10(roomSp,            &f03.data[0]);
-        encodeTempKelvinX10(waterSp,           &f04.data[0]);
+        encodeTempKelvinX10(setpoints.roomSp,  &f03.data[0]);
+        encodeTempKelvinX10(setpoints.waterSp, &f04.data[0]);
         f05_setEnergySelection(cs.energyIdx);
         f06_setPowerLimit(cs.energyIdx);
-        f07_setPumpOrFan(pumpOrFan);
-        f20_setRoomSetpoint(roomSp);
-        f20_setWaterSetpoint(waterSp);
-        f20_setFanAndWater(pumpOrFan, (waterSp > 0.0) ? 1 : 0);
+        f07_setPumpOrFan(setpoints.pumpOrFan);
+        f20_setRoomSetpoint(setpoints.roomSp);
+        f20_setWaterSetpoint(setpoints.waterSp);
+        f20_setFanAndWater(setpoints.pumpOrFan, (setpoints.waterSp > 0.0) ? 1 : 0);
 
         // 3. Drive the on/off state machine.
         bool active = cs.heatingOn || cs.boilerMode > 0 || cs.fanMode > 0;

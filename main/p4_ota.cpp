@@ -1,4 +1,5 @@
 #include "p4_ota.hpp"
+#include "version_compare.hpp"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -199,42 +200,13 @@ static void broadcast_status() {
 }
 
 // ── Version helpers ──────────────────────────────────────────────────────
-// Parse a leading [v]MAJOR.MINOR[.PATCH] from `s`.  Returns false if no
-// numeric major could be read.  Trailing git-describe suffix ("-3-gabc1")
-// is ignored.
-static bool parse_semver(const char* s, int* mj, int* mn, int* pt) {
-    if (!s) return false;
-    while (*s == 'v' || *s == 'V' || *s == ' ') s++;
-    int a = 0, b = 0, c = 0;
-    int n = sscanf(s, "%d.%d.%d", &a, &b, &c);
-    if (n < 1) return false;
-    *mj = a; *mn = b; *pt = c;
-    return true;
-}
-
-// >0 if `a` newer than `b`, 0 if equal, <0 if older.  Unparseable → treated
-// conservatively as "not newer" (returns <=0).
-static int semver_cmp(const char* a, const char* b) {
-    int am, an, ap, bm, bn, bp;
-    if (!parse_semver(a, &am, &an, &ap)) return -1;
-    if (!parse_semver(b, &bm, &bn, &bp)) return 1;
-    if (am != bm) return am - bm;
-    if (an != bn) return an - bn;
-    return ap - bp;
-}
-
-// True if `latest` is a newer MINOR or MAJOR than `running` (a patch-only
-// bump returns false).  Gates the *proactive* auto-notification (topbar
-// reminder icon + prompt modal) so patch releases don't nag the user; manual
-// checks (settings screen / `ota check`) and install still use plain
-// semver_cmp, so patches are surfaced and installable when explicitly sought.
-static bool is_minor_or_major_newer(const char* latest, const char* running) {
-    int lm, ln, lp, rm, rn, rp;
-    if (!parse_semver(latest, &lm, &ln, &lp)) return false;
-    if (!parse_semver(running, &rm, &rn, &rp)) return false;
-    if (lm != rm) return lm > rm;   // major bump
-    return ln > rn;                 // same major: only a minor increase counts
-}
+// parse_semver / semver_cmp / is_minor_or_major_newer live in the IDF-free
+// version_compare.{hpp,cpp} module so they can be host-tested against the real
+// code (test/host/test_semver.cpp). Note on the gating policy: the proactive
+// auto-notification (topbar reminder icon + prompt modal) uses
+// is_minor_or_major_newer so patch releases don't nag the user, while manual
+// checks (settings screen / `ota check`) and install use plain semver_cmp, so
+// patches are still surfaced and installable when explicitly sought.
 
 static const char* running_version() {
     const esp_app_desc_t* d = esp_app_get_description();

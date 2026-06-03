@@ -2,6 +2,7 @@
 #include "freertos/FreeRTOS.h"
 #include "lvgl.h"
 #include <stdint.h>
+#include "control_state.hpp"
 
 // Shared font set — available after p4DisplayInit() returns.
 struct P4Fonts {
@@ -89,14 +90,8 @@ struct P4DisplayData {
 };
 
 // ── Control state — reflects user button presses ─────────────────────────
-
-struct P4ControlState {
-    bool  heatingOn;
-    int   fanMode;
-    int   boilerMode;
-    int   energyIdx;
-    float roomSetpoint;
-};
+// P4ControlState lives in control_state.hpp (IDF-free) so pure logic can be
+// host-tested; it is included at the top of this header.
 
 // Returns the current interactive state (modified by on-screen button presses).
 // Call before building the next P4DisplayData so the demo loop reflects user input.

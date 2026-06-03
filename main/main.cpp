@@ -22,6 +22,7 @@
 #include "multiplusble.hpp"
 #include "am2301.hpp"
 #include "flags.h"
+#include "mode_controller.hpp"
 
 // LIN bus pins on the JC4880-P4 board — wired to connector J5.
 // UART_NUM_1 is fixed inside truma_lin.cpp (UART0 is the debug console).
@@ -60,49 +61,6 @@ static const char* multiPowerJson(int32_t w, char* buf, size_t n) {
 static bool multiPowerChanged(int32_t a, int32_t b) {
     if (a == MULTI_POWER_NA || b == MULTI_POWER_NA) return a != b;
     return abs(a - b) > 5;
-}
-
-// ── String ↔ int helpers for the wire protocol ───────────────────────────
-//
-// The web UI uses string values for fan/boiler ("eco"/"high"/"1".."10"/etc.);
-// the LCD state uses ints.  These two helpers are the single source of truth
-// for the mapping and are used both when applying remote commands and when
-// broadcasting LCD-originated changes back to the web.
-
-// Fan: 0=off, 1=eco, 2=high, 3..12 = level 1..10.  Unknown strings → -1.
-static int fanStrToInt(const char* v) {
-    if (!v) return -1;
-    if (strcmp(v, "off")  == 0) return 0;
-    if (strcmp(v, "eco")  == 0) return 1;
-    if (strcmp(v, "high") == 0) return 2;
-    int n = atoi(v);
-    if (n >= 1 && n <= 10) return n + 2;
-    return -1;
-}
-static const char* fanIntToStr(int m) {
-    static char lvl[4];
-    switch (m) {
-        case 0:  return "off";
-        case 1:  return "eco";
-        case 2:  return "high";
-        default:
-            if (m >= 3 && m <= 12) { snprintf(lvl, sizeof(lvl), "%d", m - 2); return lvl; }
-            return "off";
-    }
-}
-
-// Boiler: 0=off, 1=eco, 2=high, 3=boost.
-static int boilerStrToInt(const char* v) {
-    if (!v) return -1;
-    if (strcmp(v, "off")   == 0) return 0;
-    if (strcmp(v, "eco")   == 0) return 1;
-    if (strcmp(v, "high")  == 0) return 2;
-    if (strcmp(v, "boost") == 0) return 3;
-    return -1;
-}
-static const char* boilerIntToStr(int m) {
-    static const char* T[4] = { "off", "eco", "high", "boost" };
-    return (m >= 0 && m < 4) ? T[m] : "off";
 }
 
 // ── WebSocket command dispatcher ─────────────────────────────────────────
