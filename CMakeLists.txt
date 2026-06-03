@@ -61,20 +61,28 @@ foreach(_gitfile logs/HEAD packed-refs refs/tags)
                      "${CMAKE_CURRENT_SOURCE_DIR}/.git/${_gitfile}")
     endif()
 endforeach()
-execute_process(
-    COMMAND git describe --tags --dirty --always
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    OUTPUT_VARIABLE TRUMINUS_GIT_VER
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-)
-if(TRUMINUS_GIT_VER)
-    # Drop git describe's "commits since tag" count for a cleaner string:
-    # "1.2.2-2-g3fe4ecf[-dirty]" -> "1.2.2-g3fe4ecf[-dirty]". The OTA semver
-    # parser reads only the leading X.Y.Z, so this is purely cosmetic.
-    string(REGEX REPLACE "-[0-9]+-g" "-g" PROJECT_VER "${TRUMINUS_GIT_VER}")
+# Dev/test override: OTA_FAKE_VER=1.2.9 idf.py build  → bakes that version so a
+# locally-flashed image reports an older version and the device offers an OTA to
+# the real latest release, without cutting a throwaway tag.  Never set in CI.
+if(DEFINED ENV{OTA_FAKE_VER} AND NOT "$ENV{OTA_FAKE_VER}" STREQUAL "")
+    set(PROJECT_VER "$ENV{OTA_FAKE_VER}")
+    message(WARNING "TruMinus: PROJECT_VER OVERRIDDEN via OTA_FAKE_VER=${PROJECT_VER} (dev/test only)")
 else()
-    set(PROJECT_VER "0.0.0")
+    execute_process(
+        COMMAND git describe --tags --dirty --always
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE TRUMINUS_GIT_VER
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(TRUMINUS_GIT_VER)
+        # Drop git describe's "commits since tag" count for a cleaner string:
+        # "1.2.2-2-g3fe4ecf[-dirty]" -> "1.2.2-g3fe4ecf[-dirty]". The OTA semver
+        # parser reads only the leading X.Y.Z, so this is purely cosmetic.
+        string(REGEX REPLACE "-[0-9]+-g" "-g" PROJECT_VER "${TRUMINUS_GIT_VER}")
+    else()
+        set(PROJECT_VER "0.0.0")
+    endif()
 endif()
 message(STATUS "TruMinus: firmware version = ${PROJECT_VER}")
 
