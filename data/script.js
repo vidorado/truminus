@@ -113,6 +113,7 @@ ws.onmessage = function (event) {
     if (d.command === 'multi') { applyMulti(d); return; }
     if (d.command === 'icon')  { applyIcon(d);  return; }
     if (d.command === 'ota')   { applyOta(d);   return; }
+    if (d.command === 'diag')  { s_diag = d; renderFault(); return; }
     if (d.command === 'snapshot') {
         // Full initial-state burst from wsConnected() on the server.
         // One message with every cached setting and status value to
@@ -173,6 +174,7 @@ var s_otaInstalling = false;
 var s_ota = null;            // last OTA frame, for the About overlay
 var s_otaDismissedVer = null; // "Later"-dismissed version (banner stays hidden for it)
 var s_otaReloadPending = false; // reload the page once the device reboots after an install
+var s_diag = null;           // last {command:diag} frame (uncontrolled-fault record)
 function applyOta(d) {
     s_ota = d;
     updateAbout(d);
@@ -249,10 +251,25 @@ function otaInstall() {
 // The footer logo opens this; it offers a manual "Check" and an "Install"
 // button for any newer release (including patch X.Y.Z, which raise no banner
 // nor LCD modal).  Live status arrives via the broadcast `ota` frame.
+// Render the last uncontrolled-fault line in the About overlay (hidden when
+// the device has no fault on record).
+function renderFault() {
+    var el = document.getElementById('about-fault');
+    if (!el) return;
+    if (s_diag && s_diag.fault) {
+        el.textContent = t('last_fault') + ': ' + s_diag.fault +
+                         ' (×' + (s_diag.count || 0) + ', fw ' + (s_diag.fw || '?') + ')';
+        el.hidden = false;
+    } else {
+        el.hidden = true;
+    }
+}
+
 function openAbout() {
     var modal = document.getElementById('about-modal');
     if (!modal) return;
     updateAbout(s_ota);
+    renderFault();
     modal.classList.remove('hidden');
     // Hide the banner right away (don't wait for the next OTA push).
     var banner = document.getElementById('ota-banner');

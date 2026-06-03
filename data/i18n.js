@@ -63,6 +63,7 @@ var LANG_STRINGS = {
         ota_uptodate: 'Up to date',
         ota_current:  'Version',
         ota_later:    'Later',
+        last_fault:   'Last fault',
         close:        'Close',
     },
     es: {
@@ -127,6 +128,7 @@ var LANG_STRINGS = {
         ota_uptodate: 'Estás al día',
         ota_current:  'Versión',
         ota_later:    'Más tarde',
+        last_fault:   'Último fallo',
         close:        'Cerrar',
     }
 };

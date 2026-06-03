@@ -693,6 +693,10 @@ body {
   font-weight: 700;
   color: var(--ok);
 }
+.about-fault {
+  font-size: .82em;
+  color: var(--err);
+}
 .about-progress {
   font-size: .92em;
   color: var(--lbl);

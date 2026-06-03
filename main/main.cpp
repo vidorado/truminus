@@ -13,6 +13,7 @@
 #include "ultimatronble.hpp"
 #include "c6_ota.hpp"
 #include "p4_ota.hpp"
+#include "faultlog.hpp"
 #include "webserver.hpp"
 #include "wstunnel.hpp"
 #include "cli.hpp"
@@ -277,6 +278,17 @@ static void onWsConnected() {
     // OTA status so the page can show an "update available" banner without
     // waiting for the next periodic check.
     sendOtaFrame();
+
+    // Last uncontrolled fault (panic/abort/WDT), for the About overlay.
+    FaultInfo fi;
+    if (faultLogGet(fi)) {
+        snprintf(buf, sizeof(buf),
+                 "{\"command\":\"diag\",\"fault\":\"%s\",\"count\":%lu,\"fw\":\"%s\"}",
+                 faultReasonName((int)fi.reason), (unsigned long)fi.count, fi.version);
+    } else {
+        snprintf(buf, sizeof(buf), "{\"command\":\"diag\",\"fault\":\"\",\"count\":0,\"fw\":\"\"}");
+    }
+    wsQueueSend(buf);
 }
 
 // ── Broadcast LCD-originated changes ─────────────────────────────────────
@@ -689,6 +701,10 @@ extern "C" void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    // Capture why we last reset (panic/abort/WDT vs controlled/power) before
+    // anything else can reboot the chip.
+    faultLogInit();
 
     // Default event loop and netif — required by WiFi.
     ESP_ERROR_CHECK(esp_event_loop_create_default());

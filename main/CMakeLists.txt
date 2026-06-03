@@ -25,6 +25,7 @@ idf_component_register(
         "tankble.cpp"
         "multiplusble.cpp"
         "am2301.cpp"
+        "faultlog.cpp"
         "c6_ota.cpp"
         "p4_ota.cpp"
         "webserver.cpp"
