@@ -92,7 +92,10 @@
 
 // — IDF infrastructure (clamp INFO chatter that's not actionable) —
 #ifndef LOG_LEVEL_HTTPD
-#define LOG_LEVEL_HTTPD      ESP_LOG_WARN
+/* ERROR, not WARN: empty/probe TCP connections (health checks, port scans)
+ * make esp_http_server log "400 Bad Request" / "parse_block: incomplete"
+ * at WARN from the httpd_txrx/httpd_parse subtags — benign noise. */
+#define LOG_LEVEL_HTTPD      ESP_LOG_ERROR
 #endif
 #ifndef LOG_LEVEL_LEDC
 #define LOG_LEVEL_LEDC       ESP_LOG_ERROR  /* backlight GPIO "conflict" warning */

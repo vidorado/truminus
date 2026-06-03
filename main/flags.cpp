@@ -13,7 +13,11 @@ void flags_apply_log_levels(void) {
     esp_log_level_set("wstunnel",  LOG_LEVEL_WSTUNNEL);
 
     // ── IDF infrastructure ───────────────────────────────────────────────
-    esp_log_level_set("httpd",     LOG_LEVEL_HTTPD);
+    esp_log_level_set("httpd",       LOG_LEVEL_HTTPD);
+    esp_log_level_set("httpd_txrx",  LOG_LEVEL_HTTPD);  // "400 Bad Request" on empty/probe conns
+    esp_log_level_set("httpd_parse", LOG_LEVEL_HTTPD);  // "parse_block: incomplete"
+    esp_log_level_set("httpd_uri",   LOG_LEVEL_HTTPD);
+    esp_log_level_set("httpd_sess",  LOG_LEVEL_HTTPD);
     esp_log_level_set("ledc",      LOG_LEVEL_LEDC);
 
     // ── BSP: panel, touch, LVGL, I2C bus ─────────────────────────────────
