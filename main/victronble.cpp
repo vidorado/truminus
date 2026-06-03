@@ -60,6 +60,7 @@ static volatile bool s_bleSuspended     = false;
 static volatile bool s_supervisorInScan = false;
 static volatile bool s_nimbleUp         = false;
 static volatile bool s_discoveryRunning = false;
+static volatile bool s_bleTeardown      = false;  // request supervisor exit for NimBLE deinit
 
 // DIAGNOSTIC: log each DISTINCT advertiser MAC once (up to this many) so we
 // can see how many different devices the radio actually delivers — not 40
@@ -376,6 +377,7 @@ static void bleSupervisorTask(void* /*arg*/) {
     constexpr uint32_t ULTIMATRON_EVERY_N = 6;
 
     for (;;) {
+        if (s_bleTeardown) break;
         if (s_bleStopped || s_bleSuspended || s_discoveryRunning) {
             vTaskDelay(pdMS_TO_TICKS(500));
             continue;
@@ -439,6 +441,11 @@ static void bleSupervisorTask(void* /*arg*/) {
         if (failCount > 3) idleMs = 30000;
         if (idleMs) vTaskDelay(pdMS_TO_TICKS(idleMs));
     }
+    // Teardown requested: leave the loop and exit so bleSupervisorStop() can
+    // deinit the stack with no scan/poll in flight.
+    s_bleTaskHandle = nullptr;
+    LOG_BLE_PL("[ble-sup] exited (teardown)");
+    vTaskDelete(nullptr);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────
@@ -544,10 +551,44 @@ void bleSupervisorStart() {
     LOG_BLE_PL("[ble-sup] task created");
 }
 
+// Tear NimBLE down to reclaim its internal DRAM (host stack + mbuf pools) —
+// used before a self-OTA so the SDIO RX path has headroom.  Waits for the
+// supervisor to finish its current scan/poll and exit, stops any residual scan,
+// then deinits.  Returns false on timeout so the caller can reboot instead of
+// deinit-ing a live stack.  NimBLE comes back via the post-OTA reboot.
+//
+// deinit(false), NOT (true): deinit(true) deletes the C++ objects AFTER
+// nimble_port_deinit() has freed the NPL, and ~NimBLEScan() then calls
+// ble_npl_callout_deinit() on that freed NPL → Load-access-fault crash.
+// deinit(false) frees the same stack RAM (nimble_port_deinit) but keeps the
+// small wrapper objects; we reboot after OTA so they're never reused.
+bool bleSupervisorStop() {
+    if (!s_nimbleUp) return true;
+    s_bleTeardown = true;
+    for (int i = 0; i < 250 && s_bleTaskHandle; i++) vTaskDelay(pdMS_TO_TICKS(100)); // ≤25 s
+    if (s_bleTaskHandle) {
+        LOG_BLE_PL("[ble] teardown timed out — supervisor still running");
+        return false;
+    }
+    if (s_bleScan && s_bleScan->isScanning()) {
+        s_bleScan->stop();
+        for (int i = 0; i < 30 && s_bleScan->isScanning(); i++) vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));   // let the host task settle before deinit
+    s_nimbleUp = false;               // gate any consumer before the stack goes
+    LOG_BLE_PF("[ble] deinit free_before=%u\n",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    NimBLEDevice::deinit(false);
+    LOG_BLE_PF("[ble] deinit free_after=%u\n",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    return true;
+}
+
 #else // !ENABLE_BLE
 
 void victronBleInit() {}
 void bleSupervisorStart() {}
+bool bleSupervisorStop() { return true; }
 void victronBleReloadConfig() {}
 
 VictronData victronGetData() {

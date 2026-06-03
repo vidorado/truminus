@@ -30,6 +30,9 @@ void victronBleInit();
 // Bring NimBLE up and start the supervisor task. Call AFTER victronBleInit()
 // and ultimatronBleInit() have loaded their configs.
 void bleSupervisorStart();
+// Tear NimBLE down to reclaim internal DRAM before a self-OTA.  Blocks until the
+// supervisor exits; false on timeout.  RAM returns via the post-OTA reboot.
+bool bleSupervisorStop();
 
 // One-shot discovery scan for settings UI. Runs 8 s scan in a background
 // task; cb is invoked from that task (NOT LVGL thread) with results.
