@@ -448,6 +448,7 @@ void victronBleStart()   { s_bleStopped    = false; }
 void victronBleSuspend() { s_bleSuspended  = true;  }
 void victronBleResume()  { s_bleSuspended  = false; }
 bool victronBleSuspended() { return s_bleSuspended; }
+bool victronBleScanActive() { return s_supervisorInScan; }
 
 bool victronIsConfigured() {
 #ifdef ENABLE_SOLAR_DUMMY
@@ -566,6 +567,7 @@ bool victronIsConfigured() { return false; }
 void victronBleSuspend()   {}
 void victronBleResume()    {}
 bool victronBleSuspended() { return false; }
+bool victronBleScanActive() { return false; }
 void victronBleSetAggressive(bool) {}
 void victronBleStop()      {}
 void victronBleStart()     {}

@@ -2,7 +2,6 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/idf_additions.h"   // xTaskCreateWithCaps / vTaskDeleteWithCaps
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_app_desc.h"
@@ -89,6 +88,14 @@ static SemaphoreHandle_t s_lock = xSemaphoreCreateMutex();
 static P4OtaStatus       s_status = {};
 static std::atomic<bool> s_installing{false};
 static char              s_asset_url[256] = "";
+
+// Install-task stack, in BYTES (IDF: StackType_t == uint8_t).  Must come from
+// INTERNAL DRAM (dynamic xTaskCreate): esp_https_ota writes flash with the SPI
+// cache — and thus PSRAM — disabled, so a PSRAM stack is unreachable then
+// (esp_task_stack_is_sane_cache_disabled panic).  Reserving it statically in
+// .bss instead starved the idle task at boot, so it stays dynamic and we just
+// handle a creation failure gracefully.
+static constexpr uint32_t INSTALL_STACK_BYTES = 8192;     // 8 KB
 
 // Heartbeat counters bumped by the critical tasks.
 static std::atomic<uint32_t> s_beats[P4OTA_BEAT_COUNT];
@@ -310,6 +317,12 @@ static void do_check() {
     if (!vicWas) victronBleSuspend();
     if (!ultWas) ultimatronBleSuspend();
 
+    // The suspend is only honored at the supervisor's scan-window boundary, so
+    // wait (≤6 s) for any in-flight scan to end before fetching — otherwise the
+    // check overlaps a live scan on the shared C6 radio.  The physical Updates
+    // screen avoids this naturally by pausing BLE on entry (lead time).
+    for (int i = 0; i < 60 && victronBleScanActive(); i++) vTaskDelay(pdMS_TO_TICKS(100));
+
     char tag[32] = "";
     bool got = fetch_latest_tag(tag, sizeof(tag));
 
@@ -360,14 +373,10 @@ static void install_task(void*) {
     ESP_LOGI(TAG, "starting self-OTA from %s", url);
     p4DisplayShowOtaScreen(cur, latest);
 
-    // Free up the radio + internal DRAM for the duration:
-    //  - Tear the WSS tunnel down (frees DRAM for the TLS handshake).
-    //  - Pause BLE so the C6 stops sharing airtime between WiFi and BLE —
-    //    coexistence on the single co-processor otherwise throttles the
-    //    download badly.  victronBleSuspend() also stops the tank/multiplus
-    //    scan (they piggyback on the same GAP scan).
-    // The reboot on success re-establishes everything; on failure we restore
-    // it below.
+    // Free up the radio + internal DRAM for the duration: tear the WSS tunnel
+    // down and pause BLE (the C6 stops sharing airtime; otherwise coexistence
+    // throttles the download).  Restored below on failure; the reboot restores
+    // it on success.
     wstunnelSuspend();
     victronBleSuspend();
     ultimatronBleSuspend();
@@ -498,19 +507,17 @@ fail:
     s_status.installing = false;
     s_status.progress   = 0;
     xSemaphoreGive(s_lock);
-    s_installing.store(false);
     broadcast_status();
     // The running image is untouched by a failed download — return the LCD to
     // the normal UI rather than stranding it on the progress screen, and bring
-    // the tunnel back so the device stays reachable.  Surface the failure on
-    // the status bar (red) so the user sees why we bounced back to the main
-    // screen instead of rebooting into a new image.
+    // the tunnel + BLE back so the device stays reachable.
     p4DisplayHideOtaScreen();
     p4DisplaySetStatus(t(TK::OTA_FAILED), true);
     wstunnelApply();
     victronBleResume();
     ultimatronBleResume();
-    vTaskDeleteWithCaps(nullptr);   // stack was allocated with xTaskCreateWithCaps
+    s_installing.store(false);
+    vTaskDelete(nullptr);
 }
 
 void p4OtaInstall() {
@@ -526,20 +533,21 @@ void p4OtaInstall() {
     bool expected = false;
     if (!s_installing.compare_exchange_strong(expected, true)) return;
 
-    // Stack in PSRAM, not internal DRAM.  xTaskCreate() forces task stacks into
-    // internal RAM regardless of CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL, and a
-    // 32 KB *contiguous internal* block is often unavailable mid-run (WiFi/BLE/
-    // tunnel/LVGL fragment it).  When that alloc failed, the ignored
-    // xTaskCreate() return left s_installing stuck true forever — screen stuck
-    // awake, checks skipped, install ignored.  WithCaps(SPIRAM) has room to
-    // spare (CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y); on failure we roll
-    // the flag back so the device never strands.
-    BaseType_t cr = xTaskCreateWithCaps(install_task, "p4_ota_install", 8192,
-                                        nullptr, 4, nullptr,
-                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    // Diagnostic: internal DRAM free + largest contiguous block — i.e. whether
+    // the install task's internal stack alloc can succeed on this tight board.
+    ESP_LOGI(TAG, "install: free_int=%u largest_int_block=%u (need %u)",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)INSTALL_STACK_BYTES);
+
+    // Dynamic INTERNAL stack: must be internal (flash writes disable the cache,
+    // so a PSRAM stack is unreachable then).  Handle a creation failure instead
+    // of ignoring it — that ignored return used to strand the device
+    // "installing" forever when the contiguous block wasn't available.
+    BaseType_t cr = xTaskCreate(install_task, "p4_ota_install",
+                                INSTALL_STACK_BYTES, nullptr, 4, nullptr);
     if (cr != pdPASS) {
-        ESP_LOGE(TAG, "install task create failed (free_int=%u) — aborting",
-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        ESP_LOGE(TAG, "install task create failed — internal DRAM too low/fragmented");
         s_installing.store(false);
         status_set_error("low memory");
         broadcast_status();

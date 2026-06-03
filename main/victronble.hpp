@@ -46,6 +46,9 @@ bool        victronIsConfigured();
 void        victronBleSuspend();
 void        victronBleResume();
 bool        victronBleSuspended();
+// True while the supervisor is inside a scan window (so a freshly-set suspend
+// hasn't taken the radio off-air yet).  Let callers wait for it to clear.
+bool        victronBleScanActive();
 void        victronBleSetAggressive(bool aggressive);
 void        victronBleStop();
 void        victronBleStart();
