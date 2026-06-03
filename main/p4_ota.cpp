@@ -2,6 +2,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"   // xTaskCreateWithCaps / vTaskDeleteWithCaps
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_app_desc.h"
@@ -509,7 +510,7 @@ fail:
     wstunnelApply();
     victronBleResume();
     ultimatronBleResume();
-    vTaskDelete(nullptr);
+    vTaskDeleteWithCaps(nullptr);   // stack was allocated with xTaskCreateWithCaps
 }
 
 void p4OtaInstall() {
@@ -524,7 +525,25 @@ void p4OtaInstall() {
     }
     bool expected = false;
     if (!s_installing.compare_exchange_strong(expected, true)) return;
-    xTaskCreate(install_task, "p4_ota_install", 8192, nullptr, 4, nullptr);
+
+    // Stack in PSRAM, not internal DRAM.  xTaskCreate() forces task stacks into
+    // internal RAM regardless of CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL, and a
+    // 32 KB *contiguous internal* block is often unavailable mid-run (WiFi/BLE/
+    // tunnel/LVGL fragment it).  When that alloc failed, the ignored
+    // xTaskCreate() return left s_installing stuck true forever — screen stuck
+    // awake, checks skipped, install ignored.  WithCaps(SPIRAM) has room to
+    // spare (CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y); on failure we roll
+    // the flag back so the device never strands.
+    BaseType_t cr = xTaskCreateWithCaps(install_task, "p4_ota_install", 8192,
+                                        nullptr, 4, nullptr,
+                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (cr != pdPASS) {
+        ESP_LOGE(TAG, "install task create failed (free_int=%u) — aborting",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        s_installing.store(false);
+        status_set_error("low memory");
+        broadcast_status();
+    }
 }
 
 // ── Periodic check task ──────────────────────────────────────────────────
