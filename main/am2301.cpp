@@ -1,4 +1,5 @@
 #include "am2301.hpp"
+#include "am2301_codec.hpp"
 #include "logs.hpp"
 
 #include <math.h>
@@ -22,10 +23,8 @@
 // P4 RMT memory is 48 words/channel (SOC_RMT_MEM_WORDS_PER_CHANNEL); a full
 // AM2301 frame (start + handshake + 40 bits ≈ 43 symbols) fits in one block.
 #define AM2301_MEM_SYMBOLS     48
-#define AM2301_MAX_SYMBOLS     48         // user RX buffer depth
-
-// A captured "1" bit has ~70 µs high; "0" ~26 µs.  Threshold halfway.
-#define AM2301_BIT_THRESH_US   50
+// AM2301_MAX_SYMBOLS and AM2301_BIT_THRESH_US live in am2301_codec.hpp (shared
+// with the host-testable decoder).
 
 static const char* TAG = "am2301";
 
@@ -58,56 +57,20 @@ static bool IRAM_ATTR rx_done_cb(rmt_channel_handle_t,
     return hp == pdTRUE;
 }
 
-// Decode the captured symbol stream into the 5 raw bytes.  Returns true and
-// fills tempC/humidity on a valid checksum.
+// Decode the captured RMT symbols into temp/humidity. The bit-level decode and
+// checksum live in the host-tested am2301_codec module; here we only copy the
+// RMT bitfield struct into the plain Am2301Symbol it expects.
 static bool decode(const rmt_symbol_word_t* syms, size_t n,
                    float& tempC, float& humidity) {
-    // Each data bit is encoded as a low (~50 µs) followed by a high whose
-    // length distinguishes 0 from 1.  In RMT symbols the high pulse is the
-    // level==1 half.  The first symbol carries the sensor's 80 µs/80 µs
-    // response handshake; we collect *all* high durations and keep the last
-    // 40 (the data bits), which sidesteps off-by-one on the handshake.
-    // Collect every high-pulse duration; the stream carries a couple of
-    // leading highs (host release + sensor 80 µs handshake) before the 40
-    // data bits, so we over-collect and keep the last 40 below.
-    uint8_t bits[AM2301_MAX_SYMBOLS];
-    int     nbits = 0;
-
-    for (size_t i = 0; i < n && nbits < (int)sizeof(bits); i++) {
-        // duration0/level0 is the first half of the symbol, duration1/level1
-        // the second.  Examine whichever half is the high pulse.
-        uint16_t hi_us = 0;
-        if (syms[i].level0 == 1)       hi_us = syms[i].duration0;
-        else if (syms[i].level1 == 1)  hi_us = syms[i].duration1;
-        else                           continue;          // low-low: skip
-        // The handshake's 80 µs high would read as a "1"; harmless because we
-        // keep only the final 40 collected bits below.
-        if (hi_us == 0) continue;
-        bits[nbits++] = (hi_us > AM2301_BIT_THRESH_US) ? 1 : 0;
+    Am2301Symbol s[AM2301_MAX_SYMBOLS];
+    if (n > AM2301_MAX_SYMBOLS) n = AM2301_MAX_SYMBOLS;
+    for (size_t i = 0; i < n; i++) {
+        s[i].duration0 = syms[i].duration0;
+        s[i].level0    = syms[i].level0;
+        s[i].duration1 = syms[i].duration1;
+        s[i].level1    = syms[i].level1;
     }
-
-    if (nbits < 40) {
-        LOG_AM2301_PF("decode: only %d bits", nbits);
-        return false;
-    }
-    // Keep the last 40 bits (skip any leading handshake high we may have
-    // captured as an extra symbol).
-    const uint8_t* b = bits + (nbits - 40);
-
-    uint8_t raw[5] = {0};
-    for (int i = 0; i < 40; i++)
-        raw[i / 8] = (raw[i / 8] << 1) | b[i];
-
-    uint8_t sum = raw[0] + raw[1] + raw[2] + raw[3];
-    if (sum != raw[4]) {
-        LOG_AM2301_PF("checksum: got %02X want %02X", raw[4], sum);
-        return false;
-    }
-
-    humidity = ((raw[0] << 8) | raw[1]) / 10.0f;
-    int16_t t = ((raw[2] & 0x7F) << 8) | raw[3];
-    tempC = (raw[2] & 0x80) ? -t / 10.0f : t / 10.0f;
-    return true;
+    return am2301Decode(s, n, tempC, humidity);
 }
 
 // One full transaction: drive the start pulse, capture the response, decode.

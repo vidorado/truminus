@@ -1,5 +1,5 @@
 #include "catch_amalgamated.hpp"
-#include "test_helpers.hpp"
+#include "bthome_codec.hpp"   // real production BTHome parser
 
 TEST_CASE("BTHome payload parsing", "[bthome]") {
     SECTION("Moisture tag 0x2F with value 75%") {

@@ -13,6 +13,8 @@ add_library(truminus_logic STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/mode_controller.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/version_compare.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/lin_codec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/bthome_codec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/am2301_codec.cpp
 )
 target_include_directories(truminus_logic PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
