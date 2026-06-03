@@ -109,6 +109,9 @@
   border: 1px solid rgba(255, 255, 255, .55);
 }
 .ota-btn:disabled { opacity: .6; cursor: default; }
+/* `.ota-btn { display:inline-block }` outranks the UA `[hidden]{display:none}`,
+   so hidden buttons would still show — restore hiding explicitly. */
+.ota-btn[hidden] { display: none; }
 
 /* ── Reset ────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

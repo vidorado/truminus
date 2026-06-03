@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="TruMinus" />
 <link rel="manifest" href="/icons/site.webmanifest" />
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=f1c2f999">
+<link rel="stylesheet" href="styles.css?v=996a3337">
 </head>
 <body>
 
@@ -23,6 +23,7 @@
   <div id="ota-msg" class="ota-msg"></div>
   <div class="ota-actions">
     <button id="ota-btn" class="ota-btn" onclick="otaInstall()"></button>
+    <button id="ota-cancel" class="ota-btn ota-btn-sec" onclick="otaCancel()" data-i18n="cancel" hidden>Cancelar</button>
     <button id="ota-later" class="ota-btn ota-btn-sec" onclick="otaDismiss()" data-i18n="ota_later">Más tarde</button>
   </div>
 </div>
@@ -243,6 +244,8 @@
             data-i18n="ota_check">Check for updates</button>
     <button id="about-install" class="err-modal-btn" onclick="otaInstall()"
             data-i18n="ota_update" hidden>Update</button>
+    <button id="about-cancel" class="err-modal-btn" onclick="otaCancel()"
+            data-i18n="cancel" hidden>Cancel</button>
     <button class="err-modal-btn" onclick="closeAbout()"
             data-i18n="close">Close</button>
   </div>
@@ -250,7 +253,7 @@
 
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=ddd3f31a"></script>
-<script src="i18n.js?v=3b9916d1"></script>
-<script src="script.js?v=42a3874c"></script>
+<script src="i18n.js?v=26b2ff28"></script>
+<script src="script.js?v=aaa55f03"></script>
 </body>
 </html>

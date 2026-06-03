@@ -191,17 +191,26 @@ function applyOta(d) {
     var about = document.getElementById('about-modal');
     if (about && !about.classList.contains('hidden')) { banner.hidden = true; return; }
 
+    var cancel = document.getElementById('ota-cancel');
+
     if (d.installing) {
         var pct = (typeof d.progress === 'number') ? d.progress : 0;
-        msg.textContent = t('ota_updating') + ' ' + pct + '%' +
-                          (pct >= 100 ? ' — ' + t('ota_reboot') : '');
-        btn.hidden = true;
-        if (later) later.hidden = true;
+        // The Update button itself becomes the progress bar (near-white fill).
+        btn.hidden = false;
+        btn.disabled = true;
+        btn.textContent = (pct >= 100) ? t('ota_reboot')
+                                       : t('ota_updating') + ' ' + pct + '%';
+        setBtnProgress(btn, pct);
+        msg.textContent = (d.current || '?') + ' → ' + (d.latest || '?');
+        if (later)  later.hidden  = true;
+        if (cancel) cancel.hidden = (pct >= 100);   // no cancel once flashing is done
         banner.classList.remove('ota-err');
         banner.hidden = false;
         return;
     }
 
+    clearBtnProgress(btn);
+    if (cancel) cancel.hidden = true;
     btn.hidden = false;
     btn.disabled = false;
     btn.textContent = t('ota_update');
@@ -244,7 +253,37 @@ function otaInstall() {
         var b = document.getElementById(id);
         if (b) { b.disabled = true; b.textContent = t('ota_updating'); }
     });
+    // "Later" makes no sense once the update is running — hide it immediately
+    // (don't wait for the first installing frame).
+    var later = document.getElementById('ota-later');
+    if (later) later.hidden = true;
     send('/ota_install', '1');
+}
+
+function otaCancel() {
+    ['ota-cancel', 'about-cancel'].forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) b.disabled = true;
+    });
+    send('/ota_cancel', '1');
+}
+
+// Paint a button as a left-to-right progress bar with a near-white fill.
+function setBtnProgress(btn, pct) {
+    if (!btn) return;
+    var p = Math.max(0, Math.min(100, pct));
+    // Fill = white, track = a light blue-grey that's distinct from the blue
+    // banner (else the unfilled part blends in and the bar looks invisible).
+    // Dark text stays readable on both halves.
+    btn.style.background = 'linear-gradient(90deg, #ffffff ' + p + '%, #aab6d4 ' + p + '%)';
+    btn.style.color = '#16213e';
+    btn.style.opacity = '1';   // counter the :disabled dim so the fill stays bright
+}
+function clearBtnProgress(btn) {
+    if (!btn) return;
+    btn.style.background = '';
+    btn.style.color = '';
+    btn.style.opacity = '';
 }
 
 // ── About / manual OTA overlay ────────────────────────────────────────────
@@ -302,19 +341,38 @@ function updateAbout(d) {
 
     cur.textContent = d.current || '?';
 
+    var cancel = document.getElementById('about-cancel');
+
     if (d.installing) {
         var pct = (typeof d.progress === 'number') ? d.progress : 0;
-        prog.textContent = t('ota_updating') + ' ' + pct + '%' +
-                           (pct >= 100 ? ' — ' + t('ota_reboot') : '');
-        prog.hidden = false;
+        // The Update button becomes the progress bar; Cancel sits beside it.
+        install.hidden = false;
+        install.disabled = true;
+        install.textContent = (pct >= 100) ? t('ota_reboot')
+                                           : t('ota_updating') + ' ' + pct + '%';
+        setBtnProgress(install, pct);
+        prog.hidden = true;
         latest.hidden = true;
         check.hidden = true;
+        if (cancel) cancel.hidden = (pct >= 100);
+        return;
+    }
+
+    clearBtnProgress(install);
+    if (cancel) cancel.hidden = true;
+    prog.hidden = true;
+    check.hidden = false;
+
+    // Authoritative "checking" state — fixes the button getting stuck on
+    // "Checking…" when the result frame matched the previous one.
+    if (d.checking) {
+        check.disabled = true;
+        check.textContent = t('ota_checking');
+        latest.hidden = true;
         install.hidden = true;
         return;
     }
 
-    prog.hidden = true;
-    check.hidden = false;
     check.disabled = false;
     check.textContent = t('ota_check');
 
