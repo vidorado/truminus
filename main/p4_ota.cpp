@@ -103,6 +103,10 @@ static std::atomic<uint32_t> s_beats[P4OTA_BEAT_COUNT];
 // Set by p4OtaCheckNow() to interrupt the check task's sleep.
 static std::atomic<bool> s_check_request{false};
 
+// Set by p4OtaCancel() to abort an in-progress install (checked in the perform
+// loop).  Cleared at the start of each install.
+static std::atomic<bool> s_cancel{false};
+
 // Automatic-check preference + prompt bookkeeping (guarded by s_lock).
 static bool s_autocheck      = true;
 static char s_prompted_ver[32] = "";   // version we've already prompted about
@@ -185,8 +189,9 @@ static void broadcast_status() {
     p4OtaGetStatus(st);
     char buf[256];
     snprintf(buf, sizeof(buf),
-             "{\"command\":\"ota\",\"available\":%s,\"installing\":%s,"
+             "{\"command\":\"ota\",\"checking\":%s,\"available\":%s,\"installing\":%s,"
              "\"progress\":%d,\"current\":\"%s\",\"latest\":\"%s\",\"error\":\"%s\"}",
+             st.checking ? "true" : "false",
              st.available ? "true" : "false",
              st.installing ? "true" : "false",
              st.progress, st.currentVer, st.latestVer, st.error);
@@ -368,18 +373,18 @@ static void install_task(void*) {
     s_status.progress   = 0;
     s_status.error[0]   = '\0';
     xSemaphoreGive(s_lock);
+    s_cancel.store(false);   // fresh install — clear any stale cancel request
     broadcast_status();
 
     ESP_LOGI(TAG, "starting self-OTA from %s", url);
     p4DisplayShowOtaScreen(cur, latest);
 
-    // Free up the radio + internal DRAM for the duration: tear the WSS tunnel
-    // down and pause BLE (the C6 stops sharing airtime; otherwise coexistence
-    // throttles the download).  Restored below on failure; the reboot restores
-    // it on success.
-    wstunnelSuspend();
-    victronBleSuspend();
-    ultimatronBleSuspend();
+    // NimBLE was fully torn down by install_prep_task, freeing the tens of KB
+    // of internal DRAM the esp_hosted SDIO RX path needs (it hard-asserts in
+    // sdio_rx_get_buffer when its per-burst DMA alloc fails).  That headroom is
+    // what lets us keep the WSS tunnel UP through the download, so remote clients
+    // can watch the progress bar.  Everything returns on the reboot that ends
+    // every install (success OR failure).
     vTaskDelay(pdMS_TO_TICKS(500));
 
     esp_http_client_config_t http = {};
@@ -439,6 +444,12 @@ static void install_task(void*) {
         // both C6 + host) can be chosen from data rather than guesswork.
         size_t dl_min_int = SIZE_MAX;
         while ((err = esp_https_ota_perform(h)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
+            if (s_cancel.load()) {
+                ESP_LOGW(TAG, "install cancelled by user");
+                status_set_error("cancelled");
+                esp_https_ota_abort(h);
+                goto fail;
+            }
             size_t fi = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
             if (fi < dl_min_int) dl_min_int = fi;
             // Adaptive backpressure when internal DRAM is tight (see constants):
@@ -508,15 +519,46 @@ fail:
     s_status.progress   = 0;
     xSemaphoreGive(s_lock);
     broadcast_status();
-    // The running image is untouched by a failed download — return the LCD to
-    // the normal UI rather than stranding it on the progress screen, and bring
-    // the tunnel + BLE back so the device stays reachable.
-    p4DisplayHideOtaScreen();
+    // NimBLE was torn down for headroom and can't be cleanly re-inited from
+    // here — reboot to restore BLE (and a clean state).  Show the failure
+    // briefly first so it's visible before the restart.
+    ESP_LOGW(TAG, "OTA failed — rebooting to restore BLE/services");
     p4DisplaySetStatus(t(TK::OTA_FAILED), true);
-    wstunnelApply();
-    victronBleResume();
-    ultimatronBleResume();
-    s_installing.store(false);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    esp_restart();   // never returns
+}
+
+// Orchestrator (own task, off the LVGL/WS caller context since the NimBLE
+// teardown blocks): frees internal DRAM by tearing NimBLE down entirely, THEN
+// spawns the install task.  Freeing NimBLE's tens of KB gives the SDIO RX path
+// the headroom it needs AND lets the tunnel stay up for remote progress.
+static void install_prep_task(void*) {
+    ESP_LOGI(TAG, "install prep: free_int=%u largest=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
+    bool ble_ok = bleSupervisorStop();   // NimBLEDevice::deinit(false) — frees the host RAM
+
+    ESP_LOGI(TAG, "install prep done (ble_ok=%d): free_int=%u largest=%u (need %u)",
+             (int)ble_ok,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)INSTALL_STACK_BYTES);
+
+    if (!ble_ok) {
+        ESP_LOGE(TAG, "BLE teardown failed — rebooting");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+    }
+
+    BaseType_t cr = xTaskCreate(install_task, "p4_ota_install",
+                                INSTALL_STACK_BYTES, nullptr, 4, nullptr);
+    if (cr != pdPASS) {
+        // NimBLE is already down; a clean restart is the only sane recovery.
+        ESP_LOGE(TAG, "install task create failed after freeing — rebooting");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+    }
     vTaskDelete(nullptr);
 }
 
@@ -533,21 +575,12 @@ void p4OtaInstall() {
     bool expected = false;
     if (!s_installing.compare_exchange_strong(expected, true)) return;
 
-    // Diagnostic: internal DRAM free + largest contiguous block — i.e. whether
-    // the install task's internal stack alloc can succeed on this tight board.
-    ESP_LOGI(TAG, "install: free_int=%u largest_int_block=%u (need %u)",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-             (unsigned)INSTALL_STACK_BYTES);
-
-    // Dynamic INTERNAL stack: must be internal (flash writes disable the cache,
-    // so a PSRAM stack is unreachable then).  Handle a creation failure instead
-    // of ignoring it — that ignored return used to strand the device
-    // "installing" forever when the contiguous block wasn't available.
-    BaseType_t cr = xTaskCreate(install_task, "p4_ota_install",
-                                INSTALL_STACK_BYTES, nullptr, 4, nullptr);
+    // Small prep task frees DRAM (NimBLE teardown) then spawns the real install
+    // task.  A modest stack so it allocates even with the board's tight internal.
+    BaseType_t cr = xTaskCreate(install_prep_task, "p4_ota_prep",
+                                4096, nullptr, 4, nullptr);
     if (cr != pdPASS) {
-        ESP_LOGE(TAG, "install task create failed — internal DRAM too low/fragmented");
+        ESP_LOGE(TAG, "install prep create failed — aborting");
         s_installing.store(false);
         status_set_error("low memory");
         broadcast_status();
@@ -577,6 +610,10 @@ static void check_task(void*) {
 }
 
 void p4OtaCheckNow() { s_check_request.store(true); }
+
+// Request abort of an in-progress install (no-op if none).  The install task
+// notices in its perform loop, aborts the OTA and returns to the normal UI.
+void p4OtaCancel() { if (s_installing.load()) s_cancel.store(true); }
 
 // ── Post-OTA self-test / rollback ────────────────────────────────────────
 // Runs only when the running image is PENDING_VERIFY.  Distinguishes

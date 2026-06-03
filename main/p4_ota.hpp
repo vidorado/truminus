@@ -52,6 +52,10 @@ void p4OtaCheckNow();
 // install is already running.
 void p4OtaInstall();
 
+// Abort an in-progress install (no-op if none running).  The device stays on
+// the current image and returns to the normal UI.
+void p4OtaCancel();
+
 // True while a download/flash is in progress.
 bool p4OtaInstalling();
 

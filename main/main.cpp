@@ -135,6 +135,8 @@ static void onWsCommand(const char* id, const char* value) {
         p4OtaCheckNow();
     } else if (strcmp(k, "ota_install") == 0) {
         p4OtaInstall();
+    } else if (strcmp(k, "ota_cancel") == 0) {
+        p4OtaCancel();
     } else {
         ESP_LOGI(TAG, "ws cmd (unhandled): %s = %s", id, value);
     }
@@ -147,8 +149,9 @@ static void sendOtaFrame() {
     p4OtaGetStatus(ota);
     char buf[256];
     snprintf(buf, sizeof(buf),
-             "{\"command\":\"ota\",\"available\":%s,\"installing\":%s,"
+             "{\"command\":\"ota\",\"checking\":%s,\"available\":%s,\"installing\":%s,"
              "\"progress\":%d,\"current\":\"%s\",\"latest\":\"%s\",\"error\":\"%s\"}",
+             ota.checking ? "true" : "false",
              ota.available ? "true" : "false",
              ota.installing ? "true" : "false",
              ota.progress, ota.currentVer, ota.latestVer, ota.error);
@@ -573,6 +576,7 @@ static void broadcastOtaStatus() {
     P4OtaStatus ota;
     p4OtaGetStatus(ota);
     bool changed = !inited
+                || ota.checking   != prev.checking
                 || ota.available  != prev.available
                 || ota.installing != prev.installing
                 || ota.progress   != prev.progress
@@ -637,6 +641,10 @@ static void bootTask(void* /*arg*/) {
     wifi_manager_start();
 
     // Initialize C6 BT controller via ESP-Hosted RPC before NimBLE starts.
+    // This MUST complete before wstunnelInit(): the controller-init RPC and the
+    // tunnel's TLS both ride the shared C6 hosted/SDIO transport, and running
+    // them concurrently starves the tunnel's websocket client ("Could not lock
+    // ws-client") and drops the connection.
     ESP_ERROR_CHECK(esp_hosted_bt_controller_init());
     ESP_ERROR_CHECK(esp_hosted_bt_controller_enable());
 
@@ -644,6 +652,8 @@ static void bootTask(void* /*arg*/) {
     ultimatronBleInit();
     tankBleInit();
     multiplusBleInit();
+    // NimBLE init + supervisor in their own task — this part coexists fine with
+    // the tunnel, so it runs in parallel with the web/tunnel bring-up below.
     xTaskCreate([](void*) {
         bleSupervisorStart();
         vTaskDelete(nullptr);
