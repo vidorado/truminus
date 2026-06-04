@@ -42,23 +42,24 @@ layers live in `main/control_state.hpp` (IDF-free); `p4display.hpp` includes it.
 testable module must follow the same rule: depend only on IDF-free headers, then add its
 `.cpp` to `truminus_logic` in `test/host/CMakeLists.txt`.
 
-**Still copied (pending the same treatment):** the LIN low-level checksum/PID and the
-frame-assembly setters are still reimplemented inline in `test_lin_protocol.cpp` /
-`test_lin_frames.cpp` (their real sources `lin_driver.cpp` / `truma_lin.cpp` keep IDF
-deps, and the setters mutate shared frame buffers). `test_helpers.cpp/.hpp` are now empty
-shells — removable once `test_lin_protocol.cpp` drops its leftover include.
+**No inline copies remain.** Every host test links the real production `.cpp`;
+`test_helpers.{cpp,hpp}` has been deleted.
 
 ## Current state
 
-- **Host test suite:** 394 assertions across 53 `TEST_CASE`s (Catch2 v3.5.2),
+- **Host test suite:** 476 assertions across 68 `TEST_CASE`s (Catch2 v3.5.2),
   built via `test/host/build.sh`, run with `ctest` or `./build/tests`.
 - **IDF-free modules linked into the host tests (real production code, not copies):**
-  `mode_controller` (fan/boiler + `derive_mode`), `version_compare` (semver),
-  `lin_codec` (Kelvin temp encode/parse), `bthome_codec`, `am2301_codec`,
+  `mode_controller` (fan/boiler + `derive_mode`), `ws_command` (WS frame parsing),
+  `ws_diff` (broadcast change-detection), `version_compare` (semver),
+  `lin_codec` (Kelvin temp encode/parse), `lin_protocol` (PID/checksum),
+  `lin_frames` (0x20/0x05/0x06/0x07 field encoders), `bthome_codec`, `am2301_codec`,
   `multiplus_codec` (BitReader + VE.Bus unpack), `ultimatron_codec`, `victron_codec`,
   `faultlog_codec`. Plain data structs they share live in IDF-free headers
   (`control_state.hpp`; the BLE `*Data` structs were already IDF-free).
-- Each extraction verified: host suite green **and** firmware build green.
+- Each extraction verified: host suite green **and** firmware build green. The LIN
+  0x20 control path was additionally validated end-to-end on the bench against the
+  hw simulator's decoded master-command log.
 
 | Source file        | Lines |
 |--------------------|-------|
@@ -95,32 +96,23 @@ Victron parsers. Drift caught and fixed along the way (e.g. `MULTI_POWER_NA` was
 out-params vs the real struct return). AES-CTR (mbedtls) and NimBLE/RMT plumbing stay in
 their `*.cpp`; the codecs take already-decrypted / already-captured data.
 
-### Remaining IDF-free extractions
-- **LIN low-level (checksum/PID)** — peel `getProtectedId`/`getChecksum` out of
-  `lin_driver.cpp` into an IDF-free unit; repoint `test_lin_protocol.cpp`.
-- **LIN frame setters** (`f20_*`/`f05_*`/`f06_*`/`f07_*`) — these mutate shared frame
-  buffers; need refactoring to take a buffer pointer before `test_lin_frames.cpp` can
-  link the real code. Bigger change.
-- **`test_helpers.{cpp,hpp}` removal** once the two LIN tests above stop including it.
+### LIN low-level + frame encoders ✅ DONE
+`lin_protocol` (PID/checksum, `LinDriver` methods now delegate) and `lin_frames`
+(0x20/0x05/0x06/0x07 field encoders, `f20_set*`/… now bind them to the frame buffers)
+extracted; tests repointed; `test_helpers` deleted.
 
-### 1. WebSocket command parsing — *high value, testable*
-Follow the fidelity rule: extract the pure id+value → validated action mapping out of
-`onWsCommand()` (`main.cpp`) into an IDF-free `ws_command.{hpp,cpp}`, link it into the
-host tests, then add `test_ws_command.cpp` BEFORE rewiring `main.cpp` to dispatch via it.
-(Attempted earlier and reverted because the test couldn't yet link real code — now
-unblocked by the IDF-free header convention.)
-- Tests: each writable id (`temp`, `heating`, `boiler`, `fan`, `energy_idx`, …),
-  invalid ids, out-of-range values, malformed input.
+### 1. WebSocket command parsing ✅ DONE
+Extracted to `ws_command.{hpp,cpp}` with `test_ws_command.cpp` linking the real parser;
+`onWsCommand()` is now just a dispatch switch. Tests written and green BEFORE rewiring
+`main.cpp` (the order that was missed on the first, reverted attempt).
 
-### 2. Broadcast diff logic — *high value, testable*
-`main.cpp` has eight `broadcast*` functions (`broadcastControlChanges`,
-`broadcastNetInfoChange`, `broadcastBleData`, `broadcastMultiplusData`,
-`broadcastTankData`, `broadcastLinTemps`, `broadcastIconStates`, `broadcastOtaStatus`)
-that each implement "compare against last-sent, emit JSON on change". Extract the
-**comparison + JSON-formatting** into pure helpers; keep `wsQueue` enqueueing in place.
-Do **not** build a heavyweight templated `WsBroadcaster` class — small free functions
-are enough and stay testable.
-- Tests: change-detection per field, JSON formatting, no-op when unchanged.
+### 2. Broadcast diff logic ✅ DONE (scoped)
+The change-detection predicates (the part with real edge cases) were extracted into
+`ws_diff.{hpp,cpp}` and tested: `victronChanged`, `ultimatronChanged`, `multiplusChanged`
+(NaN-battV aware), `tankChanged` (fresh-advert `lastMs` re-emit), `multiPowerChanged`
+(MULTI_POWER_NA sentinel, no abs overflow), `linTempChanged`. The JSON formatting was
+**deliberately left inline** in `main.cpp` (low ROI: it reads globals into a buffer and
+enqueues). No heavyweight `WsBroadcaster` class — small free functions, as planned.
 
 ### 3. Victron & Ultimatron BLE parsers — *medium, testable*
 The Tank (BTHome), Multiplus and AM2301 parsers are already extracted and tested. The
