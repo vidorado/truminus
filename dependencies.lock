@@ -119,7 +119,7 @@ dependencies:
       type: service
     version: 1.7.0
   espressif/esp_wifi_remote:
-    component_hash: 5cdfb7b59d312d91c9dd6e8365be6b7b8a16eeef2a2b40d235c4a12f6d0ff769
+    component_hash: 0b57d4ca039bbda1d4eb794f994f8d59547cdbcfd7962227890cd3a0979e6fa8
     dependencies:
     - name: espressif/esp_hosted
       registry_url: https://components.espressif.com
@@ -137,7 +137,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.5.3
+    version: 1.6.0
   espressif/wifi_remote_over_eppp:
     component_hash: 06d8bc15348bbd21f1390daace36ed5adcf6026c93c5b69decc55fa04df2711a
     dependencies:
@@ -224,6 +224,6 @@ direct_dependencies:
 - idf
 - jc4880_bsp
 - joltwallet/littlefs
-manifest_hash: 6b7e274a9ac83d001f7e1ffa6aebdd7f767530d553f60d2f6885c62efcb5375f
+manifest_hash: 90d17481e6e5d516afe636198a0c9470547f9bc76b117d0b5d17a05c1dfa6ece
 target: esp32p4
 version: 3.0.0

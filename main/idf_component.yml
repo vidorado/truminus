@@ -18,8 +18,11 @@ dependencies:
   # Standard esp_wifi_* APIs work transparently through esp_wifi_remote.
   espressif/esp_hosted:
     version: '>=1.0.0'
+  # Pinned: this is the C6-hosted WiFi shim. An open '>=' constraint silently
+  # floated it 1.5.3 -> 1.6.0 on 2026-06-04 during a local build. Pin it so the
+  # WiFi stack is reproducible; bump deliberately and review the lock diff.
   espressif/esp_wifi_remote:
-    version: '>=0.9.0'
+    version: '==1.6.0'
 
   # LittleFS filesystem for web assets (HTML/CSS/JS served by webserver.cpp).
   # The image is built from <project>/data/ and flashed to the `littlefs`
