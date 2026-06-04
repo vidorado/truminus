@@ -23,6 +23,7 @@
 #include "am2301.hpp"
 #include "flags.h"
 #include "mode_controller.hpp"
+#include "ws_command.hpp"
 
 // LIN bus pins on the JC4880-P4 board — wired to connector J5.
 // UART_NUM_1 is fixed inside truma_lin.cpp (UART0 is the debug console).
@@ -72,31 +73,20 @@ static bool multiPowerChanged(int32_t a, int32_t b) {
 // Without settings.cpp/trumaframes.cpp ported these are the only commands
 // that have any effect; everything else (energy_idx, lang, …) is logged.
 static void onWsCommand(const char* id, const char* value) {
-    if (!id || !value) return;
-    // Strip leading slash — the browser sends "/heating" but the route table
-    // here uses bare names.
-    const char* k = (id[0] == '/') ? id + 1 : id;
-
-    if (strcmp(k, "heating") == 0) {
-        p4SetHeating(strcmp(value, "1") == 0 || strcasecmp(value, "true") == 0);
-    } else if (strcmp(k, "fan") == 0) {
-        int m = fanStrToInt(value);
-        if (m >= 0) p4SetFanMode(m);
-    } else if (strcmp(k, "boiler") == 0) {
-        int m = boilerStrToInt(value);
-        if (m >= 0) p4SetBoilerMode(m);
-    } else if (strcmp(k, "temp") == 0) {
-        p4SetRoomSetpoint(strtof(value, nullptr));
-    } else if (strcmp(k, "energy_idx") == 0) {
-        p4SetEnergyIdx(atoi(value));
-    } else if (strcmp(k, "ota_check") == 0) {
-        p4OtaCheckNow();
-    } else if (strcmp(k, "ota_install") == 0) {
-        p4OtaInstall();
-    } else if (strcmp(k, "ota_cancel") == 0) {
-        p4OtaCancel();
-    } else {
-        ESP_LOGI(TAG, "ws cmd (unhandled): %s = %s", id, value);
+    // Parsing/validation is pure and host-tested in ws_command.cpp; this layer
+    // only dispatches the result to the p4Set*/OTA setters.
+    WsCommand cmd = parseWsCommand(id, value);
+    switch (cmd.kind) {
+        case WsCmdKind::Heating:    p4SetHeating(cmd.boolVal); break;
+        case WsCmdKind::Fan:        if (cmd.valid) p4SetFanMode(cmd.intVal); break;
+        case WsCmdKind::Boiler:     if (cmd.valid) p4SetBoilerMode(cmd.intVal); break;
+        case WsCmdKind::Temp:       p4SetRoomSetpoint(cmd.floatVal); break;
+        case WsCmdKind::EnergyIdx:  p4SetEnergyIdx(cmd.intVal); break;
+        case WsCmdKind::OtaCheck:   p4OtaCheckNow(); break;
+        case WsCmdKind::OtaInstall: p4OtaInstall(); break;
+        case WsCmdKind::OtaCancel:  p4OtaCancel(); break;
+        case WsCmdKind::Unknown:    ESP_LOGI(TAG, "ws cmd (unhandled): %s = %s", id, value); break;
+        case WsCmdKind::None:       break;
     }
 }
 

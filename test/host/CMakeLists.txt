@@ -11,6 +11,7 @@ add_library(truminus_logic STATIC
     test_helpers.cpp
     catch_amalgamated.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/mode_controller.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/ws_command.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/version_compare.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/lin_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/bthome_codec.cpp
@@ -40,6 +41,7 @@ add_executable(tests
     test_multiplus_parser.cpp
     test_ultimatron_parser.cpp
     test_victron_parser.cpp
+    test_ws_command.cpp
 )
 
 target_link_libraries(tests PRIVATE truminus_logic)

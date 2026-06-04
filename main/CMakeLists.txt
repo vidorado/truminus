@@ -20,6 +20,7 @@ idf_component_register(
         "truma_lin.cpp"
         "lin_codec.cpp"
         "mode_controller.cpp"
+        "ws_command.cpp"
         "version_compare.cpp"
         "flags.cpp"
         "wifi_manager.cpp"
