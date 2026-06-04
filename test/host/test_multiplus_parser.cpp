@@ -1,90 +1,12 @@
 #include "catch_amalgamated.hpp"
+#include "multiplus_codec.hpp"   // real production BitReader + parser
 #include <cstdint>
 #include <cmath>
 
-struct BitReader {
-    uint64_t lo;
-    uint64_t hi;
-    int pos;
-
-    BitReader(const uint8_t* p) : pos(0) {
-        lo = 0; hi = 0;
-        for (int i = 0; i < 8; i++) lo |= ((uint64_t)p[i]) << (i * 8);
-        for (int i = 0; i < 8; i++) hi |= ((uint64_t)p[8 + i]) << (i * 8);
-    }
-
-    uint64_t readU(int bits) {
-        uint64_t v;
-        if (pos + bits <= 64) {
-            v = (lo >> pos) & ((bits < 64) ? ((1ULL << bits) - 1) : ~0ULL);
-        } else if (pos >= 64) {
-            int p = pos - 64;
-            v = (hi >> p) & ((bits < 64) ? ((1ULL << bits) - 1) : ~0ULL);
-        } else {
-            int loBits = 64 - pos;
-            int hiBits = bits - loBits;
-            uint64_t loPart = lo >> pos;
-            uint64_t hiPart = hi & ((1ULL << hiBits) - 1);
-            v = loPart | (hiPart << loBits);
-        }
-        pos += bits;
-        return v;
-    }
-
-    int64_t readS(int bits) {
-        uint64_t v = readU(bits);
-        if (bits < 64) {
-            uint64_t signbit = 1ULL << (bits - 1);
-            if (v & signbit) {
-                v |= ~((1ULL << bits) - 1);
-            }
-        }
-        return (int64_t)v;
-    }
-};
-
-struct MultiplusData {
-    uint8_t  deviceState;
-    uint8_t  error;
-    uint8_t  acInState;
-    uint8_t  alarm;
-    int32_t  acInW;
-    int32_t  acOutW;
-    float    battA;
-    float    battV;
-    int8_t   battTempC;
-    uint8_t  soc;
-    bool     valid;
-};
-
-static constexpr int32_t MULTI_POWER_NA = -999999;
-
+// Thin wrapper to keep the existing call sites readable.
 static MultiplusData parseMultiplusPlaintext(const uint8_t* pt) {
-    BitReader r(pt);
-    uint8_t  ds  = (uint8_t)r.readU(8);
-    uint8_t  er  = (uint8_t)r.readU(8);
-    int16_t  rawA = (int16_t)r.readS(16);
-    uint16_t rawV = (uint16_t)r.readU(14);
-    uint8_t  ai  = (uint8_t)r.readU(2);
-    int32_t  rawInW  = (int32_t)r.readS(19);
-    int32_t  rawOutW = (int32_t)r.readS(19);
-    uint8_t  al  = (uint8_t)r.readU(2);
-    uint8_t  rawT = (uint8_t)r.readU(7);
-    uint8_t  socR = (uint8_t)r.readU(7);
-
     MultiplusData d = {};
-    d.deviceState = ds;
-    d.error       = er;
-    d.acInState   = ai;
-    d.alarm       = al;
-    d.acInW       = (rawInW  == 0x3FFFF) ? MULTI_POWER_NA : rawInW;
-    d.acOutW      = (rawOutW == 0x3FFFF) ? MULTI_POWER_NA : rawOutW;
-    d.battA       = (rawA == 0x7FFF)  ? 0.0f           : rawA * 0.1f;
-    d.battV       = (rawV == 0x3FFF)  ? NAN            : rawV * 0.01f;
-    d.battTempC   = (rawT == 0x7F)    ? (int8_t)-128   : (int8_t)((int)rawT - 40);
-    d.soc         = (socR == 0x7F)    ? 0xFF           : socR;
-    d.valid       = true;
-
+    multiplusParseRecord(pt, d);
     return d;
 }
 

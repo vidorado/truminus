@@ -1,46 +1,6 @@
 #include "catch_amalgamated.hpp"
+#include "multiplus_codec.hpp"   // real production BitReader
 #include <cstdint>
-
-struct BitReader {
-    uint64_t lo;
-    uint64_t hi;
-    int pos;
-
-    BitReader(const uint8_t* p) : pos(0) {
-        lo = 0; hi = 0;
-        for (int i = 0; i < 8; i++) lo |= ((uint64_t)p[i]) << (i * 8);
-        for (int i = 0; i < 8; i++) hi |= ((uint64_t)p[8 + i]) << (i * 8);
-    }
-
-    uint64_t readU(int bits) {
-        uint64_t v;
-        if (pos + bits <= 64) {
-            v = (lo >> pos) & ((bits < 64) ? ((1ULL << bits) - 1) : ~0ULL);
-        } else if (pos >= 64) {
-            int p = pos - 64;
-            v = (hi >> p) & ((bits < 64) ? ((1ULL << bits) - 1) : ~0ULL);
-        } else {
-            int loBits = 64 - pos;
-            int hiBits = bits - loBits;
-            uint64_t loPart = lo >> pos;
-            uint64_t hiPart = hi & ((1ULL << hiBits) - 1);
-            v = loPart | (hiPart << loBits);
-        }
-        pos += bits;
-        return v;
-    }
-
-    int64_t readS(int bits) {
-        uint64_t v = readU(bits);
-        if (bits < 64) {
-            uint64_t signbit = 1ULL << (bits - 1);
-            if (v & signbit) {
-                v |= ~((1ULL << bits) - 1);
-            }
-        }
-        return (int64_t)v;
-    }
-};
 
 TEST_CASE("BitReader unsigned reads", "[multiplus][bitreader]") {
     SECTION("Read 8 bits from start") {

@@ -1,4 +1,5 @@
 #include "ultimatronble.hpp"
+#include "ultimatron_codec.hpp"
 #include "logs.hpp"
 #include <math.h>
 #if defined(ENABLE_BLE)
@@ -87,20 +88,12 @@ static std::string formatMac(const std::string& compact) {
 }
 
 // ── Parse response packet ─────────────────────────────────────────────────
+// The byte-level decode lives in the IDF-free ultimatron_codec module so it can
+// be host-tested; here we timestamp, log and store under the mutex.
 static void parseResponse(const uint8_t* d, int len) {
-    if (len < 27 || d[0] != 0xdd || d[1] != 0x03 || d[2] != 0x00) return;
-    uint16_t rawV = ((uint16_t)d[4] << 8) | d[5];
-    int16_t  rawA = (int16_t)(((uint16_t)d[6] << 8) | d[7]);
     UltimatronData ud = {};
-    ud.battV  = rawV / 100.0f;
-    ud.battA  = rawA / 100.0f;
-    ud.soc    = d[23];
-    ud.valid  = true;
+    if (!ultimatronParseResponse(d, len, ud)) return;
     ud.lastMs = millis();
-    if (len >= 30) {
-        int16_t rawT = (int16_t)(((uint16_t)d[27] << 8) | d[28]);
-        ud.tempC = (rawT - 2731) / 10.0f;
-    }
     LOG_ULT_PF("[ult] SOC=%u%% V=%.1fV A=%.2fA T=%.1f°C\n",
                ud.soc, ud.battV, ud.battA, ud.tempC);
     xSemaphoreTake(s_dataMux, portMAX_DELAY);

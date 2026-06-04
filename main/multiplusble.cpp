@@ -29,6 +29,7 @@
 //   = 102 bits used out of 128 in the AES block.
 
 #include "multiplusble.hpp"
+#include "multiplus_codec.hpp"
 #include "logs.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -101,51 +102,9 @@ bool aesCtrDecrypt(const uint8_t* cipher, int len,
     return rc == 0;
 }
 
-// ── Bit-stream reader ───────────────────────────────────────────────────
-//
-// LSB-first packed reader over up to 16 bytes (128 bits).  Tracks a
-// running cursor.  `read(n)` consumes the next n bits and returns the
-// unsigned value; `read_signed(n)` interprets them in two's complement.
-struct BitReader {
-    uint64_t lo;     // bits 0..63
-    uint64_t hi;     // bits 64..127
-    int      pos;
-
-    BitReader(const uint8_t* p) : pos(0) {
-        lo = 0; hi = 0;
-        for (int i = 0; i < 8; i++) lo |= ((uint64_t)p[i])     << (i * 8);
-        for (int i = 0; i < 8; i++) hi |= ((uint64_t)p[8 + i]) << (i * 8);
-    }
-
-    uint64_t readU(int bits) {
-        uint64_t v;
-        if (pos + bits <= 64) {
-            v = (lo >> pos) & ((bits < 64) ? ((1ULL << bits) - 1) : ~0ULL);
-        } else if (pos >= 64) {
-            int p = pos - 64;
-            v = (hi >> p) & ((bits < 64) ? ((1ULL << bits) - 1) : ~0ULL);
-        } else {
-            int loBits = 64 - pos;
-            int hiBits = bits - loBits;
-            uint64_t loPart = lo >> pos;
-            uint64_t hiPart = hi & ((1ULL << hiBits) - 1);
-            v = loPart | (hiPart << loBits);
-        }
-        pos += bits;
-        return v;
-    }
-
-    int64_t readS(int bits) {
-        uint64_t v = readU(bits);
-        if (bits < 64) {
-            uint64_t signbit = 1ULL << (bits - 1);
-            if (v & signbit) {
-                v |= ~((1ULL << bits) - 1);   // sign-extend
-            }
-        }
-        return (int64_t)v;
-    }
-};
+// The bitstream reader (BitReader) and the plaintext unpacker
+// (multiplusParseRecord) live in the IDF-free multiplus_codec.{hpp,cpp} module
+// so they can be host-tested against the real code.
 
 // ── NVS load ────────────────────────────────────────────────────────────
 void load_config_internal() {
@@ -269,33 +228,9 @@ void multiplusBleHandleAd(const NimBLEAdvertisedDevice* dev) {
     uint8_t pt[16] = {};
     if (!aesCtrDecrypt(mfr + 10, cipherLen, mfr[7], mfr[8], pt)) return;
 
-    BitReader r(pt);
-    uint8_t  ds  = (uint8_t)r.readU(8);
-    uint8_t  er  = (uint8_t)r.readU(8);
-    int16_t  rawA = (int16_t)r.readS(16);                // 0.1 A
-    uint16_t rawV = (uint16_t)r.readU(14);               // 0.01 V
-    uint8_t  ai  = (uint8_t)r.readU(2);
-    int32_t  rawInW  = (int32_t)r.readS(19);
-    int32_t  rawOutW = (int32_t)r.readS(19);
-    uint8_t  al  = (uint8_t)r.readU(2);
-    uint8_t  rawT = (uint8_t)r.readU(7);                 // °C - 40
-    uint8_t  socR = (uint8_t)r.readU(7);
-
     MultiplusData d = {};
-    d.deviceState = ds;
-    d.error       = er;
-    d.acInState   = ai;
-    d.alarm       = al;
-    // 0x3FFFF is the 19-bit "not available" sentinel (inverter off / not
-    // reporting); keep it distinct from a real 0 W reading.
-    d.acInW       = (rawInW  == 0x3FFFF) ? MULTI_POWER_NA : rawInW;
-    d.acOutW      = (rawOutW == 0x3FFFF) ? MULTI_POWER_NA : rawOutW;
-    d.battA       = (rawA == 0x7FFF)  ? 0.0f           : rawA * 0.1f;
-    d.battV       = (rawV == 0x3FFF)  ? NAN            : rawV * 0.01f;
-    d.battTempC   = (rawT == 0x7F)    ? (int8_t)-128   : (int8_t)((int)rawT - 40);
-    d.soc         = (socR == 0x7F)    ? 0xFF           : socR;
-    d.valid       = true;
-    d.lastMs      = now_ms();
+    multiplusParseRecord(pt, d);
+    d.lastMs = now_ms();
 
     if (s_dataMux && xSemaphoreTake(s_dataMux, portMAX_DELAY) == pdTRUE) {
         s_data = d;
@@ -305,8 +240,8 @@ void multiplusBleHandleAd(const NimBLEAdvertisedDevice* dev) {
     s_haveLastIv = true;
 
     LOG_BLE_PF("[multi] st=%u err=%u acIn=%dW acOut=%dW V=%.2f A=%.1f soc=%u\n",
-               (unsigned)ds, (unsigned)er,
-               (int)rawInW, (int)rawOutW,
+               (unsigned)d.deviceState, (unsigned)d.error,
+               (int)d.acInW, (int)d.acOutW,
                isnan(d.battV) ? 0.0 : d.battV, d.battA,
                (unsigned)d.soc);
 }

@@ -15,6 +15,8 @@ add_library(truminus_logic STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/lin_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/bthome_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/am2301_codec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/multiplus_codec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/ultimatron_codec.cpp
 )
 target_include_directories(truminus_logic PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -34,6 +36,7 @@ add_executable(tests
     test_am2301_decode.cpp
     test_faultlog.cpp
     test_multiplus_parser.cpp
+    test_ultimatron_parser.cpp
 )
 
 target_link_libraries(tests PRIVATE truminus_logic)
