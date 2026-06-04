@@ -42,23 +42,23 @@ layers live in `main/control_state.hpp` (IDF-free); `p4display.hpp` includes it.
 testable module must follow the same rule: depend only on IDF-free headers, then add its
 `.cpp` to `truminus_logic` in `test/host/CMakeLists.txt`.
 
-**Still copied (pending the same treatment):** `test_helpers.cpp` keeps copies of the
-LIN frame encode/parse, BTHome and semver logic, because their real sources
-(`truma_lin.cpp`, `tankble.cpp`, `p4_ota.cpp`) still pull in IDF headers. Migrate as
-those modules get their pure logic peeled into IDF-free units.
+**Still copied (pending the same treatment):** the LIN low-level checksum/PID and the
+frame-assembly setters are still reimplemented inline in `test_lin_protocol.cpp` /
+`test_lin_frames.cpp` (their real sources `lin_driver.cpp` / `truma_lin.cpp` keep IDF
+deps, and the setters mutate shared frame buffers). `test_helpers.cpp/.hpp` are now empty
+shells — removable once `test_lin_protocol.cpp` drops its leftover include.
 
 ## Current state
 
-- **Host test suite:** 363 assertions across 46 `TEST_CASE`s (Catch2 v3.5.2),
+- **Host test suite:** 394 assertions across 53 `TEST_CASE`s (Catch2 v3.5.2),
   built via `test/host/build.sh`, run with `ctest` or `./build/tests`.
-- **Covered by tests today:** LIN encoding/frames/protocol, `derive_mode`, fan/boiler
-  conversions, AM2301 decode, BTHome (tank) parse, Multiplus parser + bitreader,
-  semver compare, fault log.
-- **`mode_controller`** ✅ consolidated into a single header (`mode_controller.hpp`;
-  the stray `mode_controller.h` is gone) and now depends on `control_state.hpp`. Its
-  tests (`test_fan_boiler.cpp`, `test_derive_mode.cpp`) link the **real**
-  `main/mode_controller.cpp` — first module on the fidelity rule above. Firmware build
-  confirmed green after the decoupling.
+- **IDF-free modules linked into the host tests (real production code, not copies):**
+  `mode_controller` (fan/boiler + `derive_mode`), `version_compare` (semver),
+  `lin_codec` (Kelvin temp encode/parse), `bthome_codec`, `am2301_codec`,
+  `multiplus_codec` (BitReader + VE.Bus unpack), `ultimatron_codec`, `victron_codec`,
+  `faultlog_codec`. Plain data structs they share live in IDF-free headers
+  (`control_state.hpp`; the BLE `*Data` structs were already IDF-free).
+- Each extraction verified: host suite green **and** firmware build green.
 
 | Source file        | Lines |
 |--------------------|-------|
@@ -86,13 +86,29 @@ Merged into a single `mode_controller.hpp` (depending on the new IDF-free
 `control_state.hpp`); `mode_controller.h` removed; `main.cpp`/`truma_lin.cpp` updated.
 Tests migrated to link the real `.cpp`. Firmware + host tests green.
 
-### 1. WebSocket command parsing — *high value, testable* — NEXT
+### BLE parsers + small codecs ✅ DONE
+`bthome_codec`, `am2301_codec`, `multiplus_codec`, `ultimatron_codec`, `victron_codec`,
+`version_compare`, `lin_codec`, `faultlog_codec` extracted as IDF-free modules; their
+tests link the real code. New tests added for the previously-untested Ultimatron and
+Victron parsers. Drift caught and fixed along the way (e.g. `MULTI_POWER_NA` was
+`-999999` in the multiplus copy vs the real `INT32_MIN`; `derive_mode`'s copy used
+out-params vs the real struct return). AES-CTR (mbedtls) and NimBLE/RMT plumbing stay in
+their `*.cpp`; the codecs take already-decrypted / already-captured data.
+
+### Remaining IDF-free extractions
+- **LIN low-level (checksum/PID)** — peel `getProtectedId`/`getChecksum` out of
+  `lin_driver.cpp` into an IDF-free unit; repoint `test_lin_protocol.cpp`.
+- **LIN frame setters** (`f20_*`/`f05_*`/`f06_*`/`f07_*`) — these mutate shared frame
+  buffers; need refactoring to take a buffer pointer before `test_lin_frames.cpp` can
+  link the real code. Bigger change.
+- **`test_helpers.{cpp,hpp}` removal** once the two LIN tests above stop including it.
+
+### 1. WebSocket command parsing — *high value, testable*
 Follow the fidelity rule: extract the pure id+value → validated action mapping out of
 `onWsCommand()` (`main.cpp`) into an IDF-free `ws_command.{hpp,cpp}`, link it into the
 host tests, then add `test_ws_command.cpp` BEFORE rewiring `main.cpp` to dispatch via it.
-`onWsCommand()` (`main.cpp:74`) maps incoming `{id,value}` frames onto control-state
-mutations. Extract the **pure** part (id+value → validated control change) into a
-helper that takes/returns plain structs, leaving the queue/global writes in `main.cpp`.
+(Attempted earlier and reverted because the test couldn't yet link real code — now
+unblocked by the IDF-free header convention.)
 - Tests: each writable id (`temp`, `heating`, `boiler`, `fan`, `energy_idx`, …),
   invalid ids, out-of-range values, malformed input.
 
