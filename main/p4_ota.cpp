@@ -243,7 +243,10 @@ static bool fetch_latest_tag(char* tag, size_t tag_len) {
     cfg.url                   = OTA_LATEST_URL;
     cfg.crt_bundle_attach     = esp_crt_bundle_attach;
     cfg.disable_auto_redirect = true;
-    cfg.timeout_ms            = 10000;
+    // Short timeout so a check on a marginal WiFi link fails fast and stops
+    // hogging airtime from the WSS tunnel instead of blocking for 10 s. The
+    // auto-check is a convenience; a missed run just retries on the next cycle.
+    cfg.timeout_ms            = 6000;
     cfg.event_handler         = loc_evt_handler;
     cfg.user_data             = &ctx;
 
@@ -775,5 +778,8 @@ void p4OtaStart() {
     }
 
     xTaskCreate(selftest_task, "p4_ota_verify", 4096, nullptr, 6, nullptr);
-    xTaskCreate(check_task,    "p4_ota_check",  6144, nullptr, 2, nullptr);
+    // Lowest practical priority: the version check is background convenience and
+    // must yield CPU to the WiFi/tunnel tasks (the real contention is airtime,
+    // but keeping it below everything networking-related costs nothing).
+    xTaskCreate(check_task,    "p4_ota_check",  6144, nullptr, 1, nullptr);
 }
