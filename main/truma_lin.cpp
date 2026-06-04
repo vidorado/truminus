@@ -1,6 +1,7 @@
 #include "truma_lin.hpp"
 #include "lin_driver.hpp"
 #include "lin_codec.hpp"
+#include "lin_frames.hpp"
 #include "p4display.hpp"
 #include "p4_ota.hpp"
 #include "mode_controller.hpp"
@@ -42,64 +43,15 @@ uint8_t masterRx[8];
 
 // ── Encoding helpers (ported from trumaframes.cpp) ────────────────────────
 // The stateless value codec (encodeTempKelvinX10, parseF21*, parseF22*) lives
-// in the IDF-free lin_codec.{hpp,cpp} module so it can be host-tested against
-// the real code. The frame-assembly helpers below stay here: they mutate the
-// shared f02/f20/… frame buffers.
-
-// Frame 0x20 bytes 0-1: room setpoint as 12-bit K×10 + flags nibble 0xA.
-// celsius outside [5,30] → 0xAA 0xAA (heating-off sentinel from CP-Plus capture).
-void f20_setRoomSetpoint(double celsius) {
-    if (celsius < 5.0 || celsius > 30.0) {
-        f20.data[0] = 0xAA;
-        f20.data[1] = 0xAA;
-        return;
-    }
-    uint16_t raw = (uint16_t)lround((celsius + 273.0) * 10.0);
-    f20.data[0] = raw & 0xFF;
-    f20.data[1] = 0xA0 | ((raw >> 8) & 0x0F);
-}
-
-// Frame 0x20 byte 2: water setpoint as K×10 >> 4.  celsius<1 → 0xAA.
-void f20_setWaterSetpoint(double celsius) {
-    if (celsius < 1.0) { f20.data[2] = 0xAA; return; }
-    uint16_t raw = (uint16_t)lround((celsius + 273.0) * 10.0);
-    f20.data[2] = (uint8_t)(raw >> 4);
-}
-
-// Frame 0x20 byte 5: high nibble = heating/fan mode, low nibble = water mode.
-// pumpOrFan==1 → 0xB (eco heat), ==2 → 0xD (high heat), >=0x10 → fan level.
-void f20_setFanAndWater(uint8_t pumpOrFan, uint8_t waterMode) {
-    uint8_t fanNibble;
-    if (pumpOrFan == 1) {
-        fanNibble = 0xB;
-    } else if (pumpOrFan == 2) {
-        fanNibble = 0xD;
-    } else {
-        uint8_t level = (pumpOrFan >= 0x10) ? (pumpOrFan & 0x0F) : pumpOrFan;
-        fanNibble = level;
-    }
-    f20.data[5] = (fanNibble << 4) | (waterMode & 0x0F);
-}
-
-void f05_setEnergySelection(int energyIdx) {
-    // P4 indices map 1:1 to legacy TEnergySelection (Gas, Mix900, Mix1800, Elec900, Elec1800).
-    // Priority codes: 1=EpFuel, 2=EpBothPrioElectro, 3=EpBothPrioFuel.
-    static const uint8_t priorities[5] = { 1, 3, 3, 2, 2 };
-    if (energyIdx < 0 || energyIdx > 4) energyIdx = 0;
-    f05.data[0] = priorities[energyIdx];
-}
-
-void f06_setPowerLimit(int energyIdx) {
-    static const uint16_t limits[5] = { 0, 900, 1800, 900, 1800 };
-    if (energyIdx < 0 || energyIdx > 4) energyIdx = 0;
-    uint16_t v = (uint16_t)htole16(limits[energyIdx]);
-    memcpy(&f06.data[0], &v, 2);
-}
-
-void f07_setPumpOrFan(uint8_t pumpOrFan) {
-    f07.data[0] = pumpOrFan | 0xE0;
-    f07.data[1] = 0xFE;
-}
+// in lin_codec.{hpp,cpp}; the frame-field bit-packing lives in the IDF-free
+// lin_frames.{hpp,cpp} module so it is host-tested against the real code. The
+// wrappers below just bind those encoders to the shared frame buffers.
+void f20_setRoomSetpoint(double celsius)              { linF20Room(celsius, f20.data); }
+void f20_setWaterSetpoint(double celsius)             { linF20Water(celsius, f20.data); }
+void f20_setFanAndWater(uint8_t pumpOrFan, uint8_t w) { linF20FanWater(pumpOrFan, w, f20.data); }
+void f05_setEnergySelection(int energyIdx)           { linF05Energy(energyIdx, f05.data); }
+void f06_setPowerLimit(int energyIdx)                { linF06PowerLimit(energyIdx, f06.data); }
+void f07_setPumpOrFan(uint8_t pumpOrFan)             { linF07PumpOrFan(pumpOrFan, f07.data); }
 
 // Frame 0x21/0x22 parsers (parseF21RoomTemp/parseF21WaterTemp/
 // parseF22WaterHeating) now live in lin_codec.{hpp,cpp}.

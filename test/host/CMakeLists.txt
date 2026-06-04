@@ -5,9 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Real production logic compiled straight from main/ (IDF-free modules only) so
-# the tests exercise the shipping code, not a copy. The only remaining inline
-# copy is the LIN frame-assembly setters in test_lin_frames.cpp (the real ones
-# mutate shared frame buffers and need decoupling first).
+# the tests exercise the shipping code, not a copy. Every test now links the real
+# module — no inline re-implementations remain.
 add_library(truminus_logic STATIC
     catch_amalgamated.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/mode_controller.cpp
@@ -16,6 +15,7 @@ add_library(truminus_logic STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/version_compare.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/lin_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/lin_protocol.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/lin_frames.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/bthome_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/am2301_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/multiplus_codec.cpp

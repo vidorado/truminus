@@ -18,6 +18,7 @@ idf_component_register(
         "i18n.cpp"
         "lin_driver.cpp"
         "lin_protocol.cpp"
+        "lin_frames.cpp"
         "truma_lin.cpp"
         "lin_codec.cpp"
         "mode_controller.cpp"
