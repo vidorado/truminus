@@ -40,6 +40,11 @@ static const char* TAG = "p4_ota";
 #define OTA_GH_REPO   "truminus"
 #define OTA_ASSET     "truminus.bin"
 #define OTA_LATEST_URL "https://github.com/" OTA_GH_OWNER "/" OTA_GH_REPO "/releases/latest"
+// Marker asset that promotes an otherwise-silent patch to an auto-prompt: a
+// release that should actively notify (e.g. a security/important fix) includes a
+// zero-byte asset with this name. SemVer has no "importance" field, so the
+// signal lives out-of-band in the release. See release_has_force_notify().
+#define OTA_FORCE_NOTIFY_ASSET "force-notify"
 
 // Period between automatic version checks (after the boot check).
 static constexpr uint32_t CHECK_PERIOD_MS = 12 * 60 * 60 * 1000;  // 12 h
@@ -279,6 +284,37 @@ static bool fetch_latest_tag(char* tag, size_t tag_len) {
     return ok;
 }
 
+// True if the release tagged `tag` carries the OTA_FORCE_NOTIFY_ASSET marker.
+// GitHub 302-redirects an existing asset's download URL to the CDN and 404s a
+// missing one, so a single header-only request (no body, no GitHub API/auth)
+// answers it — the same redirect trick fetch_latest_tag() uses. Only called when
+// an update is already available, so the extra request is rare.
+static bool release_has_force_notify(const char* tag) {
+    char url[256];
+    snprintf(url, sizeof(url),
+             "https://github.com/" OTA_GH_OWNER "/" OTA_GH_REPO
+             "/releases/download/%s/" OTA_FORCE_NOTIFY_ASSET, tag);
+
+    esp_http_client_config_t cfg = {};
+    cfg.url                   = url;
+    cfg.crt_bundle_attach     = esp_crt_bundle_attach;
+    cfg.disable_auto_redirect = true;       // we only want the status, not the asset
+    cfg.timeout_ms            = 6000;
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (!c) return false;
+    esp_http_client_set_header(c, "User-Agent", "TruMinus-OTA");
+
+    bool exists = false;
+    if (esp_http_client_open(c, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(c);
+        int st = esp_http_client_get_status_code(c);
+        exists = (st == 301 || st == 302 || st == 307 || st == 308);
+    }
+    esp_http_client_close(c);
+    esp_http_client_cleanup(c);
+    return exists;
+}
+
 // Run one version check; updates s_status and broadcasts.  Blocking
 // (network); always called from the check task, never the caller.
 static void do_check() {
@@ -306,6 +342,12 @@ static void do_check() {
     char tag[32] = "";
     bool got = fetch_latest_tag(tag, sizeof(tag));
 
+    // Decide notify-worthiness while BLE is still paused (shared radio). A patch
+    // is normally silent; a release can force the prompt by shipping the
+    // force-notify marker asset. Both network probes run before resuming BLE.
+    bool newer  = got && semver_cmp(tag, running_version()) > 0;
+    bool forced = newer && release_has_force_notify(tag);
+
     if (!vicWas) victronBleResume();
     if (!ultWas) ultimatronBleResume();
 
@@ -315,17 +357,18 @@ static void do_check() {
         snprintf(s_status.error, sizeof(s_status.error), "check failed");
     } else {
         s_status.error[0] = '\0';
-        bool newer = semver_cmp(tag, s_status.currentVer) > 0;
+        bool mm = newer && is_minor_or_major_newer(tag, s_status.currentVer);
         s_status.available = newer;
-        s_notify_worthy = newer && is_minor_or_major_newer(tag, s_status.currentVer);
+        s_notify_worthy = newer && (mm || forced);
         if (newer) {
             snprintf(s_status.latestVer, sizeof(s_status.latestVer), "%s", tag);
             snprintf(s_asset_url, sizeof(s_asset_url),
                      "https://github.com/" OTA_GH_OWNER "/" OTA_GH_REPO
                      "/releases/download/%s/" OTA_ASSET, tag);
-            ESP_LOGI(TAG, "update available: %s -> %s (%s)", s_status.currentVer, tag,
-                     s_notify_worthy ? "minor/major — will prompt"
-                                     : "patch — silent (manual check only)");
+            const char* why = !s_notify_worthy ? "patch — silent (manual check only)"
+                            : mm               ? "minor/major — will prompt"
+                                               : "patch — forced prompt (marker asset)";
+            ESP_LOGI(TAG, "update available: %s -> %s (%s)", s_status.currentVer, tag, why);
         } else {
             // No longer behind — clear the prompt memory so a future release
             // pops the modal again.

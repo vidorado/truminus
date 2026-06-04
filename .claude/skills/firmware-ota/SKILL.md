@@ -86,6 +86,19 @@ the latest is a **minor or major** bump (`is_minor_or_major_newer()` →
 `s_notify_worthy`). Patch releases don't nag; the user still finds + installs
 them via a manual check.
 
+**Forcing a patch to prompt (important / security fix).** SemVer has no
+"importance" field, so the signal lives out-of-band in the release: attach a
+zero-byte asset named **`force-notify`** to the GitHub release. When an update is
+available, `release_has_force_notify()` does one header-only request to that
+asset's download URL (302 = present, 404 = absent — the same redirect trick as
+`fetch_latest_tag`, no GitHub API/auth), and `s_notify_worthy` becomes
+`newer && (minor/major || force-notify present)`. So a patch that ships the
+marker prompts like a minor would. To cut such a release:
+`gh release upload <tag> /dev/null --clobber` won't name it; create the marker
+explicitly, e.g. `: > force-notify && gh release upload <tag> force-notify`.
+Note: only firmware **already running** this code reads the marker, so it takes
+effect from the *next* release onward.
+
 ## Transfer tuning (download speed)
 
 During the transfer `install_task` frees the radio + DRAM: `wstunnelSuspend()`
