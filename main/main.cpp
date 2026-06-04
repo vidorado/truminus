@@ -24,6 +24,7 @@
 #include "flags.h"
 #include "mode_controller.hpp"
 #include "ws_command.hpp"
+#include "ws_diff.hpp"
 
 // LIN bus pins on the JC4880-P4 board — wired to connector J5.
 // UART_NUM_1 is fixed inside truma_lin.cpp (UART0 is the debug console).
@@ -56,13 +57,8 @@ static const char* multiPowerJson(int32_t w, char* buf, size_t n) {
     return buf;
 }
 
-// True when two AC power readings differ enough to rebroadcast.  Treats the
-// no-data sentinel as its own state and avoids the abs() overflow that
-// MULTI_POWER_NA (INT32_MIN) would cause in a plain delta.
-static bool multiPowerChanged(int32_t a, int32_t b) {
-    if (a == MULTI_POWER_NA || b == MULTI_POWER_NA) return a != b;
-    return abs(a - b) > 5;
-}
+// multiPowerChanged() and the BLE/LIN change-detection predicates live in the
+// host-tested ws_diff module; multiPowerJson() (formatting) stays here.
 
 // ── WebSocket command dispatcher ─────────────────────────────────────────
 //
@@ -324,14 +320,7 @@ static void broadcastBleData() {
     char buf[256];
 
     VictronData v = victronGetData();
-    bool vChanged = !inited
-                    || v.valid != prevV.valid
-                    || (v.valid && (v.state != prevV.state
-                                    || fabsf(v.battV - prevV.battV)  > 0.05f
-                                    || fabsf(v.battA - prevV.battA)  > 0.05f
-                                    || fabsf(v.pvW   - prevV.pvW)    > 0.5f
-                                    || fabsf(v.kWhToday - prevV.kWhToday) > 0.01f));
-    if (vChanged) {
+    if (!inited || victronChanged(v, prevV)) {
         snprintf(buf, sizeof(buf),
                  "{\"command\":\"solar\",\"valid\":%s,\"state\":%u,"
                  "\"pvW\":%d,\"kWh\":%.2f,\"battV\":%.2f,\"battA\":%.2f}",
@@ -342,12 +331,7 @@ static void broadcastBleData() {
     }
 
     UltimatronData u = ultimatronGetData();
-    bool uChanged = !inited
-                    || u.valid != prevU.valid
-                    || (u.valid && (u.soc != prevU.soc
-                                    || fabsf(u.battV - prevU.battV) > 0.05f
-                                    || fabsf(u.battA - prevU.battA) > 0.05f));
-    if (uChanged) {
+    if (!inited || ultimatronChanged(u, prevU)) {
         snprintf(buf, sizeof(buf),
                  "{\"command\":\"batt\",\"valid\":%s,\"soc\":%u,\"battV\":%.2f,\"battA\":%.2f}",
                  u.valid ? "true" : "false", (unsigned)u.soc, u.battV, u.battA);
@@ -366,18 +350,7 @@ static void broadcastMultiplusData() {
     char buf[224];
 
     MultiplusData m = multiplusGetData();
-    bool changed = !inited
-                   || m.valid != prev.valid
-                   || (m.valid && (m.deviceState != prev.deviceState
-                                   || m.alarm       != prev.alarm
-                                   || m.acInState   != prev.acInState
-                                   || multiPowerChanged(m.acInW,  prev.acInW)
-                                   || multiPowerChanged(m.acOutW, prev.acOutW)
-                                   || (!std::isnan(m.battV) &&
-                                       fabsf(m.battV - prev.battV) > 0.05f)
-                                   || fabsf(m.battA - prev.battA) > 0.1f
-                                   || m.soc         != prev.soc));
-    if (!changed) return;
+    if (inited && !multiplusChanged(m, prev)) return;
     char mInW[12], mOutW[12];
     snprintf(buf, sizeof(buf),
              "{\"command\":\"multi\",\"valid\":%s,\"state\":%u,"
@@ -404,15 +377,7 @@ static void broadcastTankData() {
     char buf[96];
 
     TankData t = tankGetData();
-    // Emit on any change OR whenever a fresh sensor advert arrives (lastMs
-    // moves even when pct is identical) — needed so the user can watch the
-    // level rise smoothly while filling, instead of waiting for whole-percent
-    // crossings.  Also drives initial-state push.
-    bool changed = !inited
-                   || t.valid != prev.valid
-                   || (t.valid && t.pct != prev.pct)
-                   || (t.valid && t.lastMs != prev.lastMs);
-    if (changed) {
+    if (!inited || tankChanged(t, prev)) {
         snprintf(buf, sizeof(buf),
                  "{\"command\":\"tank\",\"valid\":%s,\"pct\":%u}",
                  t.valid ? "true" : "false", (unsigned)t.pct);
@@ -445,21 +410,13 @@ static void broadcastLinTemps() {
         else                              snprintf(out, n, "%.1f", t);
     };
 
-    auto tempChanged = [](float a, float b) {
-        bool aBad = !std::isfinite(a) || a <= -200.0f;
-        bool bBad = !std::isfinite(b) || b <= -200.0f;
-        if (aBad != bBad) return true;
-        if (aBad && bBad) return false;
-        return fabsf(a - b) > 0.05f;
-    };
-
     char val[16];
 
-    if (!inited || tempChanged(lin.roomTemp, prev.roomTemp)) {
+    if (!inited || linTempChanged(lin.roomTemp, prev.roomTemp)) {
         fmtTemp(lin.roomTemp, val, sizeof(val));
         emit("room_temp", val);
     }
-    if (!inited || tempChanged(lin.waterTemp, prev.waterTemp)) {
+    if (!inited || linTempChanged(lin.waterTemp, prev.waterTemp)) {
         fmtTemp(lin.waterTemp, val, sizeof(val));
         emit("water_temp", val);
     }
@@ -476,7 +433,7 @@ static void broadcastLinTemps() {
         static float prevOutdoor = NAN;
         Am2301Data   am = am2301GetData();
         float        outdoor = am.valid ? am.tempC : NAN;
-        if (!inited || tempChanged(outdoor, prevOutdoor)) {
+        if (!inited || linTempChanged(outdoor, prevOutdoor)) {
             fmtTemp(outdoor, val, sizeof(val));
             emit("outdoor_temp", val);
             prevOutdoor = outdoor;

@@ -21,6 +21,7 @@ idf_component_register(
         "lin_codec.cpp"
         "mode_controller.cpp"
         "ws_command.cpp"
+        "ws_diff.cpp"
         "version_compare.cpp"
         "flags.cpp"
         "wifi_manager.cpp"
