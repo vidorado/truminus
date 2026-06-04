@@ -1,4 +1,5 @@
 #include "victronble.hpp"
+#include "victron_codec.hpp"
 #include "ultimatronble.hpp"
 #include "tankble.hpp"
 #include "multiplusble.hpp"
@@ -131,22 +132,11 @@ static void parseMfrData(const uint8_t* mfr, int len) {
     uint8_t out[16] = {};
     if (!aesCtrDecrypt(mfr + 10, 16, mfr[7], mfr[8], out)) return;
 
-    int16_t  rawV   = (int16_t)((uint16_t)out[2] | ((uint16_t)out[3] << 8));
-    int16_t  rawA   = (int16_t)((uint16_t)out[4] | ((uint16_t)out[5] << 8));
-    uint16_t rawKwh = (uint16_t)out[6] | ((uint16_t)out[7] << 8);
-    uint16_t rawPv  = (uint16_t)out[8] | ((uint16_t)out[9] << 8);
-
-    if (rawV == 0x7FFF) return;
-
-    VictronData d;
-    d.state    = out[0];
-    d.errCode  = out[1];
-    d.battV    = rawV * 0.01f;
-    d.battA    = (rawA == 0x7FFF) ? 0.0f : rawA * 0.1f;
-    d.kWhToday = rawKwh * 0.01f;
-    d.pvW      = (float)rawPv;
-    d.valid    = true;
-    d.lastMs   = millis();
+    // Field decode lives in the host-tested victron_codec module; returns false
+    // on the 0x7FFF "not available" voltage sentinel.
+    VictronData d = {};
+    if (!victronParseRecord(out, d)) return;
+    d.lastMs = millis();
 
     if (s_dataMux) xSemaphoreTake(s_dataMux, portMAX_DELAY);
     s_data = d;

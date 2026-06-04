@@ -24,6 +24,7 @@ idf_component_register(
         "flags.cpp"
         "wifi_manager.cpp"
         "victronble.cpp"
+        "victron_codec.cpp"
         "ultimatronble.cpp"
         "ultimatron_codec.cpp"
         "tankble.cpp"
