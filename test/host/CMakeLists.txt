@@ -18,6 +18,7 @@ add_library(truminus_logic STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/multiplus_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/ultimatron_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../main/victron_codec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/faultlog_codec.cpp
 )
 target_include_directories(truminus_logic PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

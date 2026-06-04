@@ -4,6 +4,7 @@
 // brownout) — those never overwrite the stored fault.  Surfaced in the serial
 // boot log and the web About overlay (see data/script.js `diag` frame).
 #include "esp_system.h"
+#include "faultlog_codec.hpp"   // faultReasonName(), faultIsCrash()
 #include <cstdint>
 
 struct FaultInfo {
@@ -18,6 +19,3 @@ void faultLogInit();
 
 // Last recorded uncontrolled fault; false if none has ever been recorded.
 bool faultLogGet(FaultInfo& out);
-
-// Human-readable name for an esp_reset_reason_t value.
-const char* faultReasonName(int reason);

@@ -34,6 +34,7 @@ idf_component_register(
         "am2301.cpp"
         "am2301_codec.cpp"
         "faultlog.cpp"
+        "faultlog_codec.cpp"
         "c6_ota.cpp"
         "p4_ota.cpp"
         "webserver.cpp"

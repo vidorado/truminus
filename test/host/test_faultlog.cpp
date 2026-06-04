@@ -1,6 +1,8 @@
 #include "catch_amalgamated.hpp"
-#include "test_helpers.hpp"
+#include "faultlog_codec.hpp"   // real production faultIsCrash / faultReasonName
+#include <string>
 
+// Local mirror of the esp_reset_reason_t values, used only as test data.
 enum esp_reset_reason_t {
     ESP_RST_UNKNOWN = 0,
     ESP_RST_POWERON = 1,
@@ -17,64 +19,43 @@ enum esp_reset_reason_t {
     ESP_RST_JTAG = 12,
 };
 
-static bool is_fault(esp_reset_reason_t r) {
-    return r == ESP_RST_PANIC || r == ESP_RST_TASK_WDT ||
-           r == ESP_RST_INT_WDT || r == ESP_RST_WDT;
-}
-
-static const char* faultReasonName(int r) {
-    switch (r) {
-        case ESP_RST_POWERON:   return "power-on";
-        case ESP_RST_EXT:       return "external";
-        case ESP_RST_SW:        return "sw-restart";
-        case ESP_RST_PANIC:     return "panic/abort";
-        case ESP_RST_INT_WDT:   return "int-wdt";
-        case ESP_RST_TASK_WDT:  return "task-wdt";
-        case ESP_RST_WDT:       return "wdt";
-        case ESP_RST_DEEPSLEEP: return "deep-sleep";
-        case ESP_RST_BROWNOUT:  return "brownout";
-        case ESP_RST_SDIO:      return "sdio";
-        case ESP_RST_USB:       return "usb";
-        case ESP_RST_JTAG:      return "jtag";
-        default:                return "unknown";
-    }
-}
+// is_fault / faultReasonName now come from the real faultlog_codec module.
 
 TEST_CASE("Fault detection", "[faultlog]") {
     SECTION("Panic is a fault") {
-        REQUIRE(is_fault(ESP_RST_PANIC));
+        REQUIRE(faultIsCrash(ESP_RST_PANIC));
     }
 
     SECTION("Task WDT is a fault") {
-        REQUIRE(is_fault(ESP_RST_TASK_WDT));
+        REQUIRE(faultIsCrash(ESP_RST_TASK_WDT));
     }
 
     SECTION("Interrupt WDT is a fault") {
-        REQUIRE(is_fault(ESP_RST_INT_WDT));
+        REQUIRE(faultIsCrash(ESP_RST_INT_WDT));
     }
 
     SECTION("Generic WDT is a fault") {
-        REQUIRE(is_fault(ESP_RST_WDT));
+        REQUIRE(faultIsCrash(ESP_RST_WDT));
     }
 
     SECTION("Power-on is not a fault") {
-        REQUIRE_FALSE(is_fault(ESP_RST_POWERON));
+        REQUIRE_FALSE(faultIsCrash(ESP_RST_POWERON));
     }
 
     SECTION("Software restart is not a fault") {
-        REQUIRE_FALSE(is_fault(ESP_RST_SW));
+        REQUIRE_FALSE(faultIsCrash(ESP_RST_SW));
     }
 
     SECTION("Deep sleep is not a fault") {
-        REQUIRE_FALSE(is_fault(ESP_RST_DEEPSLEEP));
+        REQUIRE_FALSE(faultIsCrash(ESP_RST_DEEPSLEEP));
     }
 
     SECTION("Brownout is not a fault") {
-        REQUIRE_FALSE(is_fault(ESP_RST_BROWNOUT));
+        REQUIRE_FALSE(faultIsCrash(ESP_RST_BROWNOUT));
     }
 
     SECTION("Unknown is not a fault") {
-        REQUIRE_FALSE(is_fault(ESP_RST_UNKNOWN));
+        REQUIRE_FALSE(faultIsCrash(ESP_RST_UNKNOWN));
     }
 }
 

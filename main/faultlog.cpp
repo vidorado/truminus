@@ -1,4 +1,5 @@
 #include "faultlog.hpp"
+#include "faultlog_codec.hpp"
 #include "esp_app_desc.h"
 #include "esp_log.h"
 #include "nvs.h"
@@ -6,31 +7,8 @@
 
 static const char* TAG = "fault";
 
-// Reset causes that mean the code actually crashed — as opposed to a
-// controlled restart (ESP_RST_SW) or a power event (power-on / brownout).
-// Only these update the stored record, so real bugs aren't masked.
-static bool is_fault(esp_reset_reason_t r) {
-    return r == ESP_RST_PANIC   || r == ESP_RST_TASK_WDT ||
-           r == ESP_RST_INT_WDT || r == ESP_RST_WDT;
-}
-
-const char* faultReasonName(int r) {
-    switch (r) {
-        case ESP_RST_POWERON:   return "power-on";
-        case ESP_RST_EXT:       return "external";
-        case ESP_RST_SW:        return "sw-restart";
-        case ESP_RST_PANIC:     return "panic/abort";
-        case ESP_RST_INT_WDT:   return "int-wdt";
-        case ESP_RST_TASK_WDT:  return "task-wdt";
-        case ESP_RST_WDT:       return "wdt";
-        case ESP_RST_DEEPSLEEP: return "deep-sleep";
-        case ESP_RST_BROWNOUT:  return "brownout";
-        case ESP_RST_SDIO:      return "sdio";
-        case ESP_RST_USB:       return "usb";
-        case ESP_RST_JTAG:      return "jtag";
-        default:                return "unknown";
-    }
-}
+// faultIsCrash() and faultReasonName() live in the IDF-free faultlog_codec
+// module so the classification is host-tested against the real code.
 
 void faultLogInit() {
     esp_reset_reason_t boot = esp_reset_reason();
@@ -39,7 +17,7 @@ void faultLogInit() {
     nvs_handle_t h;
     if (nvs_open("diag", NVS_READWRITE, &h) != ESP_OK) return;
 
-    if (is_fault(boot)) {
+    if (faultIsCrash((int)boot)) {
         uint32_t cnt = 0;
         nvs_get_u32(h, "f_cnt", &cnt);
         cnt++;
