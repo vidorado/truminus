@@ -17,6 +17,7 @@ idf_component_register(
         "p4settings.cpp"
         "i18n.cpp"
         "lin_driver.cpp"
+        "lin_protocol.cpp"
         "truma_lin.cpp"
         "lin_codec.cpp"
         "mode_controller.cpp"
