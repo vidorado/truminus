@@ -3,6 +3,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -12,14 +13,32 @@
 
 static const char* TAG = "wifi";
 
-#define MAX_RETRY   5
-#define MAX_APS     20
+#define MAX_RETRY          5        // fast back-to-back retries on a drop
+#define WIFI_SLOW_RETRY_MS 30000    // then keep retrying forever at this cadence
+#define MAX_APS            20
 
-static WifiStatus        s_status     = {};
-static SemaphoreHandle_t s_statusMux  = nullptr;
-static int               s_retryCount = 0;
-static bool              s_hasCreds   = false;
-static bool              s_started    = false;
+static WifiStatus         s_status     = {};
+static SemaphoreHandle_t  s_statusMux  = nullptr;
+static int                s_retryCount = 0;
+static bool               s_hasCreds   = false;
+static bool               s_started    = false;
+static esp_timer_handle_t s_retryTimer = nullptr;   // slow-retry timer (periodic)
+static bool               s_slowRetry  = false;      // slow retry currently armed
+
+// Fires every WIFI_SLOW_RETRY_MS once the fast retries are exhausted, so the
+// device recovers from any prolonged outage (AP/router reboot, ISP down) without
+// a power cycle. Stopped the moment we get an IP.
+static void wifi_retry_timer_cb(void*) {
+    if (s_hasCreds) {
+        ESP_LOGI(TAG, "slow reconnect attempt");
+        esp_wifi_connect();
+    }
+}
+
+static void stop_slow_retry(void) {
+    if (s_slowRetry && s_retryTimer) esp_timer_stop(s_retryTimer);
+    s_slowRetry = false;
+}
 
 static void status_set(bool connected, const char* ssid, const char* ip) {
     xSemaphoreTake(s_statusMux, portMAX_DELAY);
@@ -45,8 +64,14 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
             if (s_hasCreds && s_retryCount < MAX_RETRY) {
                 s_retryCount++;
                 esp_wifi_connect();
-            } else {
-                ESP_LOGW(TAG, "giving up reconnect");
+            } else if (s_hasCreds && !s_slowRetry && s_retryTimer) {
+                // Fast retries exhausted — don't give up; fall back to slow
+                // periodic retries forever until the AP/Internet is back.
+                ESP_LOGW(TAG, "fast retries exhausted — slow retry every %d s",
+                         WIFI_SLOW_RETRY_MS / 1000);
+                s_slowRetry = true;
+                esp_timer_start_periodic(s_retryTimer,
+                                         (uint64_t)WIFI_SLOW_RETRY_MS * 1000);
             }
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
@@ -59,11 +84,17 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
         esp_wifi_get_config(WIFI_IF_STA, &cfg);
         status_set(true, (const char*)cfg.sta.ssid, ip_str);
         s_retryCount = 0;
+        stop_slow_retry();   // back online — drop the slow-retry cadence
     }
 }
 
 void wifi_manager_init(void) {
     s_statusMux = xSemaphoreCreateMutex();
+
+    esp_timer_create_args_t targs = {};
+    targs.callback = wifi_retry_timer_cb;
+    targs.name     = "wifi_retry";
+    ESP_ERROR_CHECK(esp_timer_create(&targs, &s_retryTimer));
 
     esp_netif_create_default_wifi_sta();
 
@@ -133,6 +164,7 @@ void wifi_manager_connect(const char* ssid, const char* pass) {
 
     s_hasCreds   = true;
     s_retryCount = 0;
+    stop_slow_retry();   // new credentials — restart the fast-retry cycle
     snprintf(s_status.ssid, sizeof(s_status.ssid), "%s", ssid);
 
     if (s_started) {
