@@ -844,6 +844,12 @@ static void start_client_locked()
     // tears the iteration down, and every in-flight asset GET returns
     // 502 to the browser.
     cfg.network_timeout_ms   = 25000;
+    // Detect a dead bridge fast: ping every 10 s, declare the link dead after
+    // 30 s of no PONG (vs the ~120 s default) so we reconnect in ~30 s instead
+    // of stalling for two minutes. Pairs with the server-side heartbeat, which
+    // keeps the proxy connection warm and reaps our zombie on its end.
+    cfg.ping_interval_sec    = 10;
+    cfg.pingpong_timeout_sec = 30;
     cfg.buffer_size          = 8192;   // ≥ IO_CHUNK + 4 (binary stream-id header) with headroom
     // Required for wss:// against a Let's Encrypt cert: without a trust
     // store esp-tls fails the handshake silently and the WS client just
