@@ -3,6 +3,7 @@
 #include "ultimatronble.hpp"
 #include "tankble.hpp"
 #include "multiplusble.hpp"
+#include "wifi_manager.hpp"
 #include "logs.hpp"
 #include <math.h>
 #if defined(ENABLE_BLE)
@@ -359,7 +360,17 @@ void bleDiscoveryScan(bool victron_only, BleDiscoveryCb cb, void* user, uint32_t
 
 // ── BLE supervisor task ───────────────────────────────────────────────────
 static void bleSupervisorTask(void* /*arg*/) {
-    vTaskDelay(pdMS_TO_TICKS(15000));
+    // BLE and WiFi share the C6 over SDIO. Hold the first scan until WiFi is
+    // associated so it doesn't fight the assoc + tunnel TLS handshake for the
+    // shared transport at boot (the "Could not lock ws-client" contention).
+    // Event-driven instead of a blind delay: once WiFi is up the wait is ~0, so
+    // sensors appear right after the cloud connects; the 15 s ceiling keeps BLE
+    // working fully offline (no WiFi → still starts).
+    for (int i = 0; i < 150; i++) {
+        if (wifi_manager_get_status().connected) break;
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    vTaskDelay(pdMS_TO_TICKS(500));   // small settle after association
     LOG_BLE_PL("[ble-sup] started");
 
     int      failCount  = 0;
