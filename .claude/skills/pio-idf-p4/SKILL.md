@@ -123,7 +123,7 @@ The three knobs in `sdkconfig.defaults` (pinned with a comment header):
 | `CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC` | `y` → `n` | stop pinning all mbedtls allocs to DRAM |
 | `CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC`  | (off) → `y` | use the global heap, which spills to PSRAM |
 | `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` | 16384 → 2048 | lower the threshold so >2 KB allocs land in PSRAM |
-| `CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN`   | 16384 → 4096 | tunnel IO_CHUNK is 4 KB; 16 KB was 12 KB of dead DRAM |
+| `CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN`   | kept 16384 | the GitHub release CDN sends full-size TLS records; 4 KB broke self-OTA (mbedtls -0x0087 "Complete headers were not received"). With the alloc steered to PSRAM (rows above) the 16 KB buffer is no longer dead DRAM. |
 
 **Diagnosing future cases:**
 - Print free internal heap (`heap_caps_get_free_size(MALLOC_CAP_INTERNAL)`)
@@ -388,3 +388,85 @@ metric). It disables the controller's duplicate filter for the scan window
 `bleDiscoveryScan(false, …)` (victron_only=false returns **all** devices).
 Pair it with a phone running a fixed advertiser (nRF Connect → Advertiser) at a
 fixed marginal distance as a stable reference for A/B-ing reception tweaks.
+
+---
+
+## 16. Internal-DRAM budget — diagnosing & reclaiming (esp_hosted board)
+
+This board is **internal-DRAM-starved**, not flash- or PSRAM-starved. PSRAM
+(32 MB) sits nearly empty; the scarce pool is internal SRAM. Almost every
+memory crash on this board traces back here.
+
+**The budget (measured 2026-06):**
+- DIRAM total ~435 KB; static firmware ~125 KB (`.text`-in-IRAM 85 KB + `.bss`
+  24 KB + `.data` 18 KB) → ~310 KB heap at boot (`idf.py size`).
+- Runtime fills it to **~22 KB free steady-state** (esp_hosted WiFi+BLE over
+  SDIO + NimBLE host + lwip + the WSS tunnel's TLS). PSRAM stays ~26 MB free.
+- Internal heap is ~95 % full: a 256 KB region of ~2100 small (~124 B) blocks +
+  a 113 KB region — network/TLS/BLE working set, much of it DMA-pinned.
+
+**Why it bites — the OTA self-test heap floor.** `p4_ota.cpp` rolls back if free
+internal stays below `HEAP_FLOOR` (12 KB) for `HEAP_BREACH_LIMIT` samples. With
+only ~10 KB headroom, anything that spikes internal use during the
+PENDING_VERIFY boot tips it over. Observed trigger: **weak BLE coverage** — a
+failing/slow Ultimatron GATT connect holds NimBLE buffers longer, and (with BLE
+bring-up overlapping WiFi's transient buffers) free internal dipped to **6 KB**
+→ "heap floor breached" rollback. The same starvation also surfaced as a NimBLE
+`Load access fault` in `NimBLEAdvertisedDevice::update` (corruption near OOM).
+The rollback reason is written to the faultlog `diag` record so it shows in the
+web About overlay even on the rolled-back-to image (see firmware-ota skill).
+
+**Forced to internal — cannot move to PSRAM:**
+- Task stacks from plain `xTaskCreate`. `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y`
+  only *permits* PSRAM stacks via `xTaskCreateWithCaps(MALLOC_CAP_SPIRAM)`, and
+  only for tasks that never run while the flash cache is disabled (no flash/OTA,
+  not in ISR) — risky.
+- DMA buffers: esp_hosted SDIO RX/TX, esp-aes scratch, the LCD (`MALLOC_CAP_DMA`).
+- Allocations below `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` (2048) — internal by
+  the threshold. Many of the ~2100 small blocks are here.
+- NimBLE host pools (ACL/EVT/MSYS) + per-`NimBLEAdvertisedDevice` C++ vectors.
+
+**Diagnostic toolkit:**
+- Runtime split: `heap_caps_get_free_size / _minimum_free_size /
+  _largest_free_block` for `MALLOC_CAP_INTERNAL` vs `MALLOC_CAP_SPIRAM`;
+  `heap_caps_print_heap_info(MALLOC_CAP_INTERNAL)` for per-region free/blocks.
+- Static: `idf.py size` (DIRAM used/remain), `idf.py size-components`.
+- Per-task stack high-water: `uxTaskGetSystemState()` (needs
+  `CONFIG_FREERTOS_USE_TRACE_FACILITY=y`, already on) → `usStackHighWaterMark` =
+  min free stack ever; a large value = the stack is over-allocated, shrink it.
+- Per-task heap ownership: `CONFIG_HEAP_TASK_TRACKING=y` +
+  `heap_caps_get_per_task_info()`.
+  - **GOTCHA (hit 2026-06):** tracking stores per-block metadata *in internal
+    heap*; with ~2000+ blocks the overhead (tens of KB) itself exhausts an
+    already-starved internal heap → `assert failed: vApplicationGetIdleTaskMemory
+    port_common.c (pxStackBufferTemp != NULL)` (the idle/timer task stack alloc
+    returns NULL at scheduler start, before your diag code even runs). On a tight
+    board you can't measure with tracking — reason from `print_heap_info` +
+    stack high-water instead, or free a big chunk first.
+
+**Reclaim levers, ranked (safe → risky):**
+1. **Trim NimBLE buffer counts** — defaults assume high-throughput BLE; here it's
+   passive scan + one periodic GATT poll. Cut `BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT`,
+   `_EVT_COUNT`, `MSYS_1/2_BLOCK_COUNT`, `MAX_CONNECTIONS` (3→2: only the battery
+   connects; keep 1 spare for teardown overlap). **Keep `TRANSPORT_EVT_SIZE=257`**
+   — ext-adv (Multiplus) reports need it. ~15 KB, safe.
+2. **Shrink over-allocated task stacks** using the high-water data. Safe.
+3. **Do NOT cut `LWIP_MAX_SOCKETS` (40) / `LWIP_MAX_ACTIVE_TCP` (64)** — raised
+   deliberately for the tunnel (a multi-asset page opens many fds/PCBs); cutting
+   them reintroduces `accept errno 113` / socket exhaustion.
+4. **Sequence bring-up, don't stack peaks** — start NimBLE *after* WiFi has
+   associated and its transient bring-up buffers settle (`bleSupervisorTask`
+   warmup waits for WiFi + settle), so BLE+WiFi peaks don't coincide during the
+   heap-tight verify boot. NB: do **not** special-case PENDING_VERIFY to skip the
+   GATT connect — the self-test must exercise that path to catch a panic in it.
+5. **Task stacks → PSRAM** (`xTaskCreateWithCaps`) — biggest lever, but only for
+   tasks safe during cache-disable; high risk.
+6. **Move the BLE host to the C6** — the only large architectural win (frees the
+   P4's NimBLE memory), but a major rework (C6 firmware + RPC BLE API),
+   unverified in esp_hosted here.
+
+**Host-stack note:** NimBLE *is* the lightweight host. IDF 6.0's `choice BT_HOST`
+(`components/bt/Kconfig`) offers only NimBLE / Bluedroid / controller-only —
+**there is no "ESP-BLE-HOST"**; Bluedroid is heavier. `esp_ble_mesh` /
+`esp_ble_audio` are profile layers, not host stacks. Switching hosts does not
+save internal DRAM.
