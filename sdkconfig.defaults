@@ -136,6 +136,18 @@ CONFIG_BT_NIMBLE_EXT_ADV=y
 CONFIG_BT_NIMBLE_EXT_SCAN=y
 CONFIG_BT_NIMBLE_TRANSPORT_EVT_SIZE=257
 
+# ── NimBLE buffer trim — reclaim internal DRAM ───────────────────────────
+# Internal SRAM runs critically low (~22 KB steady; dipped to 6 KB during the
+# post-OTA self-test under weak BLE coverage → "heap floor breached" rollback).
+# NimBLE's default pools are sized for high-throughput BLE; here it's passive
+# scanning + a single periodic Ultimatron GATT poll. Trim the over-provisioned
+# COUNTS (EVT_SIZE stays 257 for ext-adv reports) to free internal DRAM.
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=2
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=8
+CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT=16
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=8
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=12
+
 # Web server: enable native WebSocket support in esp_http_server.
 CONFIG_HTTPD_WS_SUPPORT=y
 # Post-handshake callback fires once per new WS client → bump wsClientCount
