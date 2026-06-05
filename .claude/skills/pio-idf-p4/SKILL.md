@@ -443,6 +443,18 @@ web About overlay even on the rolled-back-to image (see firmware-ota skill).
     returns NULL at scheduler start, before your diag code even runs). On a tight
     board you can't measure with tracking — reason from `print_heap_info` +
     stack high-water instead, or free a big chunk first.
+- Caller-level **heap tracing** (`CONFIG_HEAP_TRACING_STANDALONE`, record buffer
+  placeable in PSRAM so it doesn't starve internal) is the natural alternative —
+  **but on RISC-V it's effectively blocked here**: `HEAP_TRACING_STACK_DEPTH` is
+  clamped to 0 (no `alloced_by[]`) unless `CONFIG_ESP_SYSTEM_USE_FRAME_POINTER=y`,
+  and enabling frame pointers grows the **bootloader past its 0x6000 limit**
+  (`Bootloader binary size too large for partition table offset 0x8000`) unless
+  you also move `CONFIG_PARTITION_TABLE_OFFSET` (invasive — shifts the flash
+  layout). Net: per-allocation attribution of the internal working set isn't
+  practical on this target without partition surgery. Conclusion from the
+  2026-06 audit: the internal hog is the esp_hosted + lwip + TLS working set
+  (~250 KB of small blocks), largely DMA-pinned / irreducible; the win is
+  sequencing bring-up + a little NimBLE trim, not finding one fat allocation.
 
 **Reclaim levers, ranked (safe → risky):**
 1. **Trim NimBLE buffer counts** — defaults assume high-throughput BLE; here it's
