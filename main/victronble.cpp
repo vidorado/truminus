@@ -359,18 +359,25 @@ void bleDiscoveryScan(bool victron_only, BleDiscoveryCb cb, void* user, uint32_t
 }
 
 // ── BLE supervisor task ───────────────────────────────────────────────────
+// Delay after WiFi associates before NimBLE comes up, so BLE bring-up doesn't
+// overlap WiFi's transient bring-up buffers (see the heap-floor note below).
+static constexpr uint32_t BLE_WIFI_SETTLE_MS = 10000;
+
 static void bleSupervisorTask(void* /*arg*/) {
-    // BLE and WiFi share the C6 over SDIO. Hold the first scan until WiFi is
-    // associated so it doesn't fight the assoc + tunnel TLS handshake for the
-    // shared transport at boot (the "Could not lock ws-client" contention).
-    // Event-driven instead of a blind delay: once WiFi is up the wait is ~0, so
-    // sensors appear right after the cloud connects; the 15 s ceiling keeps BLE
-    // working fully offline (no WiFi → still starts).
-    for (int i = 0; i < 150; i++) {
+    // Sequence the shared-C6 RAM consumers. BLE/WiFi/tunnel all ride the C6 over
+    // SDIO; bringing NimBLE + the Ultimatron GATT connect up *during* WiFi's
+    // transient association buffers peaks internal DRAM and breached the OTA
+    // self-test heap floor under weak BLE coverage (observed free internal DRAM
+    // dipping to 6 KB — the failing GATT connect holds buffers longer when the
+    // BMS is far). So: wait for WiFi to associate, THEN let its bring-up DRAM
+    // settle before starting BLE. The GATT connect still runs well inside the
+    // 60 s self-test window, so a panic/abort in that path is still caught.
+    // Cost: sensors appear ~10 s later — acceptable for the heap headroom.
+    for (int i = 0; i < 150; i++) {                 // ≤15 s: wait for association
         if (wifi_manager_get_status().connected) break;
         vTaskDelay(pdMS_TO_TICKS(100));
     }
-    vTaskDelay(pdMS_TO_TICKS(500));   // small settle after association
+    vTaskDelay(pdMS_TO_TICKS(BLE_WIFI_SETTLE_MS));  // let WiFi bring-up DRAM settle
     LOG_BLE_PL("[ble-sup] started");
 
     int      failCount  = 0;
