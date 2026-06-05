@@ -84,6 +84,10 @@ TEST_CASE("Fault reason names", "[faultlog]") {
         REQUIRE(std::string(faultReasonName(999)) == "unknown");
     }
 
+    SECTION("OTA rollback sentinel names itself") {
+        REQUIRE(std::string(faultReasonName(FAULT_RSN_OTA_ROLLBACK)) == "OTA rollback");
+    }
+
     SECTION("All defined reasons have non-empty names") {
         for (int r = ESP_RST_POWERON; r <= ESP_RST_JTAG; r++) {
             const char* name = faultReasonName(r);

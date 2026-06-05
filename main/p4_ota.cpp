@@ -1,5 +1,6 @@
 #include "p4_ota.hpp"
 #include "version_compare.hpp"
+#include "faultlog.hpp"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -727,6 +728,9 @@ static void selftest_task(void*) {
         ESP_LOGE(TAG, "post-OTA self-test FAILED (%s, free_int=%u) — rolling back",
                  why, (unsigned)fi);
         persist_rollback_reason(why, (uint32_t)fi);
+        // Also record into the faultlog "diag" slot so the reason shows in the
+        // web About overlay — including on the OLDER image we roll back into.
+        faultLogRecordRollback(why, (uint32_t)fi);
         esp_ota_mark_app_invalid_rollback_and_reboot();   // never returns
     };
 
@@ -791,6 +795,7 @@ static void selftest_task(void*) {
     }
 
     esp_ota_mark_app_valid_cancel_rollback();
+    faultLogClearRollback();   // successful update — drop any stale rollback note
     ESP_LOGI(TAG, "image marked valid — rollback cancelled (min free_int during "
                   "self-test was %u B, floor %u B)",
              (unsigned)min_free, (unsigned)HEAP_FLOOR);

@@ -37,6 +37,7 @@ const char* faultReasonName(int r) {
         case RST_SDIO:      return "sdio";
         case RST_USB:       return "usb";
         case RST_JTAG:      return "jtag";
+        case FAULT_RSN_OTA_ROLLBACK: return "OTA rollback";
         default:            return "unknown";
     }
 }
