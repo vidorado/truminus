@@ -455,6 +455,10 @@ web About overlay even on the rolled-back-to image (see firmware-ota skill).
   2026-06 audit: the internal hog is the esp_hosted + lwip + TLS working set
   (~250 KB of small blocks), largely DMA-pinned / irreducible; the win is
   sequencing bring-up + a little NimBLE trim, not finding one fat allocation.
+  **Validated in the field (1.2.15):** the BLE-after-WiFi settle kept the
+  post-OTA self-test minimum free internal at ~23.7 KB (vs 6 KB / rollback in
+  1.2.13), so the image OTA'd onto the caravan and stuck — sequencing fixed the
+  rollback without freeing meaningful RAM.
 
 **Reclaim levers, ranked (safe → risky):**
 1. **Trim NimBLE buffer counts** — defaults assume high-throughput BLE; here it's
