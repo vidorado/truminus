@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="TruMinus" />
 <link rel="manifest" href="/icons/site.webmanifest" />
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=996a3337">
+<link rel="stylesheet" href="styles.css?v=87df6122">
 </head>
 <body>
 
@@ -251,9 +251,22 @@
   </div>
 </div>
 
+<!-- Refresh veil: shown on tab re-focus after a long sleep, until the fresh
+     full-status snapshot lands, so stale values aren't mistaken for current. -->
+<div id="reload-veil" class="reload-veil" hidden>
+  <div id="reload-spinner-box" class="reload-spinner-box">
+    <div class="reload-spinner"></div>
+    <div class="reload-label" data-i18n="veil_reconnecting">Reconnecting…</div>
+  </div>
+  <div id="reload-error" class="reload-error" hidden>
+    <div class="reload-error-msg" data-i18n="veil_failed">Could not refresh data</div>
+    <button class="err-modal-btn" onclick="retryReload()" data-i18n="veil_retry">Retry</button>
+  </div>
+</div>
+
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=ddd3f31a"></script>
-<script src="i18n.js?v=26b2ff28"></script>
-<script src="script.js?v=aaa55f03"></script>
+<script src="i18n.js?v=753e6023"></script>
+<script src="script.js?v=442d0b52"></script>
 </body>
 </html>

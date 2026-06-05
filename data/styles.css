@@ -679,6 +679,55 @@ body {
 }
 .err-modal-btn:active { background: var(--heat-on); }
 
+/* ── Refresh veil (tab re-focus after long sleep) ────────────────────── */
+.reload-veil {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.8);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  z-index: 200;
+}
+.reload-veil[hidden] { display: none; }
+.reload-spinner-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.reload-spinner-box[hidden] { display: none; }
+.reload-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid rgba(255,255,255,0.2);
+  border-top-color: var(--on);
+  border-radius: 50%;
+  animation: reload-spin 0.8s linear infinite;
+}
+.reload-label {
+  color: var(--txt);
+  font-size: 1em;
+  font-weight: 600;
+}
+@keyframes reload-spin { to { transform: rotate(360deg); } }
+.reload-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+  padding: 0 24px;
+}
+.reload-error[hidden] { display: none; }
+.reload-error-msg {
+  color: var(--txt);
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
 /* ── About / manual OTA overlay ──────────────────────────────────────── */
 .footer-logo[role="button"] { cursor: pointer; }
 .about-box .about-title {

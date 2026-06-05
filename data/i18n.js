@@ -66,6 +66,9 @@ var LANG_STRINGS = {
         cancel:       'Cancel',
         last_fault:   'Last fault',
         close:        'Close',
+        veil_reconnecting: 'Reconnecting…',
+        veil_failed:  'Could not refresh data',
+        veil_retry:   'Retry',
     },
     es: {
         solar:        'SOLAR',
@@ -132,6 +135,9 @@ var LANG_STRINGS = {
         cancel:       'Cancelar',
         last_fault:   'Último fallo',
         close:        'Cerrar',
+        veil_reconnecting: 'Reconectando…',
+        veil_failed:  'No se pudieron actualizar los datos',
+        veil_retry:   'Reintentar',
     }
 };
 

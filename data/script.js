@@ -9,11 +9,6 @@ var gateway  = wsScheme + window.location.hostname +
                (window.location.port ? ':' + window.location.port : '') + '/ws';
 var wserror      = true;
 var linerror     = false;
-var s_ssid       = '';
-// LAN IP reported by the device.  Used in the status bar instead of
-// window.location.hostname, which through the WSS reverse tunnel resolves
-// to the public domain rather than the local IP.
-var s_ip         = '';
 
 // ── Application state ─────────────────────────────────────────────────────
 var s_temp        = 20.0;
@@ -33,11 +28,11 @@ function updateStatusBar() {
     var msg = document.getElementById('statusMsg');
     var ip  = document.getElementById('deviceIp');
     if (!msg) return;
-    // Format: "SSID / LAN-IP" — matches the LCD status bar.  Falls back to
-    // the URL hostname only when the device hasn't reported its IP yet
-    // (very early after page load, before the first snapshot).
-    var addr   = s_ip || window.location.hostname;
-    var ipText = s_ssid ? (s_ssid + ' / ' + addr) : addr;
+    // Always show the host the browser actually reached the page through:
+    // the public domain via the WSS tunnel, or the LAN IP when accessed
+    // locally.  The device's SSID / LAN IP aren't meaningful to a remote
+    // client, so we don't surface them here.
+    var ipText = window.location.hostname;
     if (wserror) {
         msg.textContent  = t('ws_conn');
         msg.style.color  = '#ffaa00';
@@ -97,8 +92,59 @@ ws.onclose = function () {
 // that hasn't reconnected yet); this refreshes the state without waiting for
 // TCP to notice the dead peer.  When the socket is already gone, onopen will
 // send 'settings' on reconnect anyway, so we only act on a live socket.
+//
+// If the tab was hidden for more than STALE_AFTER_MS, the values on screen may
+// be badly out of date.  Cover the UI with a spinner veil until the fresh
+// snapshot lands so the user doesn't read stale data right before it flips to
+// the correct values.  hideReloadVeil() runs when the 'snapshot' arrives, with
+// a safety timeout in case it never does.
+var STALE_AFTER_MS  = 60000;
+var VEIL_TIMEOUT_MS = 12000;
+var s_hiddenAt      = 0;
+var s_veilTimer     = null;
+function showReloadVeil() {
+    var v  = document.getElementById('reload-veil');
+    var sp = document.getElementById('reload-spinner-box');
+    var er = document.getElementById('reload-error');
+    if (v)  v.hidden  = false;
+    if (sp) sp.hidden = false;   // spinning / reconnecting state
+    if (er) er.hidden = true;
+    if (s_veilTimer) clearTimeout(s_veilTimer);
+    s_veilTimer = setTimeout(reloadVeilTimedOut, VEIL_TIMEOUT_MS);
+}
+// No snapshot arrived in time: keep the veil up but swap the spinner for an
+// error message + Retry button so the user knows the data is still stale.
+function reloadVeilTimedOut() {
+    s_veilTimer = null;
+    var sp = document.getElementById('reload-spinner-box');
+    var er = document.getElementById('reload-error');
+    if (sp) sp.hidden = true;
+    if (er) er.hidden = false;
+}
+function retryReload() {
+    showReloadVeil();
+    ws.refresh();   // drop the (possibly half-dead) socket and reconnect
+}
+function hideReloadVeil() {
+    var v = document.getElementById('reload-veil');
+    if (v) v.hidden = true;
+    if (s_veilTimer) { clearTimeout(s_veilTimer); s_veilTimer = null; }
+}
 document.addEventListener('visibilitychange', function () {
-    if (!document.hidden && ws.readyState === 1) ws.send('settings');
+    if (document.hidden) { s_hiddenAt = Date.now(); return; }
+    var stale = s_hiddenAt && (Date.now() - s_hiddenAt) > STALE_AFTER_MS;
+    s_hiddenAt = 0;
+    if (!stale) {
+        // Short absence: a live socket can just re-pull the snapshot.
+        if (ws.readyState === 1) ws.send('settings');
+        return;
+    }
+    // Long sleep: the socket often looks OPEN but is half-dead (very common
+    // through the WSS tunnel — writes vanish into a dead pipe and no snapshot
+    // ever comes back).  Don't trust readyState; force a fresh reconnect and
+    // let onopen re-send 'settings'.  The snapshot then hides the veil.
+    showReloadVeil();
+    ws.refresh();
 });
 // Escape closes the About overlay.
 document.addEventListener('keydown', function (e) {
@@ -133,6 +179,7 @@ ws.onmessage = function (event) {
         if (d.outdoor_temp !== undefined) applyStatus('outdoor_temp', d.outdoor_temp);
         if (d.energy_idx !== undefined)   applySetting('energy_idx', d.energy_idx);
         if (d.lang !== undefined)         applySetting('lang', d.lang);
+        hideReloadVeil();   // fresh state is in — drop the re-focus veil
         return;
     }
     if (!d.id) return;
@@ -430,17 +477,9 @@ function applyStatus(id, value) {
     var el = document.getElementById(id);
     if (el) el.textContent = displayValue;
 
-    if (id === 'ssid') {
-        s_ssid = value || '';
-        updateStatusBar();
-        return;
-    }
-
-    if (id === 'ip') {
-        s_ip = value || '';
-        updateStatusBar();
-        return;
-    }
+    // ssid / ip are still reported by the device but no longer displayed on
+    // the web status bar (we show the URL host instead); ignore them here.
+    if (id === 'ssid' || id === 'ip') return;
 
     if (id === 'linok') {
         linerror = parseInt(value) !== 1;
