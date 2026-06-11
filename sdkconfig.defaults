@@ -107,6 +107,14 @@ CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
 CONFIG_ESP_HOSTED_SDIO_PIN_D2=16
 CONFIG_ESP_HOSTED_SDIO_PIN_D3=17
 CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
+# DO NOT ENABLE CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM on this board.
+# It moves the SDIO transport DMA pools (RX + common TX) to PSRAM and frees
+# ~72 KB of steady-state internal DRAM (measured 2026-06) — but the SDIO *TX*
+# DMA reading from PSRAM is not reliable here: under runtime load the write
+# task hit ESP_ERR_TIMEOUT (258) → "Unrecoverable host sdio state" → hosted
+# transport self-restart (esp_restart) after ~69 s. The single Kconfig switch
+# steers both RX and TX with no RX-only option, so the transport instability
+# rules it out. Left internal. See pio-idf-p4 SKILL §16.
 CONFIG_ESP_WIFI_REMOTE_ENABLED=y
 CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y

@@ -421,10 +421,42 @@ web About overlay even on the rolled-back-to image (see firmware-ota skill).
   only *permits* PSRAM stacks via `xTaskCreateWithCaps(MALLOC_CAP_SPIRAM)`, and
   only for tasks that never run while the flash cache is disabled (no flash/OTA,
   not in ISR) — risky.
-- DMA buffers: esp_hosted SDIO RX/TX, esp-aes scratch, the LCD (`MALLOC_CAP_DMA`).
+- esp-aes scratch, the LCD framebuffer DMA (`MALLOC_CAP_DMA`).
 - Allocations below `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` (2048) — internal by
   the threshold. Many of the ~2100 small blocks are here.
-- NimBLE host pools (ACL/EVT/MSYS) + per-`NimBLEAdvertisedDevice` C++ vectors.
+
+**Movable to PSRAM in principle — but DON'T, see why (2026-06 audit):** the
+earlier draft of this section listed the esp_hosted SDIO DMA pool and the NimBLE
+host pools as irreducible. **That was wrong** — both move, the question is
+whether it's safe and whether it helps the metric you care about:
+- **esp_hosted SDIO RX/TX pool (~90 KB, the single biggest internal hog).**
+  `CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y` steers it to DMA-capable PSRAM
+  (the P4 GDMA reaches PSRAM through cache). Measured: **+72 KB steady-state free
+  internal** (24 KB → 96 KB). BUT the SDIO **TX** DMA reading from PSRAM is
+  **unstable on this board** — at *idle* (not even during a flash write) the
+  write task hit `ESP_ERR_TIMEOUT (258)` → "Unrecoverable host sdio state" →
+  hosted transport self-restart, intermittently after tens of seconds. The
+  single Kconfig switch steers RX and TX together (no RX-only option), so the
+  TX instability rules it out. **Left internal, pinned off in `sdkconfig.defaults`
+  with a warning.** This is the reason these DMA buffers stay internal — not that
+  they "can't" move.
+- **NimBLE host pools (msys/ACL/EVT): ~16 KB internal** (measured cleanly; an
+  earlier contaminated reading said ~0). `CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y`
+  moves them to PSRAM (`esp_nimble_mem.c` maps to `MALLOC_CAP_SPIRAM`). Untested
+  here — controller is on the C6 so the HCI mbufs ride the hosted transport, not
+  local DMA, so it's plausibly safe — but unnecessary (see floor note below).
+
+**The steady-floor self-leveling trap (key finding).** Freeing a *non-fixed*
+internal allocation (e.g. moving the 12 KB WS queue to PSRAM via
+`xQueueCreateWithCaps`) does **not** raise the steady-state free-internal floor:
+the lwip/TLS/hosted working set is demand-driven and self-levels to consume
+whatever you freed before steady state (proof: at steady, `free ≈
+largest_free_block` — internal is packed into one ~24 KB island regardless).
+Only relocating a **fixed, pre-allocated** chunk the working set cannot reclaim
+(the SDIO mempool) actually raises the floor — and that's exactly the one that
+destabilises the transport. Net: the steady floor (~25 KB, min ~25 KB over a
+3.4 h soak, no leak) is effectively immovable here by safe means. What *is*
+movable and worth doing is the **bring-up transient** (see levers below).
 
 **Diagnostic toolkit:**
 - Runtime split: `heap_caps_get_free_size / _minimum_free_size /
@@ -451,14 +483,28 @@ web About overlay even on the rolled-back-to image (see firmware-ota skill).
   (`Bootloader binary size too large for partition table offset 0x8000`) unless
   you also move `CONFIG_PARTITION_TABLE_OFFSET` (invasive — shifts the flash
   layout). Net: per-allocation attribution of the internal working set isn't
-  practical on this target without partition surgery. Conclusion from the
-  2026-06 audit: the internal hog is the esp_hosted + lwip + TLS working set
-  (~250 KB of small blocks), largely DMA-pinned / irreducible; the win is
-  sequencing bring-up + a little NimBLE trim, not finding one fat allocation.
+  practical on this target without partition surgery. **But you don't need it:**
+  the cheap, build-real alternative is **differential measurement** — snapshot
+  `heap_caps_get_free_size(MALLOC_CAP_INTERNAL/SPIRAM)` at each subsystem
+  bring-up boundary and read who consumes what from the deltas (see
+  `main/heapdiag.cpp`, gated by `HEAP_DIAG` in `flags.h`, off by default).
+  GOTCHA hit in the 2026-06 second audit: an async task (the BLE supervisor)
+  whose marks interleave with `bootTask`'s contaminates the deltas via the shared
+  `prev` — serialize bring-up (start BLE *last*) so the sequential marks are
+  clean, or you'll misattribute (it briefly made NimBLE-init look like ~0 KB
+  when it's really ~16 KB).
+  Conclusion from the **second 2026-06 audit** (corrects the first): the internal
+  hog is the **esp_hosted SDIO DMA pool (~90 KB)** + lwip/TLS working set. The
+  big pool *is* movable to PSRAM (`MEMPOOL_PREFER_SPIRAM`) but that destabilises
+  the SDIO transport (see above), so in practice it stays internal. The
+  steady-state floor (~25 KB) is immovable by safe means; the achievable win is
+  on the **bring-up transient**, not steady.
   **Validated in the field (1.2.15):** the BLE-after-WiFi settle kept the
   post-OTA self-test minimum free internal at ~23.7 KB (vs 6 KB / rollback in
-  1.2.13), so the image OTA'd onto the caravan and stuck — sequencing fixed the
-  rollback without freeing meaningful RAM.
+  1.2.13). The 2026-06 follow-up added two more safe transient wins — moving the
+  12 KB WS queue to PSRAM (`xQueueCreateWithCaps`) and creating the BLE-start
+  task *after* `boot:complete` — which lifted the worst bring-up dip from ~6 KB
+  to ~84 KB. None of these raise the steady floor; they de-risk the verify-boot.
 
 **Reclaim levers, ranked (safe → risky):**
 1. **Trim NimBLE buffer counts** — defaults assume high-throughput BLE; here it's
@@ -475,9 +521,18 @@ web About overlay even on the rolled-back-to image (see firmware-ota skill).
    warmup waits for WiFi + settle), so BLE+WiFi peaks don't coincide during the
    heap-tight verify boot. NB: do **not** special-case PENDING_VERIFY to skip the
    GATT connect — the self-test must exercise that path to catch a panic in it.
-5. **Task stacks → PSRAM** (`xTaskCreateWithCaps`) — biggest lever, but only for
-   tasks safe during cache-disable; high risk.
-6. **Move the BLE host to the C6** — the only large architectural win (frees the
+5. **Move fixed non-DMA buffers to PSRAM** — e.g. the 12 KB WS queue via
+   `xQueueCreateWithCaps(…, MALLOC_CAP_SPIRAM)` (queues touched only from tasks,
+   never ISR, are safe). Lowers the bring-up transient. Note: does **not** raise
+   the steady floor (self-levels — see the trap above), but de-risks verify-boot.
+   Safe. **Applied.**
+6. **`MEMPOOL_PREFER_SPIRAM` — TRIED AND REVERTED.** Frees ~72 KB steady but the
+   SDIO TX-from-PSRAM is unstable here (idle transport restart). Do not re-enable
+   without an RX-only upstream option. See the "movable but don't" note above.
+7. **Task stacks → PSRAM** (`xTaskCreateWithCaps`) — only for tasks safe during
+   cache-disable; high risk, and only helps the transient (self-levels at steady),
+   so low value given the transient is already safe. Not pursued.
+8. **Move the BLE host to the C6** — the only large architectural win (frees the
    P4's NimBLE memory), but a major rework (C6 firmware + RPC BLE API),
    unverified in esp_hosted here.
 

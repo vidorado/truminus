@@ -26,6 +26,11 @@
 // #define LIN_SNIFF_ONLY         // passive LIN bus listener — no TX at all.
                                   // Use with a real CP-Plus as master via RJ12
                                   // splitter to capture the live conversation.
+// #define HEAP_DIAG              // internal-DRAM bring-up probes (heapdiag.cpp):
+                                  // logs free/min/largest INTERNAL + free PSRAM
+                                  // with per-stage deltas at each subsystem
+                                  // bring-up boundary. Uncomment to A/B PSRAM
+                                  // steering knobs. Off = compiles away to nothing.
 
 // ── 2. Per-category legacy log enables (logs.hpp) ────────────────────────
 //

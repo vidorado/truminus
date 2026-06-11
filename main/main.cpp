@@ -25,6 +25,7 @@
 #include "mode_controller.hpp"
 #include "ws_command.hpp"
 #include "ws_diff.hpp"
+#include "heapdiag.hpp"
 
 // LIN bus pins on the JC4880-P4 board — wired to connector J5.
 // UART_NUM_1 is fixed inside truma_lin.cpp (UART0 is the debug console).
@@ -518,9 +519,12 @@ static void wsPumpTask(void* /*arg*/) {
 // already non-blocking (BLE supervisor self-spawns, wifi_manager_start is
 // non-blocking, mountWebFs / startWebServer are fast).
 static void bootTask(void* /*arg*/) {
+    heapDiagMark("boot:start");
+
     // WiFi driver init.  ESP-Hosted transport to the C6 co-processor is
     // established here; the C6 OTA check that follows depends on it.
     wifi_manager_init();
+    heapDiagMark("hosted+wifi_init");
 
     // C6 co-processor OTA: if the embedded slave firmware version differs
     // from the host ESP-Hosted library (major.minor), reflash the C6 via
@@ -544,6 +548,7 @@ static void bootTask(void* /*arg*/) {
     }
 
     wifi_manager_start();
+    heapDiagMark("wifi_start");
 
     // Initialize C6 BT controller via ESP-Hosted RPC before NimBLE starts.
     // This MUST complete before wstunnelInit(): the controller-init RPC and the
@@ -552,23 +557,26 @@ static void bootTask(void* /*arg*/) {
     // ws-client") and drops the connection.
     ESP_ERROR_CHECK(esp_hosted_bt_controller_init());
     ESP_ERROR_CHECK(esp_hosted_bt_controller_enable());
+    heapDiagMark("bt_controller");
 
     victronBleInit();
     ultimatronBleInit();
     tankBleInit();
     multiplusBleInit();
-    // NimBLE init + supervisor in their own task — this part coexists fine with
-    // the tunnel, so it runs in parallel with the web/tunnel bring-up below.
-    xTaskCreate([](void*) {
-        bleSupervisorStart();
-        vTaskDelete(nullptr);
-    }, "ble_start", 6144, nullptr, 1, nullptr);
+    heapDiagMark("ble_inits");
+    // NimBLE init + supervisor task creation is deferred to the end of bootTask
+    // (after boot:complete) so it does not interleave with the sequential
+    // bring-up marks below — and so its heap peak does not overlap the web /
+    // tunnel bring-up (consistent with the §16 "sequence, don't stack peaks"
+    // rule). The supervisor task itself already waits for WiFi before scanning.
 
     // Web assets live on a LittleFS partition flashed from <project>/data/.
     if (mountWebFs() != ESP_OK) {
         ESP_LOGW(TAG, "LittleFS mount failed — run 'idf.py littlefs-flash-littlefs'");
     }
+    heapDiagMark("littlefs");
     startWebServer(onWsCommand, onWsConnected);
+    heapDiagMark("webserver");
 
     // WebSocket reverse tunnel — exposes the local HTTP server through CGNAT
     // via a Plesk-hosted Node.js bridge.  Spawns its own task; respects the
@@ -577,16 +585,19 @@ static void bootTask(void* /*arg*/) {
     // spike doesn't coincide with WiFi/BLE bring-up during the self-test
     // heap-floor window; the OTA self-test resumes it once the image is valid.
     wstunnelInit(p4OtaPendingVerify());
+    heapDiagMark("wstunnel_init");
 
     // WS pump runs at 100 ms cadence so touch inputs on the LCD reach
     // connected browsers in ≤100 ms.  Lower than the main loop's 1 s tick.
     xTaskCreate(wsPumpTask, "ws_pump", 4096, nullptr, 3, nullptr);
+    heapDiagMark("ws_pump");
 
     // Serial REPL on USB-Serial-JTAG — provisions WiFi / Victron /
     // Ultimatron / tunnel credentials while the LCD settings screen is
     // unavailable.  Commands: `wifi`, `victron`, `ultimatron`, `tunnel`,
     // `show`, `help`.
     cliStart();
+    heapDiagMark("cli");
 
     // AM2301 / DHT22 external temperature sensor on GPIO52 (RMT-based reader,
     // 30 s cadence).  Populates d.outdoorTemp in the main loop and broadcasts
@@ -596,14 +607,25 @@ static void bootTask(void* /*arg*/) {
     // LIN scheduler — emulates the CP-Plus D control unit on UART1.
     // Pinned to Core 0 (legacy convention: blocking serial off the LVGL core).
     trumaLinStart(LIN_TX_PIN, LIN_RX_PIN);
+    heapDiagMark("am2301+lin");
 
     // Self-OTA: periodic GitHub release check + post-OTA self-test/rollback.
     // Spawned last so all the subsystems it watches (tunnel/LIN/BLE/web) are
     // already up before the self-test starts sampling their heartbeats.
     p4OtaStart();
 
+    heapDiagMark("boot:complete");
     ESP_LOGI("boot", "background boot complete (heap=%lu)",
              (unsigned long)esp_get_free_heap_size());
+
+    // Bring up NimBLE + the BLE supervisor last, in its own task, so its heap
+    // peak lands after every other subsystem has settled and its bring-up marks
+    // do not interleave with bootTask's sequential marks above.
+    xTaskCreate([](void*) {
+        bleSupervisorStart();
+        vTaskDelete(nullptr);
+    }, "ble_start", 6144, nullptr, 1, nullptr);
+
     vTaskDelete(nullptr);
 }
 
@@ -664,6 +686,10 @@ extern "C" void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(1000));
         iter++;
         p4OtaBeat(P4OTA_BEAT_LOOP);   // liveness for the post-OTA self-test
+
+        // Steady-state internal-DRAM probe every 30 s — the `min` field is the
+        // worst-case ever seen, i.e. how close we run to the OTA heap floor.
+        if (iter % 30 == 0) heapDiagMark("steady");
 
         // (WS drain + LCD-change broadcast run in wsPumpTask at 100 ms.)
 

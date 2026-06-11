@@ -406,7 +406,11 @@ esp_err_t startWebServer(WsCommandCb cb, WsConnectedCb conn) {
     s_connCb = conn;
 
     if (!wsQueue) {
-        wsQueue = xQueueCreate(WS_QUEUE_LEN, WS_QUEUE_MSG);
+        // Storage is WS_QUEUE_LEN * WS_QUEUE_MSG = 12 KB. Place it in PSRAM
+        // (xQueueCreateWithCaps) to spare scarce internal DRAM — the queue is
+        // only touched from tasks (wsQueueSend/Drain), never from an ISR, so a
+        // cache-backed PSRAM queue is safe here.
+        wsQueue = xQueueCreateWithCaps(WS_QUEUE_LEN, WS_QUEUE_MSG, MALLOC_CAP_SPIRAM);
         if (!wsQueue) {
             ESP_LOGE(TAG, "wsQueue alloc failed");
             return ESP_ERR_NO_MEM;

@@ -26,6 +26,7 @@ idf_component_register(
         "ws_diff.cpp"
         "version_compare.cpp"
         "flags.cpp"
+        "heapdiag.cpp"
         "wifi_manager.cpp"
         "victronble.cpp"
         "victron_codec.cpp"

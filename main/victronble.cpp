@@ -5,6 +5,7 @@
 #include "multiplusble.hpp"
 #include "wifi_manager.hpp"
 #include "logs.hpp"
+#include "heapdiag.hpp"
 #include <math.h>
 #if defined(ENABLE_BLE)
 #include <NimBLEDevice.h>
@@ -529,10 +530,12 @@ void bleSupervisorStart() {
         LOG_BLE_PL("[ble-sup] nothing configured — NimBLE still inited for discovery");
     }
 
+    heapDiagMark("ble:before_init");
     LOG_BLE_PF("[ble] NimBLE init  free=%u\n",
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     NimBLEDevice::init("");
     s_nimbleUp = true;
+    heapDiagMark("ble:nimble_up");
     LOG_BLE_PF("[ble] NimBLE up    free=%u\n",
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
@@ -555,6 +558,7 @@ void bleSupervisorStart() {
         s_bleScan->setMaxResults(0);
     }
 
+    heapDiagMark("ble:scan_ready");
     xTaskCreate(bleSupervisorTask, "ble_sup", 4096, nullptr, 1, &s_bleTaskHandle);
     LOG_BLE_PL("[ble-sup] task created");
 }
