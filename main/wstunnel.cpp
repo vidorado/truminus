@@ -78,6 +78,16 @@ static constexpr EventBits_t  EV_STOP      = BIT1;
 
 static constexpr int FAIL_RETRY_LIMIT = 3;   // # of consecutive disconnects → FAILED
 
+// Watchdog: esp_websocket_client auto-reconnects on its own, but its client
+// task can wedge for good (stuck TLS write holding the client lock → the
+// no-PONG abort can never run; seen in the field as "Could not lock ws-client"
+// + a tunnel that stays down until reboot).  If we sit disconnected this long
+// with the tunnel enabled and WiFi up, tear the whole client down and rebuild
+// it from scratch.  A healthy client reconnects within seconds, so 2 min of
+// continuous disconnect means either a wedged client (rebuild fixes it) or a
+// down server (rebuild costs one TLS attempt, same as the auto-reconnect).
+static constexpr uint32_t WEDGE_REBUILD_MS = 120000;
+
 static constexpr int    PENDING_QUEUE_SIZE  = 16;   // max queued opens
 static constexpr int64_t PENDING_TIMEOUT_US = 5000000;  // 5 s
 
@@ -681,11 +691,26 @@ static void pump_task(void*)
     // Single owner (this task), allocated in PSRAM at init.  Keeps the
     // task stack small and frees IO_CHUNK bytes of internal DRAM.
     uint8_t* buf = s_pump_buf;
+    uint32_t disc_since = 0;   // ms tick when we first saw the link down (0 = up)
     for (;;) {
         if (!s_connected) {
+            if (s_cfg.enabled && s_have_ip) {
+                uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
+                if (disc_since == 0) {
+                    disc_since = now;
+                } else if (now - disc_since >= WEDGE_REBUILD_MS) {
+                    ESP_LOGW(TAG, "disconnected for %u s with WiFi up — rebuilding client",
+                             (unsigned)((now - disc_since) / 1000));
+                    disc_since = now;   // re-arm; next rebuild in WEDGE_REBUILD_MS
+                    xEventGroupSetBits(s_events, EV_RECONNECT);
+                }
+            } else {
+                disc_since = 0;        // disabled / no WiFi: not our call to make
+            }
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+        disc_since = 0;
 
         // Drain the deferred-open queue first — a slot may have freed up
         // since the last iteration.  Cheap when the queue is empty.

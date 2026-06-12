@@ -2044,6 +2044,9 @@ static lv_obj_t* s_ota_pct_lbl = nullptr;
 void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver,
                             const char* title_txt, bool prefix_v)
 {
+    ESP_LOGI(TAG, "OTA screen: '%s' %s -> %s",
+             title_txt ? title_txt : "(fw default)",
+             from_ver ? from_ver : "?", to_ver ? to_ver : "?");
     if (!bsp_display_lock(500)) return;
 
     lv_obj_t* scr = lv_obj_create(NULL);
@@ -2126,6 +2129,7 @@ void p4DisplayHideOtaScreen()
     // Restore the main screen after a *failed* self-OTA (a successful one
     // reboots, so this is only reached on download/validation errors).  The
     // running image is untouched, so returning to the normal UI is safe.
+    ESP_LOGI(TAG, "OTA screen dismissed");
     if (!s_main_scr) return;
     if (!bsp_display_lock(500)) return;
     lv_obj_t* cur = lv_screen_active();
