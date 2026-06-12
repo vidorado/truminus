@@ -12,8 +12,7 @@
 .claude/worktrees
 .claude/settings.local.json
 
-# PlatformIO build cache (kept for local installs that still use it)
-.pio/
+.cache
 
 # idf.py / ESP-IDF native build outputs
 build/
