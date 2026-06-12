@@ -1432,7 +1432,7 @@ void p4DisplayInit()
     lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
     bsp_display_brightness_set(100);
 
-    if (bsp_display_lock(1000)) {
+    if (lvglLock(1000)) {
         load_fonts();
         build_splash(lv_screen_active());
         s_splash_tick = lv_tick_get();
@@ -1463,7 +1463,7 @@ void p4DisplayInit()
             ESP_LOGI(TAG, "screen timeout: %lu ms, normal brightness: %d%%",
                      (unsigned long)s_timeout_ms, (int)brite);
 
-        bsp_display_unlock();
+        lvglUnlock();
     }
 
     ESP_LOGI(TAG, "display ready — 800x480 landscape");
@@ -1526,54 +1526,54 @@ void p4GetControlState(P4ControlState& out)
 // silently drop the write (the next remote update will retry).
 void p4SetHeating(bool on)
 {
-    if (!bsp_display_lock(50)) return;
+    if (!lvglLock(50)) return;
     st.heatingOn = on;
     // Mirror the on-screen rule: turning heat off clears active heat-fan
     // modes; turning it on defaults to eco if currently in level mode.
     if (st.heatingOn && (st.fanMode < 1 || st.fanMode > 2)) st.fanMode = 1;
     if (!st.heatingOn && st.fanMode >= 1 && st.fanMode <= 2) st.fanMode = 0;
     refresh_controls();
-    bsp_display_unlock();
+    lvglUnlock();
 }
 
 void p4SetFanMode(int mode)
 {
     if (mode < 0)  mode = 0;
     if (mode > 12) mode = 12;
-    if (!bsp_display_lock(50)) return;
+    if (!lvglLock(50)) return;
     st.fanMode = mode;
     refresh_controls();
-    bsp_display_unlock();
+    lvglUnlock();
 }
 
 void p4SetBoilerMode(int mode)
 {
     if (mode < 0) mode = 0;
     if (mode > 3) mode = 3;
-    if (!bsp_display_lock(50)) return;
+    if (!lvglLock(50)) return;
     st.boilerMode = mode;
     refresh_controls();
-    bsp_display_unlock();
+    lvglUnlock();
 }
 
 void p4SetEnergyIdx(int idx)
 {
     if (idx < 0) idx = 0;
     if (idx > 4) idx = 4;
-    if (!bsp_display_lock(50)) return;
+    if (!lvglLock(50)) return;
     st.energyIdx = idx;
     refresh_controls();
-    bsp_display_unlock();
+    lvglUnlock();
 }
 
 void p4SetRoomSetpoint(float celsius)
 {
     if (celsius < 5.0f)  celsius = 5.0f;
     if (celsius > 30.0f) celsius = 30.0f;
-    if (!bsp_display_lock(50)) return;
+    if (!lvglLock(50)) return;
     st.roomSetpoint = celsius;
     refresh_controls();
-    bsp_display_unlock();
+    lvglUnlock();
 }
 
 // Latest tunnel UI state, written by main loop, read by the LVGL blink
@@ -1588,10 +1588,10 @@ static lv_obj_t* s_ota_prompt = nullptr;   // active "update now?" modal, or nul
 void p4SetUpdateAvailable(bool available)
 {
     if (!ui.icon_ota) return;
-    if (!bsp_display_lock(50)) return;
+    if (!lvglLock(50)) return;
     if (available) lv_obj_clear_flag(ui.icon_ota, LV_OBJ_FLAG_HIDDEN);
     else           lv_obj_add_flag(ui.icon_ota,   LV_OBJ_FLAG_HIDDEN);
-    bsp_display_unlock();
+    lvglUnlock();
 }
 
 static void ota_prompt_close()
@@ -1615,11 +1615,11 @@ static void on_ota_prompt_later(lv_event_t*)
 
 bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver)
 {
-    if (!bsp_display_lock(50)) return false;
+    if (!lvglLock(50)) return false;
     // Only prompt while the main screen is up — never on top of a settings
     // screen, the OTA progress screen, or the splash.
     if (!s_main_scr || lv_screen_active() != s_main_scr || s_ota_prompt) {
-        bsp_display_unlock();
+        lvglUnlock();
         return false;
     }
 
@@ -1693,7 +1693,7 @@ bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver)
     lv_obj_center(l_later);
     lv_obj_add_event_cb(btn_later, on_ota_prompt_later, LV_EVENT_CLICKED, NULL);
 
-    bsp_display_unlock();
+    lvglUnlock();
     return true;
 }
 
@@ -1781,12 +1781,12 @@ void p4DisplayUpdate(const P4DisplayData& d)
 {
     static char buf[40];
 
-    if (!bsp_display_lock(50)) return;
+    if (!lvglLock(50)) return;
 
     if (!s_mainBuilt) {
         // Enforce minimum 1 s splash before switching to main screen.
         if (lv_tick_get() - s_splash_tick < 2000) {
-            bsp_display_unlock();
+            lvglUnlock();
             return;
         }
         build_main_screen();
@@ -2021,19 +2021,19 @@ void p4DisplayUpdate(const P4DisplayData& d)
 
     refresh_controls();
 
-    bsp_display_unlock();
+    lvglUnlock();
 }
 
 void p4DisplaySetStatus(const char* msg, bool isError)
 {
     if (!msg) return;
-    if (!bsp_display_lock(50)) return;
+    if (!lvglLock(50)) return;
     if (ui.lbl_status) {
         lv_label_set_text(ui.lbl_status, msg);
         lv_obj_set_style_text_color(ui.lbl_status,
             isError ? C_RED : C_LABEL, 0);
     }
-    bsp_display_unlock();
+    lvglUnlock();
 }
 
 // ── OTA progress screen ───────────────────────────────────────────────────────
@@ -2047,7 +2047,7 @@ void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver,
     ESP_LOGI(TAG, "OTA screen: '%s' %s -> %s",
              title_txt ? title_txt : "(fw default)",
              from_ver ? from_ver : "?", to_ver ? to_ver : "?");
-    if (!bsp_display_lock(500)) return;
+    if (!lvglLock(500)) return;
 
     lv_obj_t* scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, C_BG, 0);
@@ -2110,7 +2110,7 @@ void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver,
     lv_obj_align(warn, LV_ALIGN_CENTER, 0, 120);
 
     lv_screen_load(scr);
-    bsp_display_unlock();
+    lvglUnlock();
 }
 
 void p4DisplaySetOtaProgress(int percent)
@@ -2118,10 +2118,10 @@ void p4DisplaySetOtaProgress(int percent)
     if (percent < 0)   percent = 0;
     if (percent > 100) percent = 100;
     if (!s_ota_bar || !s_ota_pct_lbl) return;
-    if (!bsp_display_lock(100)) return;
+    if (!lvglLock(100)) return;
     lv_bar_set_value(s_ota_bar, percent, LV_ANIM_ON);
     lv_label_set_text_fmt(s_ota_pct_lbl, "%d%%", percent);
-    bsp_display_unlock();
+    lvglUnlock();
 }
 
 void p4DisplayHideOtaScreen()
@@ -2131,13 +2131,13 @@ void p4DisplayHideOtaScreen()
     // running image is untouched, so returning to the normal UI is safe.
     ESP_LOGI(TAG, "OTA screen dismissed");
     if (!s_main_scr) return;
-    if (!bsp_display_lock(500)) return;
+    if (!lvglLock(500)) return;
     lv_obj_t* cur = lv_screen_active();
     lv_screen_load(s_main_scr);
     if (cur && cur != s_main_scr) lv_obj_delete(cur);
     s_ota_bar     = nullptr;
     s_ota_pct_lbl = nullptr;
-    bsp_display_unlock();
+    lvglUnlock();
 }
 
 bool lvglLock(uint32_t timeout_ms) { return bsp_display_lock(timeout_ms); }
