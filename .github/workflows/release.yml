@@ -75,17 +75,20 @@ jobs:
       # few hundred KB; the device inflates it on-flash. littlefs.ver carries
       # the content hash baked into the image (data/fs.ver) so the device only
       # downloads littlefs.bin.gz when its own /littlefs/fs.ver differs.
+      # NB: idf.py runs in the IDF container as root, so build/ is root-owned —
+      # this step runs on the host runner and can READ build/ but not WRITE into
+      # it. Emit the prepared assets into the workspace root (runner-owned).
       - name: Prepare LittleFS OTA assets
         run: |
-          gzip -9 -n -c build/littlefs.bin > build/littlefs.bin.gz
-          cp data/fs.ver build/littlefs.ver
-          ls -l build/littlefs.bin build/littlefs.bin.gz build/littlefs.ver
+          gzip -9 -n -c build/littlefs.bin > littlefs.bin.gz
+          cp data/fs.ver littlefs.ver
+          ls -l build/littlefs.bin littlefs.bin.gz littlefs.ver
 
       - name: Attach OTA assets to the Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             build/truminus.bin
-            build/littlefs.bin.gz
-            build/littlefs.ver
+            littlefs.bin.gz
+            littlefs.ver
           fail_on_unmatched_files: true
