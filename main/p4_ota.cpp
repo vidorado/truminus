@@ -940,7 +940,11 @@ static void littlefs_sync(const char* tag) {
     if (!part) { ESP_LOGE(TAG, "fs sync: no littlefs partition"); return; }
 
     fs_pending_set(tag);                       // cleared only on full success
-    p4DisplayShowOtaScreen(have_cur ? cur : "web", "web");
+    s_installing.store(true);                  // keeps the LCD awake, parks the checker
+    char fromv[16], tov[16];
+    snprintf(fromv, sizeof(fromv), "%.12s", have_cur ? cur : "\xE2\x80\x94");
+    snprintf(tov,   sizeof(tov),   "%.12s", want);
+    p4DisplayShowOtaScreen(fromv, tov, t(TK::OTA_WEB_UPDATING), false);
     broadcast_fsupdate("downloading", 0);
 
     // Free the shared C6 radio for the download (BLE rides the same radio).
@@ -960,6 +964,7 @@ static void littlefs_sync(const char* tag) {
         broadcast_fsupdate("error", 0);
         p4DisplaySetStatus(t(TK::OTA_WEB_FAILED), true);
         p4DisplayHideOtaScreen();
+        s_installing.store(false);
     };
     if (!dl) { fail("download failed"); return; }
 
@@ -992,6 +997,7 @@ static void littlefs_sync(const char* tag) {
         p4DisplaySetStatus(t(TK::OTA_WEB_FAILED), true);
         p4DisplayHideOtaScreen();
     }
+    s_installing.store(false);
 }
 
 static void fs_sync_task(void* arg) {

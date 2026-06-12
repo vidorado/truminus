@@ -145,6 +145,8 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Error al actualizar",                                           // OTA_FAILED
     "Actualizando web\xE2\x80\xA6",                                  // OTA_WEB_UPDATING
     "Error al actualizar web",                                       // OTA_WEB_FAILED
+    "Actualizando firmware",                                         // OTA_FW_UPDATING
+    "No apagues el dispositivo",                                     // OTA_NO_POWER_OFF
     "hoy",                                                           // TODAY
 };
 
@@ -286,6 +288,8 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Update failed",                                                 // OTA_FAILED
     "Updating web\xE2\x80\xA6",                                      // OTA_WEB_UPDATING
     "Web update failed",                                             // OTA_WEB_FAILED
+    "Updating firmware",                                             // OTA_FW_UPDATING
+    "Do not power off",                                              // OTA_NO_POWER_OFF
     "today",                                                         // TODAY
 };
 

@@ -56,6 +56,18 @@ setTimeout(function () { window.scrollTo(0, 1); }, 0);
 // re-apply if it differs.
 applyLanguage(s_lang);
 
+// Web-assets version this page was loaded with.  Re-checked on every WS
+// reconnect: if the firmware re-flashed LittleFS while we were disconnected
+// (missed `fsupdate done` broadcast), reload to pick up the new assets.
+var s_fsVerLoaded = '';
+function fetchFsVer(cb) {
+    fetch('/fs.ver', { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.text() : ''; })
+        .then(function (txt) { cb(txt.trim()); })
+        .catch(function () { cb(''); });
+}
+fetchFsVer(function (v) { s_fsVerLoaded = v; });
+
 // ── WebSocket ─────────────────────────────────────────────────────────────
 var ws = new ReconnectingWebSocket(gateway);
 // Liveness is handled by WS control PING (opcode 0x9) sent every 20 s from
@@ -68,6 +80,10 @@ var s_wsDownTimer = null;
 ws.onopen = function () {
     // The device just rebooted after an OTA — reload to pick up new web assets.
     if (s_otaReloadPending) { location.reload(); return; }
+    // The web image may have been re-synced while we were disconnected.
+    fetchFsVer(function (v) {
+        if (v && s_fsVerLoaded && v !== s_fsVerLoaded) location.reload();
+    });
     if (s_wsDownTimer) { clearTimeout(s_wsDownTimer); s_wsDownTimer = null; }
     wserror = false;
     updateStatusBar();
@@ -385,13 +401,10 @@ function openAbout() {
     renderFault();
     // Web-assets version: read the marker the firmware bakes into LittleFS so
     // the web image version is visible independently of the firmware version.
-    fetch('/fs.ver', { cache: 'no-store' })
-        .then(function (r) { return r.ok ? r.text() : ''; })
-        .then(function (txt) {
-            var el = document.getElementById('about-fs');
-            if (el) el.textContent = txt ? txt.trim().slice(0, 12) : '—';
-        })
-        .catch(function () {});
+    fetchFsVer(function (txt) {
+        var el = document.getElementById('about-fs');
+        if (el) el.textContent = txt ? txt.slice(0, 12) : '—';
+    });
     modal.classList.remove('hidden');
     // Hide the banner right away (don't wait for the next OTA push).
     var banner = document.getElementById('ota-banner');

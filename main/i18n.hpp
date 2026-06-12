@@ -148,6 +148,8 @@ enum class TK : uint8_t {
     OTA_FAILED,        // status bar after a failed install: "Error al actualizar" / "Update failed"
     OTA_WEB_UPDATING,  // web-asset sync screen: "Actualizando web…" / "Updating web…"
     OTA_WEB_FAILED,    // status bar after a failed web sync: "Error web" / "Web update failed"
+    OTA_FW_UPDATING,   // OTA progress screen title: "Actualizando firmware" / "Updating firmware"
+    OTA_NO_POWER_OFF,  // OTA progress screen warning: "No apagues el dispositivo" / "Do not power off"
     TODAY,             // solar yield suffix: "hoy" / "today"
     _COUNT
 };

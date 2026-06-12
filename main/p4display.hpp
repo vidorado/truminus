@@ -153,9 +153,11 @@ void p4DisplayUpdate(const P4DisplayData& d);
 void p4DisplaySetStatus(const char* msg, bool isError = false);
 
 // Show a dedicated full-screen OTA progress display.
-// from_ver / to_ver: version strings shown as "vX.Y.Z -> vX.Y.Z".
-// Call once before starting the OTA transfer.
-void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver);
+// from_ver / to_ver: version strings shown as "vX.Y.Z -> vX.Y.Z" (prefix_v=false
+// drops the "v", e.g. for web-asset content hashes). title defaults to the
+// firmware-update title. Call once before starting the OTA transfer.
+void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver,
+                            const char* title = nullptr, bool prefix_v = true);
 
 // Update the progress bar on the OTA screen (0–100).
 // Thread-safe; can be called from the main task while LVGL runs on its own task.

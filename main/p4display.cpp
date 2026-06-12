@@ -2041,7 +2041,8 @@ void p4DisplaySetStatus(const char* msg, bool isError)
 static lv_obj_t* s_ota_bar     = nullptr;
 static lv_obj_t* s_ota_pct_lbl = nullptr;
 
-void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver)
+void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver,
+                            const char* title_txt, bool prefix_v)
 {
     if (!bsp_display_lock(500)) return;
 
@@ -2059,15 +2060,16 @@ void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver)
 
     // Title
     lv_obj_t* title = lv_label_create(scr);
-    lv_label_set_text(title, "Updating firmware");
+    lv_label_set_text(title, title_txt ? title_txt : t(TK::OTA_FW_UPDATING));
     lv_obj_set_style_text_font(title, s_font_title ? s_font_title : s_font_24, 0);
     lv_obj_set_style_text_color(title, C_TEXT, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, -75);
 
-    // Version line: "v2.3.0 -> v2.12.7"
+    // Version line: "v2.3.0 -> v2.12.7" (or bare hashes for the web sync)
+    const char* v = prefix_v ? "v" : "";
     char ver_buf[48];
-    snprintf(ver_buf, sizeof(ver_buf), "v%s  ->  v%s",
-             from_ver ? from_ver : "?", to_ver ? to_ver : "?");
+    snprintf(ver_buf, sizeof(ver_buf), "%s%s  ->  %s%s",
+             v, from_ver ? from_ver : "?", v, to_ver ? to_ver : "?");
     lv_obj_t* ver_lbl = lv_label_create(scr);
     lv_label_set_text(ver_lbl, ver_buf);
     lv_obj_set_style_text_font(ver_lbl, s_font_18, 0);
@@ -2099,7 +2101,7 @@ void p4DisplayShowOtaScreen(const char* from_ver, const char* to_ver)
 
     // Warning
     lv_obj_t* warn = lv_label_create(scr);
-    lv_label_set_text(warn, "Do not power off");
+    lv_label_set_text(warn, t(TK::OTA_NO_POWER_OFF));
     lv_obj_set_style_text_font(warn, s_font_18, 0);
     lv_obj_set_style_text_color(warn, C_YELLOW, 0);
     lv_obj_align(warn, LV_ALIGN_CENTER, 0, 120);
