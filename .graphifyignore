@@ -1,0 +1,34 @@
+# Graphify scope: first-party sources only.  When this file exists graphify
+# stops falling back to .gitignore, so the build/dependency entries from
+# there are repeated here.
+
+# Third-party / fetched dependencies
+managed_components/
+test/host/catch_amalgamated.cpp
+test/host/catch_amalgamated.hpp
+data/reconnecting-websocket.min.js
+
+# Build outputs and caches
+build/
+test/host/build/
+.cache/
+.eez-project-build/
+sdkconfig.old
+
+# Generated / binary assets (not source)
+data/*.gz
+data/fs.ver
+data/*.woff
+data/*.ttf
+data/favicon.ico
+data/icons/
+main/font_*.ttf
+main/slave_fw/
+main/*.png
+scripts/fonts/
+ui/*.png
+ui/*.af
+
+# Editor state
+.vscode/
+*.eez-project-ui-state
