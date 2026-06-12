@@ -115,7 +115,7 @@ ws.onclose = function () {
 // the correct values.  hideReloadVeil() runs when the 'snapshot' arrives, with
 // a safety timeout in case it never does.
 var STALE_AFTER_MS  = 60000;
-var VEIL_TIMEOUT_MS = 12000;
+var VEIL_TIMEOUT_MS = 24000;
 var s_hiddenAt      = 0;
 var s_veilTimer     = null;
 function showReloadVeil() {
