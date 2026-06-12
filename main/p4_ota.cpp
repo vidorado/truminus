@@ -868,53 +868,90 @@ static void fs_pending_clear() {
     nvs_erase_key(h, "fs_pending"); nvs_commit(h); nvs_close(h);
 }
 
-// Inflate `gz` (raw DEFLATE after the gzip header) straight into the freshly
-// erased littlefs partition.  The 8 MB output is decompressed in one shot into a
-// PSRAM buffer (TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF → the output buffer is
-// its own 32 KB dictionary, so no on-stack dict), then copied to flash through a
-// small INTERNAL bounce buffer — the only memory esp_partition_write touches
-// while the cache is disabled.
+// Inflate `gz` (raw DEFLATE after the gzip header) straight into the littlefs
+// partition, streaming through tinfl's 32 KB ring dictionary.  Do NOT buffer
+// the full 8 MB image: PSRAM is plentiful but a single 8 MB *contiguous* block
+// is not guaranteed once the heap has churned for a while ("alloc failed" seen
+// in the field).  Flash writes go through a small INTERNAL bounce buffer — the
+// only memory esp_partition_write touches while the cache is disabled.
+// Progress: erase sweeps 0–10 %, writing 10–100 %.
 static bool inflate_to_partition(const esp_partition_t* part,
                                  const uint8_t* deflate, size_t deflate_len) {
     bool ok = false;
-    uint8_t* out  = (uint8_t*)heap_caps_malloc(part->size, MALLOC_CAP_SPIRAM);
+    uint8_t* dict = (uint8_t*)heap_caps_malloc(TINFL_LZ_DICT_SIZE, MALLOC_CAP_SPIRAM);
     auto*    dec  = (tinfl_decompressor*)heap_caps_malloc(sizeof(tinfl_decompressor), MALLOC_CAP_SPIRAM);
     uint8_t* bnc  = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_INTERNAL);
-    if (!out || !dec || !bnc) { ESP_LOGE(TAG, "fs inflate: alloc failed"); goto done; }
+    if (!dict || !dec || !bnc) {
+        ESP_LOGE(TAG, "fs inflate: alloc failed (dict=%p dec=%p bnc=%p | "
+                 "SPIRAM free=%u largest=%u | INT free=%u largest=%u)",
+                 dict, dec, bnc,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        goto done;
+    }
 
     {
-        tinfl_init(dec);
-        size_t in_avail  = deflate_len;
-        size_t out_avail = part->size;
-        tinfl_status st = tinfl_decompress(dec, deflate, &in_avail, out, out, &out_avail,
-                                           TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
-        if (st != TINFL_STATUS_DONE || out_avail != part->size) {
-            ESP_LOGE(TAG, "fs inflate: tinfl st=%d out=%u/%u",
-                     (int)st, (unsigned)out_avail, (unsigned)part->size);
-            goto done;
-        }
-        if (esp_partition_erase_range(part, 0, part->size) != ESP_OK) {
-            ESP_LOGE(TAG, "fs inflate: erase failed");
-            goto done;
-        }
+        // Erase in chunks so the progress bar moves instead of freezing for the
+        // ~10 s a whole-partition erase takes.
         for (size_t off = 0; off < part->size; ) {
-            size_t n = part->size - off; if (n > 4096) n = 4096;
-            memcpy(bnc, out + off, n);                  // PSRAM → internal (cache on)
-            if (esp_partition_write(part, off, bnc, n) != ESP_OK) {
-                ESP_LOGE(TAG, "fs inflate: write @%u failed", (unsigned)off);
+            size_t n = part->size - off; if (n > 512 * 1024) n = 512 * 1024;
+            if (esp_partition_erase_range(part, off, n) != ESP_OK) {
+                ESP_LOGE(TAG, "fs inflate: erase @%u failed", (unsigned)off);
                 goto done;
             }
             off += n;
-            int pct = (int)((uint64_t)off * 100 / part->size);
+            int pct = (int)((uint64_t)off * 10 / part->size);
             broadcast_fsupdate("flashing", pct);
             p4DisplaySetOtaProgress(pct);
+        }
+
+        tinfl_init(dec);
+        size_t in_pos = 0, written = 0, dict_ofs = 0;
+        for (;;) {
+            size_t in_avail  = deflate_len - in_pos;
+            size_t out_avail = TINFL_LZ_DICT_SIZE - dict_ofs;
+            tinfl_status st = tinfl_decompress(dec, deflate + in_pos, &in_avail,
+                                               dict, dict + dict_ofs, &out_avail, 0);
+            in_pos += in_avail;
+            if (written + out_avail > part->size) {
+                ESP_LOGE(TAG, "fs inflate: image larger than partition");
+                goto done;
+            }
+            // Flush the freshly produced ring segment to flash.
+            for (size_t o = 0; o < out_avail; ) {
+                size_t n = out_avail - o; if (n > 4096) n = 4096;
+                memcpy(bnc, dict + dict_ofs + o, n);    // PSRAM → internal (cache on)
+                if (esp_partition_write(part, written + o, bnc, n) != ESP_OK) {
+                    ESP_LOGE(TAG, "fs inflate: write @%u failed", (unsigned)(written + o));
+                    goto done;
+                }
+                o += n;
+            }
+            written  += out_avail;
+            dict_ofs  = (dict_ofs + out_avail) & (TINFL_LZ_DICT_SIZE - 1);
+            int pct = 10 + (int)((uint64_t)written * 90 / part->size);
+            broadcast_fsupdate("flashing", pct);
+            p4DisplaySetOtaProgress(pct);
+            if (st == TINFL_STATUS_DONE) break;
+            if (st != TINFL_STATUS_HAS_MORE_OUTPUT) {
+                ESP_LOGE(TAG, "fs inflate: tinfl st=%d at %u/%u",
+                         (int)st, (unsigned)written, (unsigned)part->size);
+                goto done;
+            }
+        }
+        if (written != part->size) {
+            ESP_LOGE(TAG, "fs inflate: short image %u/%u",
+                     (unsigned)written, (unsigned)part->size);
+            goto done;
         }
         ok = true;
     }
 done:
-    if (out) heap_caps_free(out);
-    if (dec) heap_caps_free(dec);
-    if (bnc) heap_caps_free(bnc);
+    if (dict) heap_caps_free(dict);
+    if (dec)  heap_caps_free(dec);
+    if (bnc)  heap_caps_free(bnc);
     return ok;
 }
 
