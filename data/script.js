@@ -619,7 +619,7 @@ function refreshIndicators() {
         // the CYD physical layout.
         var body = document.querySelector('.water-temp-body');
         if (body) {
-            body.style.borderColor = '#888888';
+            body.style.borderColor = '#8888aa';
             body.style.animation = '';
         }
     }

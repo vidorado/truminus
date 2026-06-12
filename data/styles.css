@@ -798,7 +798,7 @@ body {
   width: 24px;                     /* narrow — thermometer-like */
   flex: 1;                         /* fills the panel height below the label */
   min-height: 0;
-  border: 2px solid #888888;
+  border: 2px solid #8888aa;       /* match the battery border + nubs */
   border-radius: 999px;
   position: relative;
   background: transparent;
@@ -1018,13 +1018,13 @@ body {
   right: 12%;        /* matches EEZ neck offset (103/149 panel) */
   width: 16%;
   height: 6px;
-  background: #888888;
+  background: #8888aa;       /* match the tank border + battery nubs */
   border-radius: 1px;
 }
 
 .tank-body {
   flex: 1;
-  border: 2px solid #888888;
+  border: 2px solid #8888aa;
   border-radius: 3px;
   background: #1a1a2e;
   position: relative;
