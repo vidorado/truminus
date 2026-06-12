@@ -1465,6 +1465,7 @@ struct TunCtx {
     lv_obj_t* sw_enable;
     lv_obj_t* ta_server;
     lv_obj_t* ta_token;
+    lv_obj_t* ta_pass;
     lv_obj_t* kb;
     lv_obj_t* lbl_status;
     lv_obj_t* prev;
@@ -1499,8 +1500,10 @@ static void tun_save_cb(lv_event_t*) {
     cfg.enabled = lv_obj_has_state(tn.sw_enable, LV_STATE_CHECKED);
     const char* sv = lv_textarea_get_text(tn.ta_server);
     const char* tk = lv_textarea_get_text(tn.ta_token);
+    const char* pw = lv_textarea_get_text(tn.ta_pass);
     strncpy(cfg.server, sv ? sv : "", sizeof(cfg.server) - 1);
     strncpy(cfg.token,  tk ? tk : "", sizeof(cfg.token)  - 1);
+    strncpy(cfg.pass,   pw ? pw : "", sizeof(cfg.pass)   - 1);
     wstunnelSaveConfig(cfg);
     wstunnelApply();
     lv_label_set_text(tn.lbl_status, t(TK::CFG_SAVED));
@@ -1557,6 +1560,21 @@ static void show_tunnel(lv_obj_t* from) {
     if (cur.token[0]) lv_textarea_set_text(tn.ta_token, cur.token);
     lv_obj_add_event_cb(tn.ta_token, tun_show_kb_cb, LV_EVENT_FOCUSED, nullptr);
     lv_obj_add_event_cb(tn.ta_token, tun_show_kb_cb, LV_EVENT_CLICKED, nullptr);
+    y += 62;
+
+    // BasicAuth password for tunneled web access (user fixed to "truminus")
+    lv_obj_t* lbl_p = make_label(tn.panel, t(TK::TUNNEL_PASS), f->f22, C_LABEL);
+    lv_obj_set_pos(lbl_p, 0, y);
+    y += 30;
+    tn.ta_pass = lv_textarea_create(tn.panel);
+    lv_obj_set_pos(tn.ta_pass, 0, y);
+    lv_obj_set_size(tn.ta_pass, FULL_W, 52);
+    lv_obj_set_style_text_font(tn.ta_pass, f->f22, 0);
+    lv_textarea_set_one_line(tn.ta_pass, true);
+    lv_textarea_set_placeholder_text(tn.ta_pass, t(TK::TUNNEL_PASS_PH));
+    if (cur.pass[0]) lv_textarea_set_text(tn.ta_pass, cur.pass);
+    lv_obj_add_event_cb(tn.ta_pass, tun_show_kb_cb, LV_EVENT_FOCUSED, nullptr);
+    lv_obj_add_event_cb(tn.ta_pass, tun_show_kb_cb, LV_EVENT_CLICKED, nullptr);
     y += 62;
 
     // Instructions

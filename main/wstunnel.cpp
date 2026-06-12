@@ -33,10 +33,12 @@
 #include "lwip/inet.h"
 #include "lwip/tcp.h"   // TCP_NODELAY
 #include "cJSON.h"
+#include "mbedtls/base64.h"
 
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <strings.h>    // strncasecmp
 
 static const char* TAG = "wstunnel";
 
@@ -362,6 +364,91 @@ static bool send_data(uint32_t id, const uint8_t* bytes, size_t len)
     return true;
 }
 
+// ── BasicAuth gate for tunneled requests ──────────────────────────────────────
+//
+// Requests arriving through the tunnel are challenged with HTTP BasicAuth
+// (fixed user "truminus", password from NVS) before they ever reach the
+// loopback httpd.  LAN-direct traffic never passes through here, so local
+// access stays open.  The check is per-connection: only the first request
+// of a keep-alive stream is inspected, which matches how browsers cache and
+// resend Basic credentials on every request anyway (including the /ws
+// upgrade, which esp_http_server gives us no hook to reject).
+
+// "Basic " value we expect on the Authorization header:
+// base64("truminus:<pass>").  Empty string = auth disabled.  Rebuilt under
+// s_lock whenever the config is loaded or saved.
+static char s_auth_b64[128] = "";
+
+static void rebuild_auth_locked()
+{
+    s_auth_b64[0] = '\0';
+    if (!s_cfg.pass[0]) return;
+    char userpass[16 + sizeof(s_cfg.pass)];
+    int n = snprintf(userpass, sizeof(userpass), "truminus:%s", s_cfg.pass);
+    size_t olen = 0;
+    if (mbedtls_base64_encode((unsigned char*)s_auth_b64, sizeof(s_auth_b64) - 1,
+                              &olen, (const unsigned char*)userpass, (size_t)n) != 0) {
+        ESP_LOGE(TAG, "auth value encode failed");
+        s_auth_b64[0] = '\0';
+        return;
+    }
+    s_auth_b64[olen] = '\0';
+}
+
+// Returns a pointer past the "\r\n\r\n" header terminator, or nullptr if the
+// buffered request does not contain the full header block yet.
+static const char* find_hdr_end(const uint8_t* d, size_t len)
+{
+    for (size_t i = 0; i + 3 < len; i++) {
+        if (d[i] == '\r' && d[i+1] == '\n' && d[i+2] == '\r' && d[i+3] == '\n')
+            return (const char*)d + i + 4;
+    }
+    return nullptr;
+}
+
+// Scans the header block for `Authorization: Basic <s_auth_b64>`.  Header
+// name and scheme are case-insensitive per RFC 9110; the base64 value is an
+// exact match.
+static bool auth_header_ok(const char* hdrs, size_t len)
+{
+    static const char key[] = "authorization:";
+    const char* p   = hdrs;
+    const char* end = hdrs + len;
+    while (p < end) {
+        const char* eol = (const char*)memchr(p, '\n', end - p);
+        if (!eol) eol = end;
+        if ((size_t)(eol - p) > sizeof(key) - 1 &&
+            strncasecmp(p, key, sizeof(key) - 1) == 0) {
+            const char* v = p + sizeof(key) - 1;
+            while (v < eol && (*v == ' ' || *v == '\t')) v++;
+            const char* ve = eol;
+            while (ve > v && (ve[-1] == '\r' || ve[-1] == ' ')) ve--;
+            size_t blen = strlen(s_auth_b64);
+            return (size_t)(ve - v) == 6 + blen &&
+                   strncasecmp(v, "Basic ", 6) == 0 &&
+                   memcmp(v + 6, s_auth_b64, blen) == 0;
+        }
+        p = eol + 1;
+    }
+    return false;
+}
+
+// Answers a tunneled request that failed the auth check.  The 401 +
+// WWW-Authenticate makes the browser pop its native credentials prompt;
+// after that it resends every request (and the WS upgrade) with the header.
+static void send_unauthorized_locked(uint32_t id)
+{
+    static const char resp[] =
+        "HTTP/1.1 401 Unauthorized\r\n"
+        "WWW-Authenticate: Basic realm=\"TruMinus\"\r\n"
+        "Content-Length: 0\r\n"
+        "Connection: close\r\n"
+        "\r\n";
+    send_data(id, (const uint8_t*)resp, sizeof(resp) - 1);
+    send_ctrl("close", id);
+    ESP_LOGI(TAG, "stream %u: 401 (bad/missing credentials)", (unsigned)id);
+}
+
 // ── Inbound frame handling ────────────────────────────────────────────────────
 
 // Try to materialise an `open` frame into a live stream.  If `prebuf`
@@ -386,6 +473,25 @@ static bool try_open_locked(uint32_t id,
         size_t n = prebuf_len > 40 ? 40 : prebuf_len;
         ESP_LOGI(TAG, "stream %u sniff (port=%u): \"%.*s\"",
                  (unsigned)id, port, (int)n, (const char*)prebuf);
+    }
+
+    // BasicAuth gate (tunnel-only; see the auth section above).  Needs the
+    // complete header block, so defer like the port sniff does until the
+    // bridge has pushed it — the 5 s pending timeout bounds the wait.  A
+    // request whose headers don't fit in PENDING_BUF_MAX can never pass,
+    // so reject it instead of letting it rot in the queue.
+    if (s_auth_b64[0]) {
+        const char* hdr_end = find_hdr_end(prebuf, prebuf_len);
+        if (!hdr_end) {
+            if (prebuf_len < PENDING_BUF_MAX) return false;
+            send_unauthorized_locked(id);
+            return true;   // consumed: caller drops the pending entry
+        }
+        if (!auth_header_ok((const char*)prebuf,
+                            (size_t)(hdr_end - (const char*)prebuf))) {
+            send_unauthorized_locked(id);
+            return true;
+        }
     }
 
     bool any_free = false;
@@ -1027,9 +1133,12 @@ void wstunnelSaveConfig(const TunnelConfig& cfg)
     s_cfg = cfg;
     s_cfg.server[sizeof(s_cfg.server) - 1] = '\0';
     s_cfg.token [sizeof(s_cfg.token)  - 1] = '\0';
+    s_cfg.pass  [sizeof(s_cfg.pass)   - 1] = '\0';
     nvs_set_u8_kv ("tunnel", "enabled", s_cfg.enabled ? 1 : 0);
     nvs_set_str_kv("tunnel", "server",  s_cfg.server);
     nvs_set_str_kv("tunnel", "token",   s_cfg.token);
+    nvs_set_str_kv("tunnel", "pass",    s_cfg.pass);
+    rebuild_auth_locked();
     xSemaphoreGive(s_lock);
 }
 
@@ -1079,6 +1188,8 @@ void wstunnelInit(bool deferConnect)
     s_cfg.enabled = nvs_get_u8_kv("tunnel", "enabled", 0) != 0;
     nvs_get_str_kv("tunnel", "server", s_cfg.server, sizeof(s_cfg.server));
     nvs_get_str_kv("tunnel", "token",  s_cfg.token,  sizeof(s_cfg.token));
+    nvs_get_str_kv("tunnel", "pass",   s_cfg.pass,   sizeof(s_cfg.pass));
+    rebuild_auth_locked();
     // Reflect the saved state on the icon before we have an IP — if the
     // user had it enabled, we should already be "connecting" (blinking).
     s_ui_state = s_cfg.enabled ? TunnelUiState::CONNECTING

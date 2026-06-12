@@ -96,6 +96,36 @@ the safety net for clients that disregard the close frame.
 
 ---
 
+## BasicAuth gate (tunnel-only)
+
+Tunneled requests are challenged with HTTP BasicAuth before they reach
+the loopback httpds: fixed user `truminus`, password from NVS
+`tunnel/pass` (set on the LCD tunnel screen; empty = disabled).
+LAN-direct access is never challenged.
+
+The check lives in `try_open_locked()`, NOT in `webserver.cpp`,
+because (a) only tunnel traffic passes through there, and (b)
+`esp_http_server` never invokes the URI handler for the WS-upgrade
+leg, so an httpd-side check could not 401 the `/ws` handshake.
+Mechanics:
+
+- The expected `base64("truminus:<pass>")` is precomputed into
+  `s_auth_b64` (`rebuild_auth_locked()`) on config load/save.
+- The open defers (same mechanism as the port sniff) until the full
+  header block (`\r\n\r\n`) is buffered, then scans for
+  `Authorization: Basic <value>`. Bad/missing → a canned `401` +
+  `WWW-Authenticate: Basic realm="TruMinus"` is sent back through the
+  tunnel via `send_data` + `close`. The browser shows its native
+  prompt and then attaches the header to every request, including the
+  WS upgrade.
+- The check is **per-connection** (first request of each keep-alive
+  stream only). Deliberate: subsequent requests reuse an
+  authenticated TCP stream; a fresh attacker connection always hits
+  the gate.
+- The bridge is untouched — the 401 flows as opaque stream bytes.
+
+---
+
 ## Reconnection ladder — every way the WSS comes back
 
 `esp_websocket_client` (v1.7.0) **permanently kills its task on a

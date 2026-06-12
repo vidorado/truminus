@@ -21,6 +21,10 @@
 //   - "enabled" (u8)  : 0/1
 //   - "server"  (str) : "wss://tunel.example.com/tunnel" (full URL)
 //   - "token"   (str) : shared secret matching TUNNEL_TOKEN on the server
+//   - "pass"    (str) : HTTP BasicAuth password for tunneled requests
+//                       (user is fixed to "truminus"; empty = auth disabled).
+//                       LAN-direct access is never challenged — the check
+//                       lives in the tunnel stream-open path only.
 
 #include <stdint.h>
 #include <stddef.h>
@@ -29,6 +33,7 @@ struct TunnelConfig {
     bool enabled;
     char server[160];   // full URL, e.g. "wss://tunel.victordorado.es/tunnel"
     char token[96];     // shared secret
+    char pass[64];      // BasicAuth password for tunneled requests ("" = off)
 };
 
 // Load config from NVS + spawn worker task (no-op if disabled).  Safe to

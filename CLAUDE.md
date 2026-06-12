@@ -136,7 +136,7 @@ void lvglUnlock();
 | `batt` | `addr` | Ultimatron BLE MAC |
 | `tank` | `addr` | Tank BTHome sensor MAC (moisture tag 0x2F). Empty = disabled. |
 | `multiplus` | `addr`, `key` | VE.Bus dongle MAC + per-device AES-128 bind key. Empty = panel hidden. |
-| `tunnel` | `enabled`, `server`, `token` | WSS tunnel config (see wss-tunnel skill) |
+| `tunnel` | `enabled`, `server`, `token`, `pass` | WSS tunnel config + BasicAuth password for tunneled web access (see wss-tunnel skill) |
 | `ota` | `rb_why`, `rb_heap` | Last rollback reason + heap (see firmware-ota skill) |
 
 ### Settings screens (⚙ button)

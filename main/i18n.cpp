@@ -118,6 +118,8 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "tunel.tudominio.com",                                           // TUNNEL_SERVER_PH
     "Token",                                                         // TUNNEL_TOKEN
     "secreto compartido",                                            // TUNNEL_TOKEN_PH
+    "Contrase\xC3\xB1" "a web (usuario: truminus)",                  // TUNNEL_PASS
+    "vac\xC3\xAD" "a = sin contrase\xC3\xB1" "a",                    // TUNNEL_PASS_PH
     "Configura tu servidor Plesk (Node.js) en la URL de arriba "
     "y pega el mismo token que TUNNEL_TOKEN.",                       // TUNNEL_INSTR
     "Conectado",                                                     // TUNNEL_STATUS_ON
@@ -261,6 +263,8 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "tunnel.yourdomain.com",                                         // TUNNEL_SERVER_PH
     "Token",                                                         // TUNNEL_TOKEN
     "shared secret",                                                 // TUNNEL_TOKEN_PH
+    "Web password (user: truminus)",                                 // TUNNEL_PASS
+    "empty = no password",                                           // TUNNEL_PASS_PH
     "Set up the Plesk (Node.js) bridge at the URL above and paste "
     "the same value as its TUNNEL_TOKEN env var.",                   // TUNNEL_INSTR
     "Connected",                                                     // TUNNEL_STATUS_ON
