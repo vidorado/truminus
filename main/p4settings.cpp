@@ -337,18 +337,20 @@ static void kb_long_press_cb(lv_event_t* e) {
     if (av->v2) s_acc_map[n++] = av->v2;
     s_acc_map[n] = "";
 
+    // Styling stays with the default (light) theme so the chooser buttons
+    // look exactly like the keyboard keys underneath; only size the cells
+    // to match a key (~52×44 at 800×220 / 4 rows) and add a drop shadow so
+    // the popup reads as floating.
     const P4Fonts* f = p4GetFonts();
     lv_obj_t* pop = lv_buttonmatrix_create(s_acc_overlay);
     lv_buttonmatrix_set_map(pop, s_acc_map);
-    const int w = 90 * n + 16, h = 86;
+    const int pad = 6, btn_w = 52, btn_h = 44;
+    const int w = btn_w * n + pad * (n + 1), h = btn_h + pad * 2;
     lv_obj_set_size(pop, w, h);
-    lv_obj_set_style_bg_color(pop, C_TOPBAR, 0);
-    lv_obj_set_style_bg_opa(pop, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(pop, C_SEP, 0);
-    lv_obj_set_style_border_width(pop, 1, 0);
-    lv_obj_set_style_radius(pop, 8, 0);
-    lv_obj_set_style_pad_all(pop, 8, 0);
-    lv_obj_set_style_bg_color(pop, C_BTN, LV_PART_ITEMS);
+    lv_obj_set_style_pad_all(pop, pad, 0);
+    lv_obj_set_style_pad_column(pop, pad, 0);
+    lv_obj_set_style_shadow_width(pop, 14, 0);
+    lv_obj_set_style_shadow_opa(pop, LV_OPA_40, 0);
     lv_obj_set_style_text_font(pop, f->f24, LV_PART_ITEMS);
     lv_obj_add_event_cb(pop, accent_pick_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
