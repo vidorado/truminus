@@ -96,6 +96,48 @@ the safety net for clients that disregard the close frame.
 
 ---
 
+## Reconnection ladder — every way the WSS comes back
+
+`esp_websocket_client` (v1.7.0) **permanently kills its task on a
+server-initiated clean close** unless `enable_close_reconnect` is set:
+the close path dispatches `WEBSOCKET_EVENT_CLOSED` (NOT
+`DISCONNECTED`) and exits. A bridge restart/redeploy does exactly a
+clean close. Field symptom: tunnel dead after every server deploy,
+`s_connected` stuck `true`, watchdog blind, until power cycle.
+
+Defense in depth, in order:
+
+1. **Transport errors** (RST, TLS failure, no PONG in 30 s) →
+   component auto-reconnect (`reconnect_timeout_ms = 5000`).
+2. **Clean server close** → `cfg.enable_close_reconnect = true`
+   makes the component reconnect instead of exiting.
+3. **Task exits anyway** (`WEBSOCKET_EVENT_CLOSED` /
+   `WEBSOCKET_EVENT_FINISH` handlers) → `s_connected = false`, which
+   arms…
+4. **Disconnect watchdog** (`WEDGE_REBUILD_MS`, 2 min in `pump_task`):
+   disconnected + enabled + WiFi up → full client rebuild via
+   `EV_RECONNECT`.
+5. **Connected-but-silent watchdog** (`RX_SILENCE_REBUILD_MS`, 90 s):
+   every inbound frame (PONGs included) stamps `s_last_rx_ms` in
+   `WEBSOCKET_EVENT_DATA`; with our 10 s pings, >90 s of RX silence
+   while "connected" means the client task is wedged beyond delivering
+   events → rebuild. Covers the stuck-TLS-write wedge where
+   `s_connected` would lie forever.
+
+Deadlock trap when touching the event handler: `DISCONNECTED`/
+`CONNECTED` cleanup takes `s_lock` with a **bounded** (2 s) timeout.
+The supervisor holds `s_lock` while blocked in
+`esp_websocket_client_stop()` waiting for the client task to set
+STOPPED_BIT — and these events are dispatched *from* the client task.
+An unbounded take deadlocks both. Skipped cleanup is safe:
+`stop_client_locked()` and the CONNECTED branch drop streams anyway.
+
+`CONNECTED` must drop stale streams: after a clean-close recovery the
+bridge restarts its stream-id counter, and a surviving entry with the
+same id would swallow the new stream's bytes.
+
+---
+
 ## Keepalive — WS control PING, not text
 
 Plesk/nginx has `proxy_read_timeout` set to a few seconds by default

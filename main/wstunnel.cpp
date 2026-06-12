@@ -8,9 +8,11 @@
 // task select()s on every active local TCP socket and ships outgoing bytes
 // back to the server as JSON+base64 "data" frames.
 //
-// Reconnection is handled by esp_websocket_client itself (auto-reconnect
-// with built-in exponential backoff).  We just (re)spawn the client when
-// the user enables/disables the tunnel or changes its URL.
+// Reconnection is layered (see the wss-tunnel skill, "Reconnection ladder"):
+// esp_websocket_client auto-reconnects on transport errors and — via
+// enable_close_reconnect — on server-initiated clean closes (bridge
+// redeploys); two pump-task watchdogs (disconnected ≥ 2 min, connected but
+// RX-silent ≥ 90 s) rebuild the whole client when the component wedges.
 
 #include "wstunnel.hpp"
 
@@ -88,12 +90,22 @@ static constexpr int FAIL_RETRY_LIMIT = 3;   // # of consecutive disconnects →
 // down server (rebuild costs one TLS attempt, same as the auto-reconnect).
 static constexpr uint32_t WEDGE_REBUILD_MS = 120000;
 
+// Second watchdog axis: "connected" but silent.  We ping every 10 s and the
+// component aborts after 30 s without a PONG, and every inbound frame —
+// PONGs included — raises WEBSOCKET_EVENT_DATA.  So a healthy link never
+// goes 90 s without RX while s_connected is true; if it does, the client
+// task is wedged in a state where it can't even deliver its own death event
+// (s_connected would then stay true forever and WEDGE_REBUILD_MS — which
+// only arms on !s_connected — would never fire).  Rebuild.
+static constexpr uint32_t RX_SILENCE_REBUILD_MS = 90000;
+
 static constexpr int    PENDING_QUEUE_SIZE  = 16;   // max queued opens
 static constexpr int64_t PENDING_TIMEOUT_US = 5000000;  // 5 s
 
 static TunnelConfig                s_cfg = {};
 static esp_websocket_client_handle_t s_client = nullptr;
 static volatile bool               s_connected = false;
+static volatile uint32_t           s_last_rx_ms = 0;     // ms tick of last WS RX event
 static volatile bool               s_have_ip   = false;   // STA has a usable IP
 static volatile TunnelUiState      s_ui_state  = TunnelUiState::DISABLED;
 static volatile int                s_retries   = 0;
@@ -598,10 +610,21 @@ static void on_ws_event(void* /*arg*/, esp_event_base_t /*base*/,
     switch (event_id) {
     case WEBSOCKET_EVENT_CONNECTED:
         ESP_LOGI(TAG, "connected to %s", s_cfg.server);
-        s_connected = true;
-        s_retries   = 0;
-        s_ui_state  = TunnelUiState::CONNECTED;
-        s_rx_len    = 0;
+        s_connected  = true;
+        s_last_rx_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        s_retries    = 0;
+        s_ui_state   = TunnelUiState::CONNECTED;
+        s_rx_len     = 0;
+        // Drop streams surviving from a previous session: after a clean
+        // server close (no DISCONNECTED event) the bridge restarts its
+        // stream-id counter, and a stale entry with the same id would
+        // swallow the new stream's bytes.  Bounded take — if the lock is
+        // busy the supervisor is mid-rebuild and will drop them itself.
+        if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            drop_all_streams_locked();
+            while (s_pending_n > 0) pending_remove_locked(0);
+            xSemaphoreGive(s_lock);
+        }
         send_hello();
         break;
     case WEBSOCKET_EVENT_DISCONNECTED:
@@ -619,12 +642,48 @@ static void on_ws_event(void* /*arg*/, esp_event_base_t /*base*/,
         } else if (s_ui_state != TunnelUiState::FAILED) {
             s_ui_state = TunnelUiState::CONNECTING;
         }
-        xSemaphoreTake(s_lock, portMAX_DELAY);
-        drop_all_streams_locked();
-        while (s_pending_n > 0) pending_remove_locked(0);
-        xSemaphoreGive(s_lock);
+        // Bounded take: if the supervisor holds s_lock while blocked in
+        // esp_websocket_client_stop() (it waits for the client task to set
+        // STOPPED_BIT), an unbounded take here deadlocks both tasks — this
+        // event is dispatched FROM the client task.  Skipping the cleanup
+        // is safe: stop_client_locked() and the CONNECTED branch above both
+        // drop streams, and the pump reaps strays when send_data() fails.
+        if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            drop_all_streams_locked();
+            while (s_pending_n > 0) pending_remove_locked(0);
+            xSemaphoreGive(s_lock);
+        }
+        break;
+    case WEBSOCKET_EVENT_CLOSED:
+        // Clean close initiated by the server — exactly what a bridge
+        // restart/redeploy produces.  No DISCONNECTED event fires on this
+        // path.  With enable_close_reconnect the client schedules its own
+        // reconnect; flag the link down regardless so the UI blinks and the
+        // pump watchdog arms in case that reconnect never materialises
+        // (the component still exits the task instead if it loses an
+        // internal lock race — see WEBSOCKET_EVENT_FINISH).
+        ESP_LOGW(TAG, "server closed the WS");
+        s_connected = false;
+        s_rx_len    = 0;
+        if (s_ui_state == TunnelUiState::CONNECTED) {
+            s_ui_state = TunnelUiState::CONNECTING;
+        }
+        break;
+    case WEBSOCKET_EVENT_FINISH:
+        // The client task is exiting for good — no auto-reconnect path is
+        // left inside the component.  Before this handler existed, a clean
+        // server close ended here with s_connected stuck true, so the
+        // wedge watchdog (armed only while !s_connected) never fired and
+        // the tunnel stayed dead until a power cycle.  Flag the link down;
+        // the pump watchdog rebuilds the client within WEDGE_REBUILD_MS.
+        ESP_LOGW(TAG, "ws client task finished");
+        s_connected = false;
         break;
     case WEBSOCKET_EVENT_DATA: {
+        // Liveness stamp before any opcode filtering: PONG/PING frames also
+        // arrive as DATA events, and they're exactly the traffic that proves
+        // the link is alive on an otherwise idle tunnel.
+        s_last_rx_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
         // The IDF sometimes leaks the FIN bit (0x80) into op_code on top of
         // the WS opcode — mask it off so 0x82 (binary+FIN) still matches.
         int op = ev->op_code & 0x0F;
@@ -711,6 +770,19 @@ static void pump_task(void*)
             continue;
         }
         disc_since = 0;
+
+        // Connected-but-silent watchdog: see RX_SILENCE_REBUILD_MS.  Covers
+        // the wedge where the client task can no longer deliver events, so
+        // s_connected sticks true and the disconnect watchdog above is blind.
+        {
+            uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
+            if (now - s_last_rx_ms >= RX_SILENCE_REBUILD_MS) {
+                ESP_LOGW(TAG, "connected but no WS RX for %u s — rebuilding client",
+                         (unsigned)((now - s_last_rx_ms) / 1000));
+                s_last_rx_ms = now;   // re-arm
+                xEventGroupSetBits(s_events, EV_RECONNECT);
+            }
+        }
 
         // Drain the deferred-open queue first — a slot may have freed up
         // since the last iteration.  Cheap when the queue is empty.
@@ -863,6 +935,11 @@ static void start_client_locked()
     esp_websocket_client_config_t cfg = {};
     cfg.uri                  = url;
     cfg.reconnect_timeout_ms = 5000;
+    // Without this, a server-initiated clean close (bridge restart/redeploy)
+    // permanently kills the client task: the component only auto-reconnects
+    // on transport errors, and the close path dispatches CLOSED + exits.
+    // Field symptom: tunnel dead after every server deploy until reboot.
+    cfg.enable_close_reconnect = true;
     // 25 s tolerates Passenger cold-start congestion: when the bridge's
     // Node process is being spun up, the upstream WS socket can stall
     // writing for 10+ s.  The default 10 s timeout fires EAGAIN, our pump
