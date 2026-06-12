@@ -1562,6 +1562,13 @@ static void show_tunnel(lv_obj_t* from) {
     lv_obj_add_event_cb(tn.ta_token, tun_show_kb_cb, LV_EVENT_CLICKED, nullptr);
     y += 62;
 
+    // Instructions (about the server + token pair, so they sit right below it)
+    lv_obj_t* instr = make_label(tn.panel, t(TK::TUNNEL_INSTR), f->f18, C_DIM);
+    lv_obj_set_pos(instr, 0, y);
+    lv_obj_set_width(instr, FULL_W);
+    lv_label_set_long_mode(instr, LV_LABEL_LONG_WRAP);
+    y += 80;
+
     // BasicAuth password for tunneled web access (user fixed to "truminus")
     lv_obj_t* lbl_p = make_label(tn.panel, t(TK::TUNNEL_PASS), f->f22, C_LABEL);
     lv_obj_set_pos(lbl_p, 0, y);
@@ -1576,13 +1583,6 @@ static void show_tunnel(lv_obj_t* from) {
     lv_obj_add_event_cb(tn.ta_pass, tun_show_kb_cb, LV_EVENT_FOCUSED, nullptr);
     lv_obj_add_event_cb(tn.ta_pass, tun_show_kb_cb, LV_EVENT_CLICKED, nullptr);
     y += 62;
-
-    // Instructions
-    lv_obj_t* instr = make_label(tn.panel, t(TK::TUNNEL_INSTR), f->f18, C_DIM);
-    lv_obj_set_pos(instr, 0, y);
-    lv_obj_set_width(instr, FULL_W);
-    lv_label_set_long_mode(instr, LV_LABEL_LONG_WRAP);
-    y += 80;
 
     // Save button
     lv_obj_t* save_btn = lv_button_create(tn.panel);
