@@ -14,6 +14,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_partition.h"
+#include "esp_netif.h"
 #include "nvs.h"
 #include "miniz.h"            // ROM raw-DEFLATE inflate (tinfl_*) for littlefs.bin.gz
 
@@ -1039,6 +1040,15 @@ static void littlefs_sync(const char* tag) {
 
 static void fs_sync_task(void* arg) {
     char* tag = (char*)arg;
+    // The boot-time fs_pending retry fires from p4OtaStart() while WiFi may
+    // still be associating — wait for an IP (up to 60 s) so fetch_fs_ver
+    // doesn't fail DNS and silently skip the sync until the next boot.
+    for (int i = 0; i < 60; i++) {
+        esp_netif_t* sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        esp_netif_ip_info_t ip = {};
+        if (sta && esp_netif_get_ip_info(sta, &ip) == ESP_OK && ip.ip.addr != 0) break;
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
     littlefs_sync(tag);
     free(tag);
     vTaskDelete(nullptr);
