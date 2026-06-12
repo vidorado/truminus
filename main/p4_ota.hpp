@@ -59,6 +59,13 @@ void p4OtaCancel();
 // True while a download/flash is in progress.
 bool p4OtaInstalling();
 
+// Short version of the web assets (LittleFS) currently flashed — the first 12
+// hex of /littlefs/fs.ver, or "—" when unavailable.  Shown on the LCD Updates
+// screen and the web About overlay so the web image version is visible
+// independently of the firmware version (the two update together but the FS is
+// synced separately after the app validates).
+void p4OtaFsVersion(char* out, size_t out_len);
+
 // ── Automatic-check preference (NVS "ota"/"autocheck", default on) ────────
 // When off: no periodic checks, no topbar reminder icon, no prompt modal.
 // Manual checks (p4OtaCheckNow / the settings "Check" button) still work.

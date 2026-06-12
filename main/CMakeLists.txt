@@ -68,6 +68,8 @@ idf_component_register(
         freertos
         esp_https_ota
         app_update
+        esp_partition
+        esp_rom
         esp_http_client
         espressif__cjson
         espressif__esp_websocket_client

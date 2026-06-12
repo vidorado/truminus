@@ -1689,9 +1689,19 @@ static void show_updates(lv_obj_t* from) {
     lv_obj_t* lbl_cur = make_label(scr, cur, f->f22, C_LABEL);
     lv_obj_set_pos(lbl_cur, 20, TITLE_H + 34);
 
+    // Web-assets (LittleFS) version — synced separately from the firmware, so
+    // show it too: a short hash of /littlefs/fs.ver lets you tell which web you
+    // are on independently of the app version.
+    char fsv[24];
+    p4OtaFsVersion(fsv, sizeof(fsv));
+    char web[48];
+    snprintf(web, sizeof(web), "Web:  %s", fsv);
+    lv_obj_t* lbl_web = make_label(scr, web, f->f18, C_DIM);
+    lv_obj_set_pos(lbl_web, 20, TITLE_H + 62);
+
     // Dynamic status line (latest / up-to-date / checking / available / error).
     s_upd_status_lbl = make_label(scr, "", f->f24, C_TEXT);
-    lv_obj_set_pos(s_upd_status_lbl, 20, TITLE_H + 84);
+    lv_obj_set_pos(s_upd_status_lbl, 20, TITLE_H + 92);
 
     // Buttons: Check (left) + Update (right, disabled until available).
     const int BTN_W = 220, BTN_H = 70, GAP = 24;

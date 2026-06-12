@@ -13,7 +13,9 @@
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "esp_partition.h"
 #include "nvs.h"
+#include "miniz.h"            // ROM raw-DEFLATE inflate (tinfl_*) for littlefs.bin.gz
 
 #include "p4display.hpp"
 #include "i18n.hpp"
@@ -695,6 +697,295 @@ static void report_prior_rollback() {
     nvs_close(h);
 }
 
+// ── LittleFS (web assets) sync ───────────────────────────────────────────
+// The app OTA (esp_https_ota → truminus.bin) updates only the application
+// partition; the web UI lives on the separate `littlefs` data partition. After
+// an app image is validated we bring the web in line: compare the content hash
+// baked into our image (/littlefs/fs.ver) with the release's `littlefs.ver`
+// marker; on a mismatch download `littlefs.bin.gz` (~500 KB — the 8 MB image is
+// ~95% 0xFF so it gzips tiny), inflate it and rewrite the partition. Tied to the
+// app update because every release bumps the version, so a web-only change still
+// ships as a new release the device installs.
+#define OTA_FS_ASSET     "littlefs.bin.gz"
+#define OTA_FS_VER_ASSET "littlefs.ver"
+static constexpr size_t OTA_FS_GZ_MAX = 2 * 1024 * 1024;   // sanity cap on the .gz
+
+// The release tag that hosts the assets: the running version with any
+// "-g<sha>"/"-dirty" suffix stripped. A clean OTA'd image is already "X.Y.Z".
+static void release_tag_of_running(char* out, size_t out_len) {
+    snprintf(out, out_len, "%s", running_version());
+    char* dash = strchr(out, '-');
+    if (dash) *dash = '\0';
+}
+
+static void broadcast_fsupdate(const char* state, int pct) {
+    char buf[96];
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"fsupdate\",\"state\":\"%s\",\"pct\":%d}", state, pct);
+    wsQueueSend(buf);
+}
+
+// Read /littlefs/fs.ver — the content hash baked into our current web image.
+static bool littlefs_read_ver(char* out, size_t out_len) {
+    FILE* f = fopen("/littlefs/fs.ver", "r");
+    if (!f) return false;
+    char raw[96] = "";
+    size_t n = fread(raw, 1, sizeof(raw) - 1, f);
+    fclose(f);
+    raw[n] = '\0';
+    for (size_t e = strlen(raw); e && (raw[e-1]=='\n'||raw[e-1]=='\r'||raw[e-1]==' '); )
+        raw[--e] = '\0';
+    snprintf(out, out_len, "%s", raw);
+    return out[0] != '\0';
+}
+
+// Public: short web-assets version (first 12 hex of /littlefs/fs.ver) for the
+// LCD Updates screen + web About overlay.  "—" when unavailable (no marker yet
+// / mid-sync unmount).
+void p4OtaFsVersion(char* out, size_t out_len) {
+    char full[96] = "";
+    if (littlefs_read_ver(full, sizeof(full)) && full[0])
+        snprintf(out, out_len, "%.12s", full);
+    else
+        snprintf(out, out_len, "—");
+}
+
+// GET the tiny `littlefs.ver` asset body for `tag` (auto-redirects to the CDN).
+static bool fetch_fs_ver(const char* tag, char* out, size_t out_len) {
+    char url[256];
+    snprintf(url, sizeof(url),
+             "https://github.com/" OTA_GH_OWNER "/" OTA_GH_REPO
+             "/releases/download/%s/" OTA_FS_VER_ASSET, tag);
+    esp_http_client_config_t cfg = {};
+    cfg.url               = url;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    cfg.timeout_ms        = 8000;
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (!c) return false;
+    esp_http_client_set_header(c, "User-Agent", "TruMinus-OTA");
+    bool ok = false;
+    if (esp_http_client_open(c, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(c);
+        if (esp_http_client_get_status_code(c) == 200) {
+            char raw[96] = "";
+            int r = esp_http_client_read_response(c, raw, sizeof(raw) - 1);
+            if (r > 0) {
+                raw[r] = '\0';
+                for (size_t e = strlen(raw); e && (raw[e-1]=='\n'||raw[e-1]=='\r'||raw[e-1]==' '); )
+                    raw[--e] = '\0';
+                snprintf(out, out_len, "%s", raw);
+                ok = (out[0] != '\0');
+            }
+        }
+    }
+    esp_http_client_close(c);
+    esp_http_client_cleanup(c);
+    return ok;
+}
+
+// Download littlefs.bin.gz for `tag` into a fresh PSRAM buffer.  Pushes download
+// progress to the LCD + web as it goes.
+static bool download_fs_gz(const char* tag, uint8_t** out_buf, size_t* out_len) {
+    char url[256];
+    snprintf(url, sizeof(url),
+             "https://github.com/" OTA_GH_OWNER "/" OTA_GH_REPO
+             "/releases/download/%s/" OTA_FS_ASSET, tag);
+    esp_http_client_config_t cfg = {};
+    cfg.url               = url;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    cfg.timeout_ms        = 20000;
+    cfg.buffer_size       = 16 * 1024;   // full TLS record per read; long CDN URL
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (!c) return false;
+    esp_http_client_set_header(c, "User-Agent", "TruMinus-OTA");
+
+    uint8_t* buf = nullptr;
+    size_t len = 0, cap = 0;
+    bool ok = false;
+    if (esp_http_client_open(c, 0) == ESP_OK) {
+        int total = esp_http_client_fetch_headers(c);
+        if (esp_http_client_get_status_code(c) == 200) {
+            cap = (total > 0 && (size_t)total <= OTA_FS_GZ_MAX) ? (size_t)total : 512 * 1024;
+            buf = (uint8_t*)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM);
+            while (buf && len < OTA_FS_GZ_MAX) {
+                if (len == cap) {                       // short/absent Content-Length
+                    size_t ncap = cap < OTA_FS_GZ_MAX/2 ? cap * 2 : OTA_FS_GZ_MAX;
+                    uint8_t* nb = (uint8_t*)heap_caps_realloc(buf, ncap, MALLOC_CAP_SPIRAM);
+                    if (!nb) break;
+                    buf = nb; cap = ncap;
+                }
+                int r = esp_http_client_read(c, (char*)buf + len, cap - len);
+                if (r < 0) { len = 0; break; }
+                if (r == 0) { ok = esp_http_client_is_complete_data_received(c); break; }
+                len += r;
+                int pct = (total > 0) ? (int)((uint64_t)len * 100 / (size_t)total) : 50;
+                broadcast_fsupdate("downloading", pct);
+                p4DisplaySetOtaProgress(pct);
+            }
+        } else {
+            ESP_LOGW(TAG, "fs gz status %d", esp_http_client_get_status_code(c));
+        }
+    }
+    esp_http_client_close(c);
+    esp_http_client_cleanup(c);
+    if (ok && buf && len > 18) { *out_buf = buf; *out_len = len; return true; }
+    if (buf) heap_caps_free(buf);
+    return false;
+}
+
+// NVS retry flag: a failed/interrupted sync is retried on the next boot.
+static void fs_pending_set(const char* tag) {
+    nvs_handle_t h;
+    if (nvs_open("ota", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_str(h, "fs_pending", tag); nvs_commit(h); nvs_close(h);
+}
+static void fs_pending_clear() {
+    nvs_handle_t h;
+    if (nvs_open("ota", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_erase_key(h, "fs_pending"); nvs_commit(h); nvs_close(h);
+}
+
+// Inflate `gz` (raw DEFLATE after the gzip header) straight into the freshly
+// erased littlefs partition.  The 8 MB output is decompressed in one shot into a
+// PSRAM buffer (TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF → the output buffer is
+// its own 32 KB dictionary, so no on-stack dict), then copied to flash through a
+// small INTERNAL bounce buffer — the only memory esp_partition_write touches
+// while the cache is disabled.
+static bool inflate_to_partition(const esp_partition_t* part,
+                                 const uint8_t* deflate, size_t deflate_len) {
+    bool ok = false;
+    uint8_t* out  = (uint8_t*)heap_caps_malloc(part->size, MALLOC_CAP_SPIRAM);
+    auto*    dec  = (tinfl_decompressor*)heap_caps_malloc(sizeof(tinfl_decompressor), MALLOC_CAP_SPIRAM);
+    uint8_t* bnc  = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_INTERNAL);
+    if (!out || !dec || !bnc) { ESP_LOGE(TAG, "fs inflate: alloc failed"); goto done; }
+
+    {
+        tinfl_init(dec);
+        size_t in_avail  = deflate_len;
+        size_t out_avail = part->size;
+        tinfl_status st = tinfl_decompress(dec, deflate, &in_avail, out, out, &out_avail,
+                                           TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+        if (st != TINFL_STATUS_DONE || out_avail != part->size) {
+            ESP_LOGE(TAG, "fs inflate: tinfl st=%d out=%u/%u",
+                     (int)st, (unsigned)out_avail, (unsigned)part->size);
+            goto done;
+        }
+        if (esp_partition_erase_range(part, 0, part->size) != ESP_OK) {
+            ESP_LOGE(TAG, "fs inflate: erase failed");
+            goto done;
+        }
+        for (size_t off = 0; off < part->size; ) {
+            size_t n = part->size - off; if (n > 4096) n = 4096;
+            memcpy(bnc, out + off, n);                  // PSRAM → internal (cache on)
+            if (esp_partition_write(part, off, bnc, n) != ESP_OK) {
+                ESP_LOGE(TAG, "fs inflate: write @%u failed", (unsigned)off);
+                goto done;
+            }
+            off += n;
+            int pct = (int)((uint64_t)off * 100 / part->size);
+            broadcast_fsupdate("flashing", pct);
+            p4DisplaySetOtaProgress(pct);
+        }
+        ok = true;
+    }
+done:
+    if (out) heap_caps_free(out);
+    if (dec) heap_caps_free(dec);
+    if (bnc) heap_caps_free(bnc);
+    return ok;
+}
+
+// Bring the web assets in line with release `tag`.  Cheap no-op when our
+// /littlefs/fs.ver already matches the release marker.
+static void littlefs_sync(const char* tag) {
+    char cur[96] = "", want[96] = "";
+    bool have_cur = littlefs_read_ver(cur, sizeof(cur));
+    if (!fetch_fs_ver(tag, want, sizeof(want))) {
+        ESP_LOGW(TAG, "fs sync: no littlefs.ver on %s — skipping", tag);
+        return;   // pre-feature release or a network blip; nothing to do
+    }
+    if (have_cur && strcmp(cur, want) == 0) {
+        ESP_LOGI(TAG, "fs sync: web up to date (%s)", cur);
+        fs_pending_clear();
+        return;
+    }
+    ESP_LOGW(TAG, "fs sync: web differs (have=%s want=%s) — updating",
+             have_cur ? cur : "<none>", want);
+
+    const esp_partition_t* part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "littlefs");
+    if (!part) { ESP_LOGE(TAG, "fs sync: no littlefs partition"); return; }
+
+    fs_pending_set(tag);                       // cleared only on full success
+    p4DisplayShowOtaScreen(have_cur ? cur : "web", "web");
+    broadcast_fsupdate("downloading", 0);
+
+    // Free the shared C6 radio for the download (BLE rides the same radio).
+    bool vicWas = victronBleSuspended(), ultWas = ultimatronBleSuspended();
+    if (!vicWas) victronBleSuspend();
+    if (!ultWas) ultimatronBleSuspend();
+
+    uint8_t* gz = nullptr; size_t gzlen = 0;
+    bool dl = download_fs_gz(tag, &gz, &gzlen);
+
+    if (!vicWas) victronBleResume();
+    if (!ultWas) ultimatronBleResume();
+
+    auto fail = [&](const char* why) {
+        ESP_LOGE(TAG, "fs sync: %s — will retry next boot", why);
+        if (gz) heap_caps_free(gz);
+        broadcast_fsupdate("error", 0);
+        p4DisplaySetStatus(t(TK::OTA_WEB_FAILED), true);
+        p4DisplayHideOtaScreen();
+    };
+    if (!dl) { fail("download failed"); return; }
+
+    // gzip header: with `gzip -n` it is a fixed 10 bytes (magic 1f 8b, method 08,
+    // FLG 0, mtime 0).  Validate, tolerate an optional FNAME, then inflate the
+    // raw DEFLATE that follows.
+    size_t hdr = 10;
+    if (gz[0] != 0x1f || gz[1] != 0x8b || gz[2] != 0x08 || (gz[3] & 0xe0) != 0) {
+        fail("bad gzip header"); return;
+    }
+    if (gz[3] & 0x08) { while (hdr < gzlen && gz[hdr]) hdr++; hdr++; }   // skip FNAME
+    if (hdr + 8 >= gzlen) { fail("truncated gzip"); return; }
+
+    // Unmount → erase+inflate+write → remount.  The WS server stays up (only
+    // static-file serving is down), so flashing progress keeps streaming.
+    broadcast_fsupdate("flashing", 0);
+    unmountWebFs();
+    bool wrote = inflate_to_partition(part, gz + hdr, gzlen - hdr);
+    heap_caps_free(gz);
+    if (mountWebFs() != ESP_OK)
+        ESP_LOGE(TAG, "fs sync: remount failed (web down until next boot)");
+
+    if (wrote) {
+        fs_pending_clear();
+        ESP_LOGW(TAG, "fs sync: web updated to %s", want);
+        broadcast_fsupdate("done", 100);
+        p4DisplayHideOtaScreen();
+    } else {
+        broadcast_fsupdate("error", 0);                // fs_pending stays set
+        p4DisplaySetStatus(t(TK::OTA_WEB_FAILED), true);
+        p4DisplayHideOtaScreen();
+    }
+}
+
+static void fs_sync_task(void* arg) {
+    char* tag = (char*)arg;
+    littlefs_sync(tag);
+    free(tag);
+    vTaskDelete(nullptr);
+}
+
+// Spawn the web-asset sync off the caller's context (it blocks on network +
+// flash).  Stack stays modest: the heavy inflate buffers live in PSRAM/heap.
+static void littlefs_sync_async(const char* tag) {
+    char* dup = strdup(tag);
+    if (!dup) return;
+    if (xTaskCreate(fs_sync_task, "p4_fs_sync", 6144, dup, 4, nullptr) != pdPASS) free(dup);
+}
+
 bool p4OtaPendingVerify() {
     const esp_partition_t* run = esp_ota_get_running_partition();
     esp_ota_img_states_t st = ESP_OTA_IMG_UNDEFINED;
@@ -807,6 +1098,12 @@ static void selftest_task(void*) {
     // bring the tunnel up.  No-op if the tunnel is disabled in NVS.
     wstunnelApply();
 
+    // App image is good — bring the web assets (LittleFS) in line with this
+    // release.  Cheap no-op when /littlefs/fs.ver already matches the marker.
+    char fs_tag[32];
+    release_tag_of_running(fs_tag, sizeof(fs_tag));
+    littlefs_sync_async(fs_tag);
+
     vTaskDelete(nullptr);
 }
 
@@ -823,6 +1120,20 @@ void p4OtaStart() {
         nvs_get_u8(h, "autocheck", &v);   // default 1 if absent
         s_autocheck = (v != 0);
         nvs_close(h);
+    }
+
+    // Retry a web-asset sync left pending by a prior failed/interrupted attempt.
+    // Only on a normal boot — a PENDING_VERIFY boot's self-test triggers the
+    // sync after validating, so this avoids double-running it.
+    if (!p4OtaPendingVerify()) {
+        nvs_handle_t fh;
+        if (nvs_open("ota", NVS_READONLY, &fh) == ESP_OK) {
+            char ptag[32] = "";
+            size_t pl = sizeof(ptag);
+            if (nvs_get_str(fh, "fs_pending", ptag, &pl) == ESP_OK && ptag[0])
+                littlefs_sync_async(ptag);
+            nvs_close(fh);
+        }
     }
 
     xTaskCreate(selftest_task, "p4_ota_verify", 4096, nullptr, 6, nullptr);

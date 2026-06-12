@@ -13,6 +13,10 @@
 // (second call is a no-op).
 esp_err_t mountWebFs();
 
+// Unmount the LittleFS (self-OTA web-asset rewrite).  No-op if not mounted;
+// call mountWebFs() again to remount after the partition is rewritten.
+esp_err_t unmountWebFs();
+
 // WebSocket command callback.
 //   id    : "/heating", "/temp", "/fan", ...  (with leading slash, as on C5)
 //   value : raw string value sent by the browser ("on" / "21.5" / etc.)

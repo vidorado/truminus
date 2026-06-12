@@ -112,6 +112,8 @@ endforeach()
 # data/index.html (and url(...) refs inside CSS) so browsers refetch any
 # changed asset.  gen_gz.py pre-compresses HTML/CSS/JS/TTF into adjacent
 # .gz files; the server prefers the .gz variant and sets Content-Encoding.
+# gen_fs_ver.py stamps a content hash into data/fs.ver (baked into the image)
+# so the self-OTA can skip the LittleFS download when the web is unchanged.
 #
 # Both scripts are idempotent: when nothing changed they print "up to
 # date" and return immediately, so making them ALL targets is cheap.
@@ -129,8 +131,9 @@ endif()
 add_custom_target(web_assets_prep ALL
     COMMAND ${_TRUMINUS_PY} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/cache_bust.py
     COMMAND ${_TRUMINUS_PY} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_gz.py
+    COMMAND ${_TRUMINUS_PY} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_fs_ver.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Refreshing web asset cache-bust hashes + .gz variants"
+    COMMENT "Refreshing web asset cache-bust hashes + .gz variants + fs.ver"
 )
 if(TARGET littlefs_littlefs_bin)
     add_dependencies(littlefs_littlefs_bin web_assets_prep)

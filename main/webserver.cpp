@@ -95,6 +95,22 @@ esp_err_t mountWebFs() {
     return ESP_OK;
 }
 
+// Unmount the LittleFS so the partition can be erased/rewritten (self-OTA web
+// sync).  The WS/HTTP servers keep running; only static-file serving is down
+// until mountWebFs() is called again.  Clears s_lfsMounted so the remount
+// re-registers.
+esp_err_t unmountWebFs() {
+    if (!s_lfsMounted) return ESP_OK;
+    esp_err_t err = esp_vfs_littlefs_unregister("littlefs");
+    if (err == ESP_OK) {
+        s_lfsMounted = false;
+        ESP_LOGI(TAG, "LittleFS unmounted");
+    } else {
+        ESP_LOGW(TAG, "littlefs unmount failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
 // ── HTTP static file serving ─────────────────────────────────────────────────
 
 // MIME table.  Anything not listed falls back to application/octet-stream.

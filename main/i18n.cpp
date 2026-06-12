@@ -143,6 +143,8 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Comprobaci\xC3\xB3n autom\xC3\xA1tica",                         // OTA_AUTOCHECK
     "\xC2\xBF" "Actualizar ahora?",                                  // OTA_PROMPT
     "Error al actualizar",                                           // OTA_FAILED
+    "Actualizando web\xE2\x80\xA6",                                  // OTA_WEB_UPDATING
+    "Error al actualizar web",                                       // OTA_WEB_FAILED
     "hoy",                                                           // TODAY
 };
 
@@ -282,6 +284,8 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Auto-check",                                                    // OTA_AUTOCHECK
     "Update now?",                                                   // OTA_PROMPT
     "Update failed",                                                 // OTA_FAILED
+    "Updating web\xE2\x80\xA6",                                      // OTA_WEB_UPDATING
+    "Web update failed",                                             // OTA_WEB_FAILED
     "today",                                                         // TODAY
 };
 

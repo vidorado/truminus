@@ -159,6 +159,7 @@ ws.onmessage = function (event) {
     if (d.command === 'multi') { applyMulti(d); return; }
     if (d.command === 'icon')  { applyIcon(d);  return; }
     if (d.command === 'ota')   { applyOta(d);   return; }
+    if (d.command === 'fsupdate') { applyFsUpdate(d); return; }
     if (d.command === 'diag')  { s_diag = d; renderFault(); return; }
     if (d.command === 'snapshot') {
         // Full initial-state burst from wsConnected() on the server.
@@ -351,11 +352,46 @@ function renderFault() {
     }
 }
 
+// Web-asset (LittleFS) sync, pushed by the firmware after an app update. The WS
+// survives the partition rewrite (only static-file serving is briefly down), so
+// we cover the page with the reload veil + a live %, and reload once it's done —
+// the cache-busted asset URLs changed, so the reload pulls the new UI.
+function applyFsUpdate(d) {
+    var state = d.state || '';
+    var pct = (typeof d.pct === 'number') ? d.pct : 0;
+    if (state === 'done') { location.reload(); return; }
+    var v   = document.getElementById('reload-veil');
+    var sp  = document.getElementById('reload-spinner-box');
+    var er  = document.getElementById('reload-error');
+    var lbl = v ? v.querySelector('.reload-label') : null;
+    if (state === 'error') {
+        if (lbl) lbl.textContent = t('ota_web_failed');
+        setTimeout(hideReloadVeil, 2500);
+        return;
+    }
+    // downloading / flashing — hold the veil with a live %, and cancel its
+    // stale-data timeout so a long flash doesn't flip it to an error.
+    if (v)  v.hidden  = false;
+    if (sp) sp.hidden = false;
+    if (er) er.hidden = true;
+    if (s_veilTimer) { clearTimeout(s_veilTimer); s_veilTimer = null; }
+    if (lbl) lbl.textContent = t('ota_web_updating') + ' ' + pct + '%';
+}
+
 function openAbout() {
     var modal = document.getElementById('about-modal');
     if (!modal) return;
     updateAbout(s_ota);
     renderFault();
+    // Web-assets version: read the marker the firmware bakes into LittleFS so
+    // the web image version is visible independently of the firmware version.
+    fetch('/fs.ver', { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.text() : ''; })
+        .then(function (txt) {
+            var el = document.getElementById('about-fs');
+            if (el) el.textContent = txt ? txt.trim().slice(0, 12) : '—';
+        })
+        .catch(function () {});
     modal.classList.remove('hidden');
     // Hide the banner right away (don't wait for the next OTA push).
     var banner = document.getElementById('ota-banner');
