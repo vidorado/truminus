@@ -750,7 +750,27 @@ void p4OtaFsVersion(char* out, size_t out_len) {
         snprintf(out, out_len, "—");
 }
 
-// GET the tiny `littlefs.ver` asset body for `tag` (auto-redirects to the CDN).
+// Open `c` and follow GitHub's release-asset redirect (302 → CDN) up to a few
+// hops, leaving the client positioned to read the final 200 body.  The manual
+// open/fetch_headers flow (unlike esp_http_client_perform / esp_https_ota) does
+// NOT auto-follow redirects, so we drive it explicitly.  Returns the final HTTP
+// status, or -1 on a transport error.
+static int http_open_follow(esp_http_client_handle_t c) {
+    for (int hop = 0; hop < 6; hop++) {
+        if (esp_http_client_open(c, 0) != ESP_OK) return -1;
+        esp_http_client_fetch_headers(c);
+        int st = esp_http_client_get_status_code(c);
+        if (st == 301 || st == 302 || st == 303 || st == 307 || st == 308) {
+            esp_http_client_set_redirection(c);   // adopt the Location header
+            esp_http_client_close(c);
+            continue;
+        }
+        return st;
+    }
+    return -1;
+}
+
+// GET the tiny `littlefs.ver` asset body for `tag` (follows the CDN redirect).
 static bool fetch_fs_ver(const char* tag, char* out, size_t out_len) {
     char url[256];
     snprintf(url, sizeof(url),
@@ -764,9 +784,8 @@ static bool fetch_fs_ver(const char* tag, char* out, size_t out_len) {
     if (!c) return false;
     esp_http_client_set_header(c, "User-Agent", "TruMinus-OTA");
     bool ok = false;
-    if (esp_http_client_open(c, 0) == ESP_OK) {
-        esp_http_client_fetch_headers(c);
-        if (esp_http_client_get_status_code(c) == 200) {
+    if (http_open_follow(c) == 200) {
+        {
             char raw[96] = "";
             int r = esp_http_client_read_response(c, raw, sizeof(raw) - 1);
             if (r > 0) {
@@ -802,9 +821,10 @@ static bool download_fs_gz(const char* tag, uint8_t** out_buf, size_t* out_len) 
     uint8_t* buf = nullptr;
     size_t len = 0, cap = 0;
     bool ok = false;
-    if (esp_http_client_open(c, 0) == ESP_OK) {
-        int total = esp_http_client_fetch_headers(c);
-        if (esp_http_client_get_status_code(c) == 200) {
+    int status = http_open_follow(c);
+    if (status == 200) {
+        int total = (int)esp_http_client_get_content_length(c);
+        {
             cap = (total > 0 && (size_t)total <= OTA_FS_GZ_MAX) ? (size_t)total : 512 * 1024;
             buf = (uint8_t*)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM);
             while (buf && len < OTA_FS_GZ_MAX) {
@@ -822,9 +842,9 @@ static bool download_fs_gz(const char* tag, uint8_t** out_buf, size_t* out_len) 
                 broadcast_fsupdate("downloading", pct);
                 p4DisplaySetOtaProgress(pct);
             }
-        } else {
-            ESP_LOGW(TAG, "fs gz status %d", esp_http_client_get_status_code(c));
         }
+    } else {
+        ESP_LOGW(TAG, "fs gz status %d", status);
     }
     esp_http_client_close(c);
     esp_http_client_cleanup(c);
