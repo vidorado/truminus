@@ -179,14 +179,16 @@ static lv_obj_t* build_title_bar(const char* title, lv_event_cb_t back_cb) {
     return scr;
 }
 
-// Custom special map: row 0 = numbers, row 1 = symbols for passwords,
-// row 2 = Spanish accented chars, row 3 = nav/ok.
-// Replaces the default "!@#$…" special mode with a Latin-friendly layout.
+// Custom special map: row 0 = numbers, rows 1-2 = symbols for passwords,
+// row 3 = nav/ok.  Replaces the default "!@#$…" special mode.  The accented
+// chars that used to occupy row 2 moved to the long-press picker on the text
+// layouts (see "Long-press accent picker" below), freeing the row for the
+// symbols they had displaced ("?" most painfully).
 // Button count (40) matches the default spec map so the same ctrl array works.
 static const char* const s_kb_map_spec[] = {
     "1","2","3","4","5","6","7","8","9","0", LV_SYMBOL_BACKSPACE, "\n",
     "abc","!","@","#","$","%","/","*","(",")","_","+", "\n",
-    "\xC3\xA1","\xC3\xA9","\xC3\xAD","\xC3\xB3","\xC3\xBA","\xC3\xB1","\xC3\xBC","\xC2\xA1","\xC2\xBF","\"","'","=", "\n",
+    "?","\xC2\xA1","\xC2\xBF","\"","'","=","-",".",",",";",":","&", "\n",
     LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
@@ -195,6 +197,43 @@ static const char* const s_kb_map_spec[] = {
 #define KB_BTN(w)  BMC(LV_BUTTONMATRIX_CTRL_POPOVER | (w))
 #define KB_CTRL(w) BMC(LV_BUTTONMATRIX_CTRL_NO_REPEAT | LV_BUTTONMATRIX_CTRL_CLICK_TRIG | LV_BUTTONMATRIX_CTRL_CHECKED | (w))
 #define KB_CHK(w)  BMC(LV_BUTTONMATRIX_CTRL_CHECKED | (w))
+// Char keys on the text layouts: insert on RELEASE (CLICK_TRIG) and never
+// auto-repeat.  Both are what lets the accent picker swallow a held key —
+// it detaches the textarea before the release fires, so holding a vowel
+// types nothing and the picker choice is the only insertion.
+#define KB_CHAR(w)  BMC(LV_BUTTONMATRIX_CTRL_POPOVER | LV_BUTTONMATRIX_CTRL_NO_REPEAT | LV_BUTTONMATRIX_CTRL_CLICK_TRIG | (w))
+#define KB_CHARC(w) BMC(LV_BUTTONMATRIX_CTRL_CHECKED | LV_BUTTONMATRIX_CTRL_POPOVER | LV_BUTTONMATRIX_CTRL_NO_REPEAT | LV_BUTTONMATRIX_CTRL_CLICK_TRIG | (w))
+
+// Text layouts: same key arrangement as LVGL's defaults (mode-switch labels
+// "1#"/"ABC"/"abc" and the nav symbols must match lv_keyboard's internals),
+// but char keys use KB_CHAR/KB_CHARC instead of plain POPOVER.  Backspace
+// keeps LVGL's CHECKED|7 so press-and-hold still repeats deletions.
+static const char* const s_kb_map_lc[] = {
+    "1#", "q","w","e","r","t","y","u","i","o","p", LV_SYMBOL_BACKSPACE, "\n",
+    "ABC", "a","s","d","f","g","h","j","k","l", LV_SYMBOL_NEW_LINE, "\n",
+    "_","-","z","x","c","v","b","n","m",".",",",":", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+};
+static const char* const s_kb_map_uc[] = {
+    "1#", "Q","W","E","R","T","Y","U","I","O","P", LV_SYMBOL_BACKSPACE, "\n",
+    "abc", "A","S","D","F","G","H","J","K","L", LV_SYMBOL_NEW_LINE, "\n",
+    "_","-","Z","X","C","V","B","N","M",".",",",":", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+};
+// Shared by lower/upper (identical geometry).
+static const lv_buttonmatrix_ctrl_t s_kb_ctrl_txt[] = {
+    // Row 0: "1#" + 10 letters + backspace
+    KB_CTRL(5), KB_CHAR(4), KB_CHAR(4), KB_CHAR(4), KB_CHAR(4), KB_CHAR(4),
+    KB_CHAR(4), KB_CHAR(4), KB_CHAR(4), KB_CHAR(4), KB_CHAR(4), KB_CHK(7),
+    // Row 1: "ABC"/"abc" + 9 letters + enter
+    KB_CTRL(6), KB_CHAR(3), KB_CHAR(3), KB_CHAR(3), KB_CHAR(3), KB_CHAR(3),
+    KB_CHAR(3), KB_CHAR(3), KB_CHAR(3), KB_CHAR(3), KB_CHK(7),
+    // Row 2: _ - + 7 letters + . , :
+    KB_CHARC(1), KB_CHARC(1), KB_CHAR(1), KB_CHAR(1), KB_CHAR(1), KB_CHAR(1),
+    KB_CHAR(1),  KB_CHAR(1),  KB_CHAR(1), KB_CHARC(1), KB_CHARC(1), KB_CHARC(1),
+    // Row 3: [KB] [LEFT] [space] [RIGHT] [OK]
+    KB_CTRL(2), KB_CHK(2), BMC(6), KB_CHK(2), KB_CTRL(2),
+};
 
 // Ctrl array mirroring default_kb_ctrl_spec_map (40 entries, no Arabic).
 static const lv_buttonmatrix_ctrl_t s_kb_ctrl_spec[] = {
@@ -211,17 +250,135 @@ static const lv_buttonmatrix_ctrl_t s_kb_ctrl_spec[] = {
     KB_CTRL(2), KB_CHK(2), BMC(6), KB_CHK(2), KB_CTRL(2),
 };
 
+// ── Long-press accent picker (GBoard-style) ───────────────────────────────────
+// Holding a vowel / n on the text layouts pops a small chooser with the
+// accented variants right above the finger.  While the chooser is up the
+// keyboard's textarea is detached, so releasing the held key types nothing
+// (char keys insert on release — see KB_CHAR); tapping a variant inserts it
+// and a tap anywhere else dismisses.
+
+struct AccentVariants { const char* base; const char* v1; const char* v2; };
+static const AccentVariants s_accent_table[] = {
+    { "a", "\xC3\xA1", nullptr    },   // á
+    { "e", "\xC3\xA9", nullptr    },   // é
+    { "i", "\xC3\xAD", nullptr    },   // í
+    { "o", "\xC3\xB3", nullptr    },   // ó
+    { "u", "\xC3\xBA", "\xC3\xBC" },   // ú ü
+    { "n", "\xC3\xB1", nullptr    },   // ñ
+    { "A", "\xC3\x81", nullptr    },   // Á
+    { "E", "\xC3\x89", nullptr    },   // É
+    { "I", "\xC3\x8D", nullptr    },   // Í
+    { "O", "\xC3\x93", nullptr    },   // Ó
+    { "U", "\xC3\x9A", "\xC3\x9C" },   // Ú Ü
+    { "N", "\xC3\x91", nullptr    },   // Ñ
+};
+
+static lv_obj_t*   s_acc_overlay = nullptr;   // full-screen tap catcher on the top layer
+static lv_obj_t*   s_acc_ta      = nullptr;   // textarea detached while the picker is up
+static lv_obj_t*   s_acc_kb      = nullptr;
+static const char* s_acc_map[3];              // picker map: 1-2 variants + terminator
+
+static void accent_close() {
+    if (!s_acc_overlay) return;
+    lv_obj_delete(s_acc_overlay);
+    s_acc_overlay = nullptr;
+    if (s_acc_kb) lv_keyboard_set_textarea(s_acc_kb, s_acc_ta);
+    s_acc_kb = nullptr;
+    s_acc_ta = nullptr;
+}
+
+static void accent_pick_cb(lv_event_t* e) {
+    lv_obj_t* pop = lv_event_get_target_obj(e);
+    uint32_t  id  = lv_buttonmatrix_get_selected_button(pop);
+    const char* txt = (id == LV_BUTTONMATRIX_BUTTON_NONE)
+                        ? nullptr : lv_buttonmatrix_get_button_text(pop, id);
+    if (txt && s_acc_ta) lv_textarea_add_text(s_acc_ta, txt);
+    accent_close();
+}
+
+static void accent_overlay_cb(lv_event_t* e) {
+    // Taps on the picker matrix don't bubble here; only a true outside tap.
+    if (lv_event_get_target_obj(e) == s_acc_overlay) accent_close();
+}
+
+static void kb_long_press_cb(lv_event_t* e) {
+    lv_obj_t* kb = lv_event_get_target_obj(e);
+    if (s_acc_overlay) return;            // one picker at a time
+    uint32_t id = lv_buttonmatrix_get_selected_button(kb);
+    if (id == LV_BUTTONMATRIX_BUTTON_NONE) return;
+    const char* txt = lv_buttonmatrix_get_button_text(kb, id);
+    if (!txt) return;
+    const AccentVariants* av = nullptr;
+    for (const auto& cand : s_accent_table) {
+        if (strcmp(txt, cand.base) == 0) { av = &cand; break; }
+    }
+    if (!av) return;
+    lv_obj_t* ta = lv_keyboard_get_textarea(kb);
+    if (!ta) return;
+
+    // Detach the textarea: the held key inserts on release and must type
+    // nothing now that the picker owns the gesture.
+    s_acc_ta = ta;
+    s_acc_kb = kb;
+    lv_keyboard_set_textarea(kb, nullptr);
+
+    s_acc_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_set_pos(s_acc_overlay, 0, 0);
+    lv_obj_set_size(s_acc_overlay, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_opa(s_acc_overlay, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_acc_overlay, 0, 0);
+    lv_obj_set_style_pad_all(s_acc_overlay, 0, 0);
+    lv_obj_set_style_radius(s_acc_overlay, 0, 0);
+    lv_obj_clear_flag(s_acc_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(s_acc_overlay, accent_overlay_cb, LV_EVENT_CLICKED, nullptr);
+
+    int n = 0;
+    s_acc_map[n++] = av->v1;
+    if (av->v2) s_acc_map[n++] = av->v2;
+    s_acc_map[n] = "";
+
+    const P4Fonts* f = p4GetFonts();
+    lv_obj_t* pop = lv_buttonmatrix_create(s_acc_overlay);
+    lv_buttonmatrix_set_map(pop, s_acc_map);
+    const int w = 90 * n + 16, h = 86;
+    lv_obj_set_size(pop, w, h);
+    lv_obj_set_style_bg_color(pop, C_TOPBAR, 0);
+    lv_obj_set_style_bg_opa(pop, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(pop, C_SEP, 0);
+    lv_obj_set_style_border_width(pop, 1, 0);
+    lv_obj_set_style_radius(pop, 8, 0);
+    lv_obj_set_style_pad_all(pop, 8, 0);
+    lv_obj_set_style_bg_color(pop, C_BTN, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(pop, f->f24, LV_PART_ITEMS);
+    lv_obj_add_event_cb(pop, accent_pick_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    // Right above the finger, clamped to the screen.
+    lv_point_t p = { SCR_W / 2, SCR_H - KB_H };
+    lv_indev_t* indev = lv_indev_active();
+    if (indev) lv_indev_get_point(indev, &p);
+    int32_t x = p.x - w / 2;
+    if (x < 4) x = 4;
+    if (x > SCR_W - w - 4) x = SCR_W - w - 4;
+    int32_t y = p.y - h - 30;
+    if (y < 4) y = 4;
+    lv_obj_set_pos(pop, x, y);
+}
+
 // Keyboard with enlarged key labels. LV_PART_ITEMS targets each button cell.
-// In Spanish mode the special layout is replaced with a Latin accented-char map.
+// Text layouts get release-trigger char keys + the long-press accent picker;
+// in Spanish the special layout is replaced with a symbol map (incl. ¡ ¿).
 static lv_obj_t* build_keyboard(lv_obj_t* scr) {
     const P4Fonts* f = p4GetFonts();
     lv_obj_t* kb = lv_keyboard_create(scr);
     lv_obj_set_size(kb, SCR_W, KB_H);
     lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_text_font(kb, f->f24, LV_PART_ITEMS);
+    lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, s_kb_map_lc, s_kb_ctrl_txt);
+    lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_UPPER, s_kb_map_uc, s_kb_ctrl_txt);
     if (currentLanguage() == Language::ES) {
         lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_SPECIAL, s_kb_map_spec, s_kb_ctrl_spec);
     }
+    lv_obj_add_event_cb(kb, kb_long_press_cb, LV_EVENT_LONG_PRESSED, nullptr);
     lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
     return kb;
 }
