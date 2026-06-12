@@ -780,6 +780,8 @@ static bool fetch_fs_ver(const char* tag, char* out, size_t out_len) {
     cfg.url               = url;
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
     cfg.timeout_ms        = 8000;
+    cfg.buffer_size       = 2048;        // CDN response headers
+    cfg.buffer_size_tx    = 4096;        // request line carries the long signed CDN URL
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     if (!c) return false;
     esp_http_client_set_header(c, "User-Agent", "TruMinus-OTA");
@@ -813,7 +815,8 @@ static bool download_fs_gz(const char* tag, uint8_t** out_buf, size_t* out_len) 
     cfg.url               = url;
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
     cfg.timeout_ms        = 20000;
-    cfg.buffer_size       = 16 * 1024;   // full TLS record per read; long CDN URL
+    cfg.buffer_size       = 16 * 1024;   // full TLS record per read
+    cfg.buffer_size_tx    = 4096;        // request line carries the long signed CDN URL
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     if (!c) return false;
     esp_http_client_set_header(c, "User-Agent", "TruMinus-OTA");
