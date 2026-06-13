@@ -265,6 +265,22 @@ the sync) lost the sync until the *next* OTA. Seen in the field: a board on
 the old web because the boot-time `fetch_fs_ver` blipped and never retried.
 `fs_pending` is now set on `ERROR`, so the next boot resyncs.
 
+**`fetch_fs_ver` MUST pause BLE like the version check does — this was the
+deciding bug.** `littlefs_sync()` originally suspended BLE only around the
+`.gz` *download*; the marker `fetch_fs_ver()` ran with BLE still scanning. On
+the shared C6 radio a live BLE scan starves WiFi, and the 65-byte marker fetch
+loses the race **whenever the WiFi signal margin is thin** — so a
+fully-provisioned board *in the field* (weak signal) never synced, while a
+provisioned bench with strong coverage did. The tell: on the *same* field
+board the periodic version check reached GitHub fine (it suspends BLE +
+waits the scan window, lines ~335-344) but the fs.ver fetch didn't — same
+board, same BLE, the only difference was the suspend. Fix: `littlefs_sync()`
+now suspends BLE + waits out the in-flight scan window for the **whole**
+network section (fetch + download), mirroring `check_and_notify()`, and resumes
+on every return path. Don't reorder the suspend back below the fetch.
+(Signal margin, not BLE present/absent, is the discriminator — both bench and
+field boards run BLE.)
+
 Diagnosing from the device: the LCD **Actualizaciones** screen / web About
 overlay shows the first 12 hex of `/littlefs/fs.ver` (`p4OtaFsVersion`); "—"
 means no marker (pre-feature web still flashed). Serial log tells which branch

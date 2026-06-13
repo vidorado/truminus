@@ -968,6 +968,25 @@ done:
 static void littlefs_sync(const char* tag) {
     char cur[96] = "", want[96] = "";
     bool have_cur = littlefs_read_ver(cur, sizeof(cur));
+
+    // Pause BLE for the WHOLE network section — both the tiny littlefs.ver
+    // fetch and the .gz download.  On a fully-provisioned board the active BLE
+    // scan on the shared C6 radio starves WiFi enough that even the 65-byte
+    // marker fetch fails; that fetch was previously outside the suspend window,
+    // so the sync never fired on the real board while a bare bench (no BLE)
+    // worked.  This mirrors check_and_notify(): suspend, then wait out any
+    // in-flight scan window (the suspend is only honored at the supervisor's
+    // scan-window boundary).  Only resume what we paused.  No-op on a board
+    // without BLE configured (suspend/scan-active are idempotent / false).
+    bool vicWas = victronBleSuspended(), ultWas = ultimatronBleSuspended();
+    if (!vicWas) victronBleSuspend();
+    if (!ultWas) ultimatronBleSuspend();
+    for (int i = 0; i < 60 && victronBleScanActive(); i++) vTaskDelay(pdMS_TO_TICKS(100));
+    auto resume_ble = [&] {
+        if (!vicWas) victronBleResume();
+        if (!ultWas) ultimatronBleResume();
+    };
+
     FsVerResult fr = fetch_fs_ver(tag, want, sizeof(want));
     if (fr == FsVerResult::ABSENT) {
         // The release genuinely carries no marker (predates the feature).
@@ -975,6 +994,7 @@ static void littlefs_sync(const char* tag) {
         // retry a sync that can never complete.
         ESP_LOGW(TAG, "fs sync: no littlefs.ver on %s — skipping (pre-feature release)", tag);
         fs_pending_clear();
+        resume_ble();
         return;
     }
     if (fr == FsVerResult::ERROR) {
@@ -985,11 +1005,13 @@ static void littlefs_sync(const char* tag) {
         // the next OTA.
         ESP_LOGW(TAG, "fs sync: fetch of littlefs.ver for %s failed — will retry next boot", tag);
         fs_pending_set(tag);
+        resume_ble();
         return;
     }
     if (have_cur && strcmp(cur, want) == 0) {
         ESP_LOGI(TAG, "fs sync: web up to date (%s)", cur);
         fs_pending_clear();
+        resume_ble();
         return;
     }
     ESP_LOGW(TAG, "fs sync: web differs (have=%s want=%s) — updating",
@@ -997,7 +1019,7 @@ static void littlefs_sync(const char* tag) {
 
     const esp_partition_t* part = esp_partition_find_first(
         ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "littlefs");
-    if (!part) { ESP_LOGE(TAG, "fs sync: no littlefs partition"); return; }
+    if (!part) { ESP_LOGE(TAG, "fs sync: no littlefs partition"); resume_ble(); return; }
 
     fs_pending_set(tag);                       // cleared only on full success
     s_installing.store(true);                  // keeps the LCD awake, parks the checker
@@ -1007,16 +1029,10 @@ static void littlefs_sync(const char* tag) {
     p4DisplayShowOtaScreen(fromv, tov, t(TK::OTA_WEB_UPDATING), false);
     broadcast_fsupdate("downloading", 0);
 
-    // Free the shared C6 radio for the download (BLE rides the same radio).
-    bool vicWas = victronBleSuspended(), ultWas = ultimatronBleSuspended();
-    if (!vicWas) victronBleSuspend();
-    if (!ultWas) ultimatronBleSuspend();
-
     uint8_t* gz = nullptr; size_t gzlen = 0;
     bool dl = download_fs_gz(tag, &gz, &gzlen);
 
-    if (!vicWas) victronBleResume();
-    if (!ultWas) ultimatronBleResume();
+    resume_ble();   // radio free again — the download (the heavy part) is done
 
     auto fail = [&](const char* why) {
         ESP_LOGE(TAG, "fs sync: %s — will retry next boot", why);
