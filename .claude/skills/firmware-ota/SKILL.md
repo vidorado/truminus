@@ -64,20 +64,34 @@ and lags a few minutes). We hit this with `1.2.4` finishing ~10 s after `1.2.5`.
 A semver-correct alternative would enumerate `/releases` and pick the max
 version, but that needs the rate-limited JSON API this design deliberately avoids.
 
-**Cert gotcha — `github.com` needs cross-signed bundle verification.** The
-version check (`fetch_latest_tag` → `https://github.com/.../releases/latest`)
+**Cert gotcha — the OTA HTTP paths pin GitHub's roots, NOT the cert bundle.**
+The version check (`fetch_latest_tag` → `https://github.com/.../releases/latest`)
 started failing **intermittently** with `esp-x509-crt-bundle: Failed to verify
-certificate` / `mbedtls_ssl_handshake returned -0x3000` (CERT_VERIFY_FAILED),
-while release-asset *downloads* (the DigiCert CDN) kept working. Cause:
-github.com is migrating to **Sectigo** and from some edge nodes serves a chain
-ending in `Sectigo Public Server Authentication Root E46` **cross-signed by**
-`USERTrust ECC Certification Authority` — both are FULL-bundle roots, but
-`esp_crt_bundle` can't bridge the cross-signed intermediate to the trusted root
-unless `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y`
-(`sdkconfig.defaults`, since 1.2.25). Intermittent because it depends on which
-CA the edge presents; `openssl s_client -connect github.com:443 -showcerts`
-shows the chain. Not a clock/SNTP issue — `MBEDTLS_HAVE_TIME_DATE` is off, so
-cert dates aren't checked (and the firmware has no SNTP).
+certificate` / `mbedtls_ssl_handshake returned -0x3000` (CERT_VERIFY_FAILED).
+Cause: **GitHub is migrating its TLS certs DigiCert → Sectigo** and rolls it out
+per-edge, so some github.com/codeload nodes now serve a chain ending in
+`Sectigo Public Server Authentication Root E46` cross-signed by
+`USERTrust ECC Certification Authority` (the release CDN
+`*.githubusercontent.com` is on Let's Encrypt / ISRG Root X1, which is why
+downloads kept working while the github.com metadata check failed).
+
+`esp_crt_bundle`'s space-optimized verify callback (it stores only subject+key
+per root, not the full cert) **cannot verify that Sectigo chain even with
+`CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y`** — we shipped that
+flag in 1.2.25 and it did **not** help on real hardware. The working fix
+(1.2.26+): pass real root certs via `cfg.cert_pem` (`main/ota_ca_certs.h`,
+wired into all five OTA `esp_http_client`/`esp_https_ota` configs), which makes
+esp-tls use **standard mbedtls chain verification** instead of the bundle
+callback. The pinned set — USERTrust ECC, USERTrust RSA, ISRG Root X1, DigiCert
+Global Root G2 — covers github.com/codeload (Sectigo), the CDN (Let's Encrypt)
+and legacy DigiCert edges. Regenerate by extracting those roots from the IDF
+bundle `components/mbedtls/esp_crt_bundle/cacrt_all.pem`. If GitHub later adds a
+root, refresh `ota_ca_certs.h`. The cross-signed sdkconfig knob is now moot but
+harmless; the tunnel and other TLS still use the bundle.
+
+Not a clock/SNTP issue — `MBEDTLS_HAVE_TIME_DATE` is off, so cert dates aren't
+checked (and the firmware has no SNTP). `openssl s_client -connect
+github.com:443 -showcerts` shows whichever chain an edge currently serves.
 
 ## Asset name is a contract
 

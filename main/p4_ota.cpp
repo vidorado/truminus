@@ -11,6 +11,7 @@
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "ota_ca_certs.h"     // pinned GitHub roots — see why-not-bundle note there
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_partition.h"
@@ -250,7 +251,7 @@ static bool fetch_latest_tag(char* tag, size_t tag_len) {
 
     esp_http_client_config_t cfg = {};
     cfg.url                   = OTA_LATEST_URL;
-    cfg.crt_bundle_attach     = esp_crt_bundle_attach;
+    cfg.cert_pem              = OTA_GH_ROOT_CAS;
     cfg.disable_auto_redirect = true;
     // Short timeout so a check on a marginal WiFi link fails fast and stops
     // hogging airtime from the WSS tunnel instead of blocking for 10 s. The
@@ -301,7 +302,7 @@ static bool release_has_force_notify(const char* tag) {
 
     esp_http_client_config_t cfg = {};
     cfg.url                   = url;
-    cfg.crt_bundle_attach     = esp_crt_bundle_attach;
+    cfg.cert_pem              = OTA_GH_ROOT_CAS;
     cfg.disable_auto_redirect = true;       // we only want the status, not the asset
     cfg.timeout_ms            = 6000;
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
@@ -411,7 +412,7 @@ static void install_task(void*) {
 
     esp_http_client_config_t http = {};
     http.url               = url;
-    http.crt_bundle_attach = esp_crt_bundle_attach;
+    http.cert_pem          = OTA_GH_ROOT_CAS;
     http.timeout_ms        = 15000;
     http.keep_alive_enable = true;
     // browser_download_url 302-redirects to the release CDN — follow it.
@@ -785,7 +786,7 @@ static FsVerResult fetch_fs_ver(const char* tag, char* out, size_t out_len) {
              "/releases/download/%s/" OTA_FS_VER_ASSET, tag);
     esp_http_client_config_t cfg = {};
     cfg.url               = url;
-    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    cfg.cert_pem          = OTA_GH_ROOT_CAS;
     cfg.timeout_ms        = 8000;
     cfg.buffer_size       = 2048;        // CDN response headers
     cfg.buffer_size_tx    = 4096;        // request line carries the long signed CDN URL
@@ -821,7 +822,7 @@ static bool download_fs_gz(const char* tag, uint8_t** out_buf, size_t* out_len) 
              "/releases/download/%s/" OTA_FS_ASSET, tag);
     esp_http_client_config_t cfg = {};
     cfg.url               = url;
-    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    cfg.cert_pem          = OTA_GH_ROOT_CAS;
     cfg.timeout_ms        = 20000;
     cfg.buffer_size       = 16 * 1024;   // full TLS record per read
     cfg.buffer_size_tx    = 4096;        // request line carries the long signed CDN URL
