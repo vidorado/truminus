@@ -331,6 +331,10 @@ problem is sensitivity/antenna (§15), not power-save tuning — don't reach for
   `.vscode/settings.json` puts status-bar buttons next to them
   (`spencerwmiles.vscode-task-buttons`). The tasks must source
   `$IDF_PATH/export.sh` first because `idf.py` is not on PATH in a fresh shell.
+- This image also ships **over OTA**: a content hash (`data/fs.ver`, by
+  `gen_fs_ver.py`) is baked in and published as the `littlefs.ver` release
+  asset so the device resyncs the web only when it changed. That half lives in
+  the **firmware-ota** skill ("Web-asset (LittleFS) sync").
 
 ## 14. RMT on an open-drain single-wire bus must idle *high*
 

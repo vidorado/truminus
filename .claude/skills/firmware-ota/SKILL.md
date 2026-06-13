@@ -235,6 +235,9 @@ validates, `littlefs_sync()` brings the web in line with the release:
   `data/` into `data/fs.ver`, baked into the image as `/littlefs/fs.ver`. CI
   copies that same file to the release asset `littlefs.ver`. The device fetches
   the tiny marker and compares; equal → skip the ~500 KB download entirely.
+  (How the LittleFS image itself is built/flashed — `littlefs_create_partition_image`,
+  the rebuild-every-cmake-run quirk, `--skip-flashed`, the VSCode Flash-button
+  trap — is **pio-idf-p4 §13**.)
 - **Assets** (release contract, all three or `fail_on_unmatched_files` trips):
   `truminus.bin`, `littlefs.bin.gz` (the 8 MB image is ~95% 0xFF → gzips to a
   few hundred KB; inflated on-flash by `inflate_to_partition` via ROM `tinfl`),
