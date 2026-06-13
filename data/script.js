@@ -237,6 +237,7 @@ function applyIcon(d) {
 var s_otaInstalling = false;
 var s_ota = null;            // last OTA frame, for the About overlay
 var s_otaDismissedVer = null; // "Later"-dismissed version (banner stays hidden for it)
+var s_otaDismissedErr = null; // "OK"-dismissed error string (stays hidden until it changes)
 var s_otaReloadPending = false; // reload the page once the device reboots after an install
 var s_diag = null;           // last {command:diag} frame (uncontrolled-fault record)
 function applyOta(d) {
@@ -278,11 +279,19 @@ function applyOta(d) {
     btn.hidden = false;
     btn.disabled = false;
     btn.textContent = t('ota_update');
-    if (later) later.hidden = false;
+    if (later) { later.hidden = false; later.textContent = t('ota_later'); }
 
     if (d.error) {
+        // A failed check/install is not an "update available" prompt — drop the
+        // "Update"/"Later" buttons (they make no sense here) and offer a single
+        // "OK" that dismisses. Stay hidden for a repeat of the same error so a
+        // failing periodic check doesn't keep re-popping the red banner.
+        if (d.error === s_otaDismissedErr) { banner.hidden = true; return; }
         msg.textContent = t('ota_failed') + ': ' + d.error;
         banner.classList.add('ota-err');
+        btn.hidden = true;
+        if (cancel) cancel.hidden = true;
+        if (later) { later.hidden = false; later.textContent = t('accept'); }
         banner.hidden = false;
         return;
     }
@@ -305,7 +314,10 @@ function applyOta(d) {
 // "Later": dismiss the banner for this version (the About overlay still offers
 // the manual install). A newer release re-shows it.
 function otaDismiss() {
-    if (s_ota) s_otaDismissedVer = s_ota.latest || null;
+    // Same button serves "Later" (an available update) and "OK" (an error):
+    // remember whichever applies so applyOta() keeps the banner hidden.
+    if (s_ota && s_ota.error) s_otaDismissedErr = s_ota.error;
+    else if (s_ota) s_otaDismissedVer = s_ota.latest || null;
     var banner = document.getElementById('ota-banner');
     if (banner) banner.hidden = true;
 }
