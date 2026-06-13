@@ -224,6 +224,50 @@ the last manual `ci` run) and stays ~1–2 min until GitHub evicts it (7 days
 idle / LRU past 10 GB). When a release goes cold, run `ci` manually once
 (Actions → ci → Run workflow on master) to refresh that cache.
 
+## Web-asset (LittleFS) sync
+
+The app OTA (`truminus.bin`) updates only the **application** partition; the web
+UI lives on the separate `littlefs` data partition. After an app image
+validates, `littlefs_sync()` brings the web in line with the release:
+
+- **Marker, not blob, drives the decision.** `gen_fs_ver.py` (run by
+  `web_assets_prep`, a prerequisite of `littlefs_littlefs_bin`) hashes all of
+  `data/` into `data/fs.ver`, baked into the image as `/littlefs/fs.ver`. CI
+  copies that same file to the release asset `littlefs.ver`. The device fetches
+  the tiny marker and compares; equal → skip the ~500 KB download entirely.
+- **Assets** (release contract, all three or `fail_on_unmatched_files` trips):
+  `truminus.bin`, `littlefs.bin.gz` (the 8 MB image is ~95% 0xFF → gzips to a
+  few hundred KB; inflated on-flash by `inflate_to_partition` via ROM `tinfl`),
+  `littlefs.ver`. Feature first shipped in **1.2.18**.
+- **Triggers, in order:** (1) the self-test calls `littlefs_sync_async()` right
+  after marking the image valid; (2) `p4OtaStart()` retries on a normal boot if
+  NVS `ota/fs_pending` is set. `fs_sync_task` waits up to 60 s for an IP before
+  fetching (the boot retry can fire while WiFi is still associating).
+
+**`fetch_fs_ver` MUST distinguish 404 from a transport error** (`FsVerResult`
+tri-state). They demand opposite handling and conflating them was a real field
+bug:
+
+| Outcome | Meaning | Action |
+|---------|---------|--------|
+| `OK` | got the marker | compare; sync if it differs |
+| `ABSENT` (404) | release predates the feature | `fs_pending_clear()` — nothing to do, ever |
+| `ERROR` (-1 / other) | DNS/TLS/CDN hiccup | `fs_pending_set(tag)` — boot retry picks it up |
+
+**The bug this fixed:** the old code returned `bool` and treated any failure as
+"skip" with **no `fs_pending`**, so a transient fetch failure during the
+PENDING_VERIFY boot (network still settling — exactly when the self-test runs
+the sync) lost the sync until the *next* OTA. Seen in the field: a board on
+**1.2.15** (pre-feature, no `/littlefs/fs.ver`) OTA'd to 1.2.23 and kept serving
+the old web because the boot-time `fetch_fs_ver` blipped and never retried.
+`fs_pending` is now set on `ERROR`, so the next boot resyncs.
+
+Diagnosing from the device: the LCD **Actualizaciones** screen / web About
+overlay shows the first 12 hex of `/littlefs/fs.ver` (`p4OtaFsVersion`); "—"
+means no marker (pre-feature web still flashed). Serial log tells which branch
+ran: `web up to date` / `no littlefs.ver … pre-feature release` / `fetch …
+failed — will retry next boot` / `web differs … updating`.
+
 ## UI surfaces
 
 Install progress on the LCD OTA screen + WS `{"command":"ota",…,"installing":true,"progress":N}`.

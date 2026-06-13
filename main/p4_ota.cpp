@@ -771,8 +771,14 @@ static int http_open_follow(esp_http_client_handle_t c) {
     return -1;
 }
 
+// Outcome of fetching the littlefs.ver marker.  ABSENT (the release carries no
+// marker — a pre-feature release) and ERROR (network/transport/CDN failure)
+// must be handled differently by the caller: ABSENT is a permanent "nothing to
+// do", ERROR is transient and worth retrying on the next boot.
+enum class FsVerResult { OK, ABSENT, ERROR };
+
 // GET the tiny `littlefs.ver` asset body for `tag` (follows the CDN redirect).
-static bool fetch_fs_ver(const char* tag, char* out, size_t out_len) {
+static FsVerResult fetch_fs_ver(const char* tag, char* out, size_t out_len) {
     char url[256];
     snprintf(url, sizeof(url),
              "https://github.com/" OTA_GH_OWNER "/" OTA_GH_REPO
@@ -784,25 +790,26 @@ static bool fetch_fs_ver(const char* tag, char* out, size_t out_len) {
     cfg.buffer_size       = 2048;        // CDN response headers
     cfg.buffer_size_tx    = 4096;        // request line carries the long signed CDN URL
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
-    if (!c) return false;
+    if (!c) return FsVerResult::ERROR;
     esp_http_client_set_header(c, "User-Agent", "TruMinus-OTA");
-    bool ok = false;
-    if (http_open_follow(c) == 200) {
-        {
-            char raw[96] = "";
-            int r = esp_http_client_read_response(c, raw, sizeof(raw) - 1);
-            if (r > 0) {
-                raw[r] = '\0';
-                for (size_t e = strlen(raw); e && (raw[e-1]=='\n'||raw[e-1]=='\r'||raw[e-1]==' '); )
-                    raw[--e] = '\0';
-                snprintf(out, out_len, "%s", raw);
-                ok = (out[0] != '\0');
-            }
+    int  status = http_open_follow(c);
+    bool body_ok = false;
+    if (status == 200) {
+        char raw[96] = "";
+        int r = esp_http_client_read_response(c, raw, sizeof(raw) - 1);
+        if (r > 0) {
+            raw[r] = '\0';
+            for (size_t e = strlen(raw); e && (raw[e-1]=='\n'||raw[e-1]=='\r'||raw[e-1]==' '); )
+                raw[--e] = '\0';
+            snprintf(out, out_len, "%s", raw);
+            body_ok = (out[0] != '\0');
         }
     }
     esp_http_client_close(c);
     esp_http_client_cleanup(c);
-    return ok;
+    if (status == 200) return body_ok ? FsVerResult::OK : FsVerResult::ERROR;
+    if (status == 404) return FsVerResult::ABSENT;   // release predates the feature
+    return FsVerResult::ERROR;                        // -1 transport / unexpected status
 }
 
 // Download littlefs.bin.gz for `tag` into a fresh PSRAM buffer.  Pushes download
@@ -961,9 +968,24 @@ done:
 static void littlefs_sync(const char* tag) {
     char cur[96] = "", want[96] = "";
     bool have_cur = littlefs_read_ver(cur, sizeof(cur));
-    if (!fetch_fs_ver(tag, want, sizeof(want))) {
-        ESP_LOGW(TAG, "fs sync: no littlefs.ver on %s — skipping", tag);
-        return;   // pre-feature release or a network blip; nothing to do
+    FsVerResult fr = fetch_fs_ver(tag, want, sizeof(want));
+    if (fr == FsVerResult::ABSENT) {
+        // The release genuinely carries no marker (predates the feature).
+        // Nothing this device can do — clear any stale pending so we don't
+        // retry a sync that can never complete.
+        ESP_LOGW(TAG, "fs sync: no littlefs.ver on %s — skipping (pre-feature release)", tag);
+        fs_pending_clear();
+        return;
+    }
+    if (fr == FsVerResult::ERROR) {
+        // Transient: DNS/TLS/CDN hiccup, common right after a PENDING_VERIFY
+        // boot when the network is still settling.  Persist the intent so the
+        // boot-time retry in p4OtaStart() picks it up once WiFi is stable —
+        // previously this path returned silently and the sync was lost until
+        // the next OTA.
+        ESP_LOGW(TAG, "fs sync: fetch of littlefs.ver for %s failed — will retry next boot", tag);
+        fs_pending_set(tag);
+        return;
     }
     if (have_cur && strcmp(cur, want) == 0) {
         ESP_LOGI(TAG, "fs sync: web up to date (%s)", cur);
