@@ -27,6 +27,8 @@ struct P4OtaStatus {
     char currentVer[32];    // running firmware version (esp_app_desc_t.version)
     char latestVer[32];     // latest release tag (valid when available)
     char error[64];         // last error message (empty = none)
+    uint16_t warmupSecs;    // >0: seconds left in the boot warmup before the
+                            // first auto-check can run (a manual check skips it)
 };
 
 // Spawn the periodic version-check task and — when the running image is in

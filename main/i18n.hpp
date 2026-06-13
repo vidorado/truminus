@@ -144,6 +144,7 @@ enum class TK : uint8_t {
     OTA_UPDATE_NOW,    // install button: "Actualizar" / "Update"
     OTA_UPDATING,      // "Actualizando…" / "Updating…"
     OTA_CHECK_FAILED,  // "Error al comprobar" / "Check failed"
+    OTA_STARTING,      // boot warmup countdown: "Iniciando… (%us)" / "Starting… (%us)"
     OTA_LATER,         // prompt button: "Más tarde" / "Later"
     OTA_AUTOCHECK,     // settings switch: "Comprobación automática" / "Auto-check"
     OTA_PROMPT,        // update modal title: "¿Actualizar ahora?" / "Update now?"

@@ -40,16 +40,19 @@ CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC=y
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=2048
 CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
 
-# Cross-signed chain verification for the cert bundle (2026-06).
-# github.com is migrating to Sectigo and serves, from some edge nodes, a chain
-# ending in "Sectigo Public Server Authentication Root E46" CROSS-SIGNED by
-# "USERTrust ECC Certification Authority" (both are in the FULL bundle as roots).
-# Without this, esp_crt_bundle can't bridge the cross-signed intermediate to the
-# trusted root and the handshake fails intermittently with -0x3000
-# (CERT_VERIFY_FAILED) — depending on which CA the edge presents. Symptom: the
-# OTA version check (and any github.com TLS) fails "Failed to verify certificate"
-# on some connections while release-asset downloads via the DigiCert CDN succeed.
-CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
+# Force software ECC — do NOT use the ESP32-P4 hardware ECC accelerator (2026-06).
+# The HW ECC accelerator on this P4 returns wrong results for ECDSA *verification*:
+# every ECDSA signature check fails with PSA_ERROR_INVALID_SIGNATURE (-0x95).
+# Symptom: TLS to any ECDSA-cert server fails — github.com (Sectigo/USERTrust ECC)
+# could not be reached for the OTA version check (cert-chain ECDSA verify failed,
+# surfaced as x509 -0x2700), while RSA servers (the Let's Encrypt release CDN, the
+# tunnel bridge) worked. Proven by disabling cert verification: the handshake then
+# failed later at the ServerKeyExchange ECDSA verify (-0x95), same root cause.
+# HARDWARE_ECDSA_VERIFY was already off but HARDWARE_ECC (the ECP point-mul accel)
+# still routed verify through the buggy peripheral. Software ECC is slower but TLS
+# handshakes here are infrequent (OTA + one tunnel connect). MUST live in defaults:
+# the IDF default is =y, so a fullclean would otherwise reintroduce the bug.
+CONFIG_MBEDTLS_HARDWARE_ECC=n
 
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y

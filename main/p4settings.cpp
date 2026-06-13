@@ -1823,6 +1823,10 @@ static void upd_refresh() {
         snprintf(buf, sizeof(buf), "%s %d%%", t(TK::OTA_UPDATING), st.progress);
     } else if (st.checking) {
         snprintf(buf, sizeof(buf), "%s", t(TK::OTA_CHECKING));
+    } else if (st.warmupSecs) {
+        // Boot warmup — explains why a check isn't running yet + counts down.
+        // Pressing "Check" skips it (p4OtaCheckNow zeroes the warmup).
+        snprintf(buf, sizeof(buf), t(TK::OTA_STARTING), (unsigned)st.warmupSecs);
     } else if (st.error[0]) {
         snprintf(buf, sizeof(buf), "%s", t(TK::OTA_CHECK_FAILED));
     } else if (st.available) {

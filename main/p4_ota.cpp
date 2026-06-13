@@ -11,7 +11,6 @@
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
-#include "ota_ca_certs.h"     // pinned GitHub roots — see why-not-bundle note there
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_partition.h"
@@ -114,6 +113,12 @@ static std::atomic<uint32_t> s_beats[P4OTA_BEAT_COUNT];
 // Set by p4OtaCheckNow() to interrupt the check task's sleep.
 static std::atomic<bool> s_check_request{false};
 
+// Tick (ms, esp_timer) when the boot warmup ends and the first auto-check may
+// run.  Surfaced as P4OtaStatus::warmupSecs so the UI can show "starting, Ns
+// left" instead of a misleading "up to date" during the first minute.  A manual
+// check zeroes it (it skips the warmup — that path frees the radio itself).
+static std::atomic<uint32_t> s_warmup_end_ms{0};
+
 // Set by p4OtaCancel() to abort an in-progress install (checked in the perform
 // loop).  Cleared at the start of each install.
 static std::atomic<bool> s_cancel{false};
@@ -141,6 +146,9 @@ void p4OtaGetStatus(P4OtaStatus& out) {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     out = s_status;
     xSemaphoreGive(s_lock);
+    uint32_t now  = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    uint32_t end  = s_warmup_end_ms.load();
+    out.warmupSecs = (end > now) ? (uint16_t)((end - now + 999) / 1000) : 0;
 }
 
 bool p4OtaInstalling() { return s_installing.load(); }
@@ -251,7 +259,7 @@ static bool fetch_latest_tag(char* tag, size_t tag_len) {
 
     esp_http_client_config_t cfg = {};
     cfg.url                   = OTA_LATEST_URL;
-    cfg.cert_pem              = OTA_GH_ROOT_CAS;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
     cfg.disable_auto_redirect = true;
     // Short timeout so a check on a marginal WiFi link fails fast and stops
     // hogging airtime from the WSS tunnel instead of blocking for 10 s. The
@@ -302,7 +310,7 @@ static bool release_has_force_notify(const char* tag) {
 
     esp_http_client_config_t cfg = {};
     cfg.url                   = url;
-    cfg.cert_pem              = OTA_GH_ROOT_CAS;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
     cfg.disable_auto_redirect = true;       // we only want the status, not the asset
     cfg.timeout_ms            = 6000;
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
@@ -412,7 +420,7 @@ static void install_task(void*) {
 
     esp_http_client_config_t http = {};
     http.url               = url;
-    http.cert_pem          = OTA_GH_ROOT_CAS;
+    http.crt_bundle_attach = esp_crt_bundle_attach;
     http.timeout_ms        = 15000;
     http.keep_alive_enable = true;
     // browser_download_url 302-redirects to the release CDN — follow it.
@@ -612,9 +620,18 @@ void p4OtaInstall() {
 
 // ── Periodic check task ──────────────────────────────────────────────────
 static void check_task(void*) {
-    // Give WiFi a moment to associate, and let the BLE supervisor get a clean
-    // scan window first (shared radio — see INITIAL_CHECK_DELAY_MS).
-    vTaskDelay(pdMS_TO_TICKS(INITIAL_CHECK_DELAY_MS));
+    // Boot warmup: give WiFi a moment to associate and let the BLE supervisor
+    // get a clean scan window first (shared radio — see INITIAL_CHECK_DELAY_MS).
+    // Interruptible: a manual request (Updates screen / web "Check") skips the
+    // wait — that path pauses BLE itself, so the shared-radio reason no longer
+    // applies and the user shouldn't sit through the countdown.  Poll in 250 ms
+    // slices so the skip is responsive; publish the deadline for the UI.
+    s_warmup_end_ms.store((uint32_t)(esp_timer_get_time() / 1000ULL) + INITIAL_CHECK_DELAY_MS);
+    for (uint32_t slept = 0; slept < INITIAL_CHECK_DELAY_MS; slept += 250) {
+        if (s_check_request.load()) break;
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+    s_warmup_end_ms.store(0);
     for (;;) {
         bool manual = s_check_request.exchange(false);
         WifiStatus ws = wifi_manager_get_status();
@@ -786,7 +803,7 @@ static FsVerResult fetch_fs_ver(const char* tag, char* out, size_t out_len) {
              "/releases/download/%s/" OTA_FS_VER_ASSET, tag);
     esp_http_client_config_t cfg = {};
     cfg.url               = url;
-    cfg.cert_pem          = OTA_GH_ROOT_CAS;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
     cfg.timeout_ms        = 8000;
     cfg.buffer_size       = 2048;        // CDN response headers
     cfg.buffer_size_tx    = 4096;        // request line carries the long signed CDN URL
@@ -822,7 +839,7 @@ static bool download_fs_gz(const char* tag, uint8_t** out_buf, size_t* out_len) 
              "/releases/download/%s/" OTA_FS_ASSET, tag);
     esp_http_client_config_t cfg = {};
     cfg.url               = url;
-    cfg.cert_pem          = OTA_GH_ROOT_CAS;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
     cfg.timeout_ms        = 20000;
     cfg.buffer_size       = 16 * 1024;   // full TLS record per read
     cfg.buffer_size_tx    = 4096;        // request line carries the long signed CDN URL

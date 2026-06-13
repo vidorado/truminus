@@ -64,34 +64,45 @@ and lags a few minutes). We hit this with `1.2.4` finishing ~10 s after `1.2.5`.
 A semver-correct alternative would enumerate `/releases` and pick the max
 version, but that needs the rate-limited JSON API this design deliberately avoids.
 
-**Cert gotcha — the OTA HTTP paths pin GitHub's roots, NOT the cert bundle.**
-The version check (`fetch_latest_tag` → `https://github.com/.../releases/latest`)
-started failing **intermittently** with `esp-x509-crt-bundle: Failed to verify
-certificate` / `mbedtls_ssl_handshake returned -0x3000` (CERT_VERIFY_FAILED).
-Cause: **GitHub is migrating its TLS certs DigiCert → Sectigo** and rolls it out
-per-edge, so some github.com/codeload nodes now serve a chain ending in
-`Sectigo Public Server Authentication Root E46` cross-signed by
-`USERTrust ECC Certification Authority` (the release CDN
-`*.githubusercontent.com` is on Let's Encrypt / ISRG Root X1, which is why
-downloads kept working while the github.com metadata check failed).
+**Cert gotcha — the real cause was the P4 hardware ECC accelerator, NOT the
+cert chain.** The version check (`fetch_latest_tag` →
+`https://github.com/.../releases/latest`) failed with `esp-x509-crt-bundle:
+Failed to verify certificate` / `mbedtls_ssl_handshake returned -0x3000`
+(that code is `MBEDTLS_ERR_X509_FATAL_ERROR`, the bundle callback aborting; the
+underlying x509 result is `-0x2700` `CERT_VERIFY_FAILED`). It coincided with
+**GitHub migrating DigiCert → Sectigo**, so the obvious-but-wrong theory was the
+new Sectigo/USERTrust **ECDSA** chain. Two failed releases chased that: 1.2.25
+added `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y` (no effect);
+1.2.26-rc pinned the roots via `cfg.cert_pem` (no effect — still `-0x2700`).
 
-`esp_crt_bundle`'s space-optimized verify callback (it stores only subject+key
-per root, not the full cert) **cannot verify that Sectigo chain even with
-`CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y`** — we shipped that
-flag in 1.2.25 and it did **not** help on real hardware. The working fix
-(1.2.26+): pass real root certs via `cfg.cert_pem` (`main/ota_ca_certs.h`,
-wired into all five OTA `esp_http_client`/`esp_https_ota` configs), which makes
-esp-tls use **standard mbedtls chain verification** instead of the bundle
-callback. The pinned set — USERTrust ECC, USERTrust RSA, ISRG Root X1, DigiCert
-Global Root G2 — covers github.com/codeload (Sectigo), the CDN (Let's Encrypt)
-and legacy DigiCert edges. Regenerate by extracting those roots from the IDF
-bundle `components/mbedtls/esp_crt_bundle/cacrt_all.pem`. If GitHub later adds a
-root, refresh `ota_ca_certs.h`. The cross-signed sdkconfig knob is now moot but
-harmless; the tunnel and other TLS still use the bundle.
+The decisive test was **disabling cert verification entirely**
+(`CONFIG_ESP_TLS_INSECURE=y` + `CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY=y`, no CA
+on the client): the handshake *still* failed, now at `-0x0095`
+(`PSA_ERROR_INVALID_SIGNATURE`) on the TLS 1.2 ServerKeyExchange — proving the
+problem was **never the certificate**. Both failures are the same root cause:
+**every ECDSA signature verification returns INVALID_SIGNATURE**, because the
+ESP32-P4 hardware ECC accelerator produces wrong results for ECDSA verify on
+this board. So github.com / codeload (ECDSA leaf + Sectigo/USERTrust ECC chain)
+could never be verified, while RSA peers — the Let's Encrypt release CDN
+(`*.githubusercontent.com`, ISRG Root X1) and the tunnel bridge — worked fine,
+which is exactly why downloads succeeded but the metadata check didn't.
 
-Not a clock/SNTP issue — `MBEDTLS_HAVE_TIME_DATE` is off, so cert dates aren't
-checked (and the firmware has no SNTP). `openssl s_client -connect
-github.com:443 -showcerts` shows whichever chain an edge currently serves.
+**The fix (1.2.26): `CONFIG_MBEDTLS_HARDWARE_ECC=n`** (software ECC) in
+`sdkconfig.defaults` — MUST be in defaults, the IDF default is `=y` and a
+fullclean would bring the bug back. `HARDWARE_ECDSA_VERIFY` was already off but
+`HARDWARE_ECC` (the ECP point-mul accel) still routed verify through the buggy
+peripheral. With software ECC the plain `esp_crt_bundle` verifies github.com's
+chain fine, so the cert-pinning / cross-signed scaffolding was all reverted.
+Software ECC is slower but TLS handshakes here are rare (OTA + one tunnel
+connect). TLS 1.3 is also disabled in this build (`MBEDTLS_SSL_PROTO_TLS1_3`
+unset) so everything negotiates TLS 1.2 — not the cause, but worth knowing.
+
+Debugging lesson: trust the *error code*, not the *symptom*. `-0x3000` is
+FATAL not "verify failed"; the esp-tls `flags=` channel read 0 even on real
+failures (needs `KEEP_PEER_CERTIFICATE`, and even then was unreliable). What
+cracked it was the no-verify isolation test + `CONFIG_MBEDTLS_DEBUG=y` level 4
+showing the handshake reach the cert step and the PSA signature error. Not a
+clock/SNTP issue — `MBEDTLS_HAVE_TIME_DATE` is off and there is no SNTP.
 
 ## Asset name is a contract
 
