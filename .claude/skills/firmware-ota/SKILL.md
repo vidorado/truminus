@@ -64,6 +64,21 @@ and lags a few minutes). We hit this with `1.2.4` finishing ~10 s after `1.2.5`.
 A semver-correct alternative would enumerate `/releases` and pick the max
 version, but that needs the rate-limited JSON API this design deliberately avoids.
 
+**Cert gotcha — `github.com` needs cross-signed bundle verification.** The
+version check (`fetch_latest_tag` → `https://github.com/.../releases/latest`)
+started failing **intermittently** with `esp-x509-crt-bundle: Failed to verify
+certificate` / `mbedtls_ssl_handshake returned -0x3000` (CERT_VERIFY_FAILED),
+while release-asset *downloads* (the DigiCert CDN) kept working. Cause:
+github.com is migrating to **Sectigo** and from some edge nodes serves a chain
+ending in `Sectigo Public Server Authentication Root E46` **cross-signed by**
+`USERTrust ECC Certification Authority` — both are FULL-bundle roots, but
+`esp_crt_bundle` can't bridge the cross-signed intermediate to the trusted root
+unless `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y`
+(`sdkconfig.defaults`, since 1.2.25). Intermittent because it depends on which
+CA the edge presents; `openssl s_client -connect github.com:443 -showcerts`
+shows the chain. Not a clock/SNTP issue — `MBEDTLS_HAVE_TIME_DATE` is off, so
+cert dates aren't checked (and the firmware has no SNTP).
+
 ## Asset name is a contract
 
 The release **must** carry an asset named exactly `truminus.bin`; the firmware
