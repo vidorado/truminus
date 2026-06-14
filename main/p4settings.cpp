@@ -1831,8 +1831,14 @@ static void upd_refresh() {
         snprintf(buf, sizeof(buf), "%s", t(TK::OTA_CHECK_FAILED));
     } else if (st.available) {
         snprintf(buf, sizeof(buf), "%s:  %s", t(TK::OTA_LATEST), st.latestVer);
-    } else {
+    } else if (st.checked) {
         snprintf(buf, sizeof(buf), "%s", t(TK::OTA_UP_TO_DATE));
+    } else {
+        // No successful check yet — "up to date" would be a lie. Say so, and
+        // point at the likely reason (no network) when that's why.
+        snprintf(buf, sizeof(buf), "%s",
+                 wifi_manager_get_status().connected ? t(TK::OTA_NOT_CHECKED)
+                                                     : t(TK::STATUS_NO_WIFI));
     }
     lv_label_set_text(s_upd_status_lbl, buf);
 

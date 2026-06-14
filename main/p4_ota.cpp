@@ -369,6 +369,7 @@ static void do_check() {
     if (!got) {
         snprintf(s_status.error, sizeof(s_status.error), "check failed");
     } else {
+        s_status.checked  = true;   // we now have a definitive answer
         s_status.error[0] = '\0';
         bool mm = newer && is_minor_or_major_newer(tag, s_status.currentVer);
         s_status.available = newer;

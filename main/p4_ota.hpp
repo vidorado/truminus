@@ -29,6 +29,8 @@ struct P4OtaStatus {
     char error[64];         // last error message (empty = none)
     uint16_t warmupSecs;    // >0: seconds left in the boot warmup before the
                             // first auto-check can run (a manual check skips it)
+    bool checked;           // a version check has completed at least once — until
+                            // then "up to date" is unknown, not true (e.g. no WiFi)
 };
 
 // Spawn the periodic version-check task and — when the running image is in
