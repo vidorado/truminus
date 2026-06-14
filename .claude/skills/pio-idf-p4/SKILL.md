@@ -184,6 +184,30 @@ idf.py -p truminus.local app-flash
 ModemManager on Linux grabs `/dev/ttyACM0` on first plug. If flash fails with
 "port is busy": `sudo systemctl stop ModemManager`.
 
+**NEVER flash a full-chip merged image to `0x0` on a configured board — it
+ERASES NVS.** `esptool merge-bin -o img.bin 0x2000 … 0x10000 truminus.bin
+0x810000 littlefs.bin` pads every gap with `0xFF`, and **NVS lives at `0x9000`**
+(in the gap between the partition table at `0x8000` and otadata at `0xe000`, see
+`partitions_16MB.csv`). `write_flash 0x0 img.bin` therefore writes `0xFF` over
+NVS and wipes WiFi creds, language, MQTT, BLE MACs/keys, the tunnel
+server/token/password — everything. Symptom after such a flash: the board boots
+in **English** (the i18n in-memory default is `EN`) and with **no WiFi** — that
+is a wiped NVS, not a firmware bug. (Learned the hard way, 2026-06.)
+
+To flash while **preserving** NVS, write by region — never the `0x0` blob:
+
+```bash
+make flash PORT=/dev/ttyACM0          # idf.py flash: bootloader+ptable+otadata+app+littlefs, NOT nvs
+# or explicit (note: no 0x9000 entry):
+python -m esptool --chip esp32p4 -p /dev/ttyACM0 write-flash \
+  0x2000 build/bootloader/bootloader.bin 0x8000 build/partition_table/partition-table.bin \
+  0xe000 build/ota_data_initial.bin 0x10000 build/truminus.bin 0x810000 build/littlefs.bin
+```
+
+The merged-`0x0` image is **only** for a deliberate factory reset or a
+brand-new board. If you must distribute a single-file image, flash it to a
+fresh board, or accept it resets settings.
+
 ---
 
 ## 7. ESP-Hosted BT controller — required init sequence

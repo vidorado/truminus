@@ -127,6 +127,13 @@ void lvglUnlock();
 
 ### NVS namespaces
 
+> ⚠️ **NVS lives at flash offset `0x9000`. Do NOT flash a full-chip merged
+> image to `0x0`** (e.g. `esptool merge-bin … && write-flash 0x0 img.bin`): it
+> pads the `0x8000`→`0xe000` gap with `0xFF` and erases NVS, wiping every
+> setting below (WiFi, language, MQTT, BLE, tunnel…). Flash by region instead
+> (`make flash` / `idf.py flash` never touch `0x9000`). Full details + the
+> recovery-free symptom (boots English + no WiFi) in **pio-idf-p4 SKILL §8**.
+
 | Namespace | Keys | Content |
 |-----------|------|---------|
 | `wifi` | `ssid`, `pass` | WiFi credentials |
