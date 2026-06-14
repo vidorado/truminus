@@ -143,6 +143,7 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Error al comprobar",                                            // OTA_CHECK_FAILED
     "Iniciando\xE2\x80\xA6 (%us)",                                   // OTA_STARTING
     "Sin comprobar",                                                 // OTA_NOT_CHECKED
+    "Validando actualizaci\xC3\xB3n\xE2\x80\xA6",                    // OTA_VERIFYING
     "M\xC3\xA1s tarde",                                              // OTA_LATER
     "Comprobaci\xC3\xB3n autom\xC3\xA1tica",                         // OTA_AUTOCHECK
     "\xC2\xBF" "Actualizar ahora?",                                  // OTA_PROMPT
@@ -290,6 +291,7 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Check failed",                                                  // OTA_CHECK_FAILED
     "Starting\xE2\x80\xA6 (%us)",                                    // OTA_STARTING
     "Not checked yet",                                               // OTA_NOT_CHECKED
+    "Verifying update\xE2\x80\xA6",                                  // OTA_VERIFYING
     "Later",                                                         // OTA_LATER
     "Auto-check",                                                    // OTA_AUTOCHECK
     "Update now?",                                                   // OTA_PROMPT

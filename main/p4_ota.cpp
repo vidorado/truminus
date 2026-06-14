@@ -627,18 +627,29 @@ static void check_task(void*) {
     // wait — that path pauses BLE itself, so the shared-radio reason no longer
     // applies and the user shouldn't sit through the countdown.  Poll in 250 ms
     // slices so the skip is responsive; publish the deadline for the UI.
+    //
+    // BUT NOT during PENDING_VERIFY: a version-check TLS handshake is a big
+    // internal-DRAM spike (same class as the WSS handshake the self-test
+    // defers), and on a fully-provisioned board it can push free DRAM below the
+    // self-test floor and roll the freshly-OTA'd image back.  So while the
+    // image is unverified, ignore the skip and keep waiting until the self-test
+    // marks it valid — exactly when wstunnelApply() is also allowed to run.
     s_warmup_end_ms.store((uint32_t)(esp_timer_get_time() / 1000ULL) + INITIAL_CHECK_DELAY_MS);
     for (uint32_t slept = 0; slept < INITIAL_CHECK_DELAY_MS; slept += 250) {
-        if (s_check_request.load()) break;
+        if (s_check_request.load() && !p4OtaPendingVerify()) break;
         vTaskDelay(pdMS_TO_TICKS(250));
     }
+    while (p4OtaPendingVerify()) vTaskDelay(pdMS_TO_TICKS(500));
     s_warmup_end_ms.store(0);
     for (;;) {
         bool manual = s_check_request.exchange(false);
         WifiStatus ws = wifi_manager_get_status();
         // Auto-checks honour the user's preference; an explicit request
-        // (settings "Check" button / web) always runs.
-        if (ws.connected && !s_installing.load() && (manual || p4OtaAutoCheckEnabled())) {
+        // (settings "Check" button / web) always runs.  Never while the image
+        // is still PENDING_VERIFY (see the warmup note: the TLS spike can trip
+        // the self-test heap floor and roll the new image back).
+        if (ws.connected && !s_installing.load() && !p4OtaPendingVerify() &&
+            (manual || p4OtaAutoCheckEnabled())) {
             do_check();
         }
         // Sleep in 1 s slices so p4OtaCheckNow() can interrupt the wait.

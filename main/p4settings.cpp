@@ -1776,6 +1776,7 @@ static void show_tunnel(lv_obj_t* from) {
 static lv_obj_t*  s_upd_prev       = nullptr;
 static lv_obj_t*  s_upd_status_lbl = nullptr;
 static lv_obj_t*  s_upd_btn_update = nullptr;
+static lv_obj_t*  s_upd_btn_check  = nullptr;
 static lv_timer_t* s_upd_timer     = nullptr;
 
 static void upd_stop_timer() {
@@ -1792,6 +1793,7 @@ static void upd_back_cb(lv_event_t*) {
     lv_obj_delete(cur);
     s_upd_status_lbl = nullptr;
     s_upd_btn_update = nullptr;
+    s_upd_btn_check  = nullptr;
 }
 
 static void upd_check_cb(lv_event_t*)   { p4OtaCheckNow(); }
@@ -1808,6 +1810,7 @@ static void upd_install_cb(lv_event_t*) {
     upd_stop_timer();
     s_upd_status_lbl = nullptr;
     s_upd_btn_update = nullptr;
+    s_upd_btn_check  = nullptr;
     p4OtaInstall();
 }
 
@@ -1818,9 +1821,17 @@ static void upd_refresh() {
     P4OtaStatus st;
     p4OtaGetStatus(st);
 
+    // Post-OTA self-test in progress: a version check now would spike DRAM and
+    // could roll the new image back, so the check task refuses to run during it
+    // (see check_task).  Tell the user why instead of a misleading "up to date"
+    // or a countdown, and block the Check button.
+    bool verifying = p4OtaPendingVerify();
+
     char buf[96];
     if (st.installing) {
         snprintf(buf, sizeof(buf), "%s %d%%", t(TK::OTA_UPDATING), st.progress);
+    } else if (verifying) {
+        snprintf(buf, sizeof(buf), "%s", t(TK::OTA_VERIFYING));
     } else if (st.checking) {
         snprintf(buf, sizeof(buf), "%s", t(TK::OTA_CHECKING));
     } else if (st.warmupSecs) {
@@ -1842,10 +1853,18 @@ static void upd_refresh() {
     }
     lv_label_set_text(s_upd_status_lbl, buf);
 
-    bool can = st.available && !st.installing && !st.checking;
+    bool can = st.available && !st.installing && !st.checking && !verifying;
     if (s_upd_btn_update) {
         if (can) lv_obj_remove_state(s_upd_btn_update, LV_STATE_DISABLED);
         else     lv_obj_add_state(s_upd_btn_update, LV_STATE_DISABLED);
+    }
+    // The Check button is pointless (and refused by check_task) while the
+    // self-test runs or a check/install is already going.
+    if (s_upd_btn_check) {
+        if (verifying || st.checking || st.installing)
+            lv_obj_add_state(s_upd_btn_check, LV_STATE_DISABLED);
+        else
+            lv_obj_remove_state(s_upd_btn_check, LV_STATE_DISABLED);
     }
 }
 
@@ -1896,12 +1915,12 @@ static void show_updates(lv_obj_t* from) {
     const int bx = (SCR_W - total) / 2;
     const int by = TITLE_H + 180;
 
-    lv_obj_t* btn_check = lv_button_create(scr);
-    lv_obj_set_pos(btn_check, bx, by);
-    lv_obj_set_size(btn_check, BTN_W, BTN_H);
-    style_btn(btn_check);
-    lv_obj_add_event_cb(btn_check, upd_check_cb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* cl = make_label(btn_check, t(TK::OTA_CHECK), f->f22, C_TEXT);
+    s_upd_btn_check = lv_button_create(scr);
+    lv_obj_set_pos(s_upd_btn_check, bx, by);
+    lv_obj_set_size(s_upd_btn_check, BTN_W, BTN_H);
+    style_btn(s_upd_btn_check);
+    lv_obj_add_event_cb(s_upd_btn_check, upd_check_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* cl = make_label(s_upd_btn_check, t(TK::OTA_CHECK), f->f22, C_TEXT);
     lv_obj_center(cl);
 
     s_upd_btn_update = lv_button_create(scr);
