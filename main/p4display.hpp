@@ -82,6 +82,11 @@ struct P4DisplayData {
     // BLE status: 0=not configured, 1=configured but no data, 2=has data
     int bleState;
 
+    // OpenAir PLUS A/C configured (NVS "openair"/"addr" non-empty).  When
+    // true the CALEFACCIÓN panel becomes CLIMATIZACIÓN with cool/eco/heat/off
+    // mode buttons and the FAN panel gains the A/C Auto/Man control.
+    bool openairConfigured;
+
     // Peripherals
     P4SolarData solar;
     P4BattData  batt;
@@ -106,6 +111,16 @@ void p4SetFanMode(int mode);
 void p4SetBoilerMode(int mode);
 void p4SetEnergyIdx(int idx);
 void p4SetRoomSetpoint(float celsius);
+
+// OpenAir PLUS A/C remote setters (mirror web button presses onto the LCD).
+// acMode: 0=off, 1=cool, 2=eco.  Selecting cool/eco clears Truma heating;
+// "heat" is driven through p4SetHeating(true) instead.
+void p4SetAcMode(int mode);
+// A/C fan in cool mode: auto=true → Mode AUTO; auto=false → Mode MAN with
+// blower speed 1..6.  Ignored unless the A/C is in cool mode.
+void p4SetAcFan(bool autoMode, int speed);
+// A/C max power selector: 0=1.2 kW, 1=2.0 kW.
+void p4SetAcPower(int idx);
 
 // Topbar cloud icon driver.  Pass a TunnelUiState (cast to uint8_t).  On
 // CONNECTING the colour toggles each call, so the caller's update cadence

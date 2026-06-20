@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="TruMinus" />
 <link rel="manifest" href="/icons/site.webmanifest" />
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=399a47a1">
+<link rel="stylesheet" href="styles.css?v=559604cf">
 </head>
 <body>
 
@@ -54,19 +54,32 @@
 
     <!-- HEATING panel (left/top) -->
     <section class="panel panel-heat">
-      <div class="p-title" data-i18n="heating">CALEFACCIÓN</div>
+      <div id="heatTitle" class="p-title" data-i18n="heating">CALEFACCIÓN</div>
 
-      <!-- Off | On toggle (mirrors the FAN standby row) -->
-      <div class="btn-row">
+      <!-- Off | On toggle (mirrors the FAN standby row) — Truma-only mode -->
+      <div id="heatToggleRow" class="btn-row">
         <button id="hBtnOff" class="btn-heat btn-sel" onclick="setHeating(false)" data-i18n="heat_off">Apag.</button>
         <button id="hBtnOn"  class="btn-heat"         onclick="setHeating(true)"  data-i18n="heat_on">Enc.</button>
       </div>
 
-      <!-- Setpoint row (visible only when heat is on) -->
+      <!-- A/C mode row (shown instead of Off|On when OpenAir is configured):
+           cool | eco | heat(Truma) | off -->
+      <div id="acModeRow" class="btn-row ac-mode-row vis-hidden">
+        <button id="acCool" class="btn-heat btn-ac" onclick="setAcMode('cool')"><i class="fi">&#xF2DC;</i></button>
+        <button id="acEco"  class="btn-heat btn-ac" onclick="setAcMode('eco')"><span class="ac-eco-ico"><i class="fi">&#xF2DC;</i><small class="ac-eco-txt">ECO</small></span></button>
+        <button id="acHeat" class="btn-heat btn-ac" onclick="setAcMode('heat')"><i class="fi">&#xF7E4;</i></button>
+        <button id="acOff"  class="btn-heat btn-ac" onclick="setAcMode('off')" data-i18n="fan_off">Apag.</button>
+      </div>
+
+      <!-- Setpoint row (visible only when heat is on or A/C cool/eco) -->
       <div id="spRow" class="sp-row sp-hidden">
         <button class="btn-step" onclick="changeTemp(-0.5)">&#9660;</button>
         <span id="spVal" class="sp-val">20.0&nbsp;°C</span>
         <button class="btn-step" onclick="changeTemp(0.5)">&#9650;</button>
+        <div id="spPwr" class="sp-pwr">
+          <button id="pwr12" class="btn-pwr" onclick="setPower(1.2)">1.2</button>
+          <button id="pwr20" class="btn-pwr" onclick="setPower(2.0)">2.0</button>
+        </div>
       </div>
     </section>
 
@@ -130,6 +143,19 @@
         <button class="btn-step" onclick="changeFanLvl(-1)">&#9660;</button>
         <span id="fanLvlVal" class="sp-val">5</span>
         <button class="btn-step" onclick="changeFanLvl(1)">&#9650;</button>
+      </div>
+
+      <!-- A/C cool/eco: Auto | Man toggle (Man → blower speed 1-6) -->
+      <div id="acFanRow" class="btn-row vis-hidden">
+        <button id="acFanAuto" class="btn-fan" onclick="setAcFanAuto(true)"  data-i18n="ac_auto">Auto</button>
+        <button id="acFanMan"  class="btn-fan" onclick="setAcFanAuto(false)" data-i18n="ac_man">Man</button>
+      </div>
+
+      <!-- A/C blower speed 1-6 (visible in cool + Man) -->
+      <div id="acFanLvlRow" class="sp-row vis-hidden">
+        <button class="btn-step" onclick="changeAcFanLvl(-1)">&#9660;</button>
+        <span id="acFanLvlVal" class="sp-val">3</span>
+        <button class="btn-step" onclick="changeAcFanLvl(1)">&#9650;</button>
       </div>
     </section>
 
@@ -267,7 +293,7 @@
 
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=ddd3f31a"></script>
-<script src="i18n.js?v=003cb058"></script>
-<script src="script.js?v=ff6d5fa9"></script>
+<script src="i18n.js?v=c623f04c"></script>
+<script src="script.js?v=b8e9e84d"></script>
 </body>
 </html>

@@ -12,4 +12,12 @@ struct P4ControlState {
     int   boilerMode;    // 0=off, 1=40°C, 2=60°C, 3=boost(60°C)
     int   energyIdx;
     float roomSetpoint;
+
+    // ── OpenAir PLUS A/C (cooling) — only meaningful when the A/C is
+    //    configured; the CLIMATIZACIÓN panel replaces CALEFACCIÓN then.
+    //    Heat is still the Truma (heatingOn above); these drive cooling only.
+    int   acMode;        // 0=off, 1=cool, 2=eco  (heat = heatingOn)
+    bool  acFanAuto;     // cool mode: true=Auto (Mode AUTO), false=Man (Mode MAN)
+    int   acFanSpeed;    // cool+Man blower speed, 1..6
+    int   acPower;       // max power: 0=1.2 kW, 1=2.0 kW
 };

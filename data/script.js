@@ -17,6 +17,12 @@ var s_heat        = false;
 var s_boiler      = 'off';
 var s_fan         = 'off';
 var s_fanLevel    = 5;
+// OpenAir PLUS A/C (cooling). Heat is still the Truma (s_heat).
+var s_openair     = false;       // CLIMATIZACIÓN panel active when true
+var s_acMode      = 'off';       // 'off' | 'cool' | 'eco'
+var s_acFanAuto   = true;        // cool mode: Auto (Mode AUTO) vs Man (Mode MAN)
+var s_acFanSpeed  = 3;           // cool+Man blower speed 1..6
+var s_acPower     = 1.2;         // A/C max power kW: 1.2 or 2.0
 var s_waterDemand = false;
 var s_waterTemp   = null;
 var s_errClass    = 0;
@@ -118,13 +124,18 @@ var STALE_AFTER_MS  = 60000;
 var VEIL_TIMEOUT_MS = 24000;
 var s_hiddenAt      = 0;
 var s_veilTimer     = null;
-function showReloadVeil() {
-    var v  = document.getElementById('reload-veil');
-    var sp = document.getElementById('reload-spinner-box');
-    var er = document.getElementById('reload-error');
+function showReloadVeil(labelKey) {
+    var v   = document.getElementById('reload-veil');
+    var sp  = document.getElementById('reload-spinner-box');
+    var er  = document.getElementById('reload-error');
+    var lbl = document.querySelector('.reload-label');
     if (v)  v.hidden  = false;
-    if (sp) sp.hidden = false;   // spinning / reconnecting state
+    if (sp) sp.hidden = false;
     if (er) er.hidden = true;
+    if (lbl && labelKey) {
+        lbl.setAttribute('data-i18n', labelKey);
+        lbl.textContent = t(labelKey);
+    }
     if (s_veilTimer) clearTimeout(s_veilTimer);
     s_veilTimer = setTimeout(reloadVeilTimedOut, VEIL_TIMEOUT_MS);
 }
@@ -138,7 +149,7 @@ function reloadVeilTimedOut() {
     if (er) er.hidden = false;
 }
 function retryReload() {
-    showReloadVeil();
+    showReloadVeil('veil_reconnecting');
     ws.refresh();   // drop the (possibly half-dead) socket and reconnect
 }
 function hideReloadVeil() {
@@ -159,7 +170,7 @@ document.addEventListener('visibilitychange', function () {
     // through the WSS tunnel — writes vanish into a dead pipe and no snapshot
     // ever comes back).  Don't trust readyState; force a fresh reconnect and
     // let onopen re-send 'settings'.  The snapshot then hides the veil.
-    showReloadVeil();
+    showReloadVeil('veil_reconnecting');
     ws.refresh();
 });
 // Escape closes the About overlay.
@@ -195,6 +206,7 @@ ws.onmessage = function (event) {
         if (d.ip   !== undefined)         applyStatus('ip',   d.ip);
         if (d.outdoor_temp !== undefined) applyStatus('outdoor_temp', d.outdoor_temp);
         if (d.energy_idx !== undefined)   applySetting('energy_idx', d.energy_idx);
+        if (d.openair !== undefined) { s_openair = !!d.openair; refreshHeat(); }
         if (d.lang !== undefined)         applySetting('lang', d.lang);
         hideReloadVeil();   // fresh state is in — drop the re-focus veil
         return;
@@ -521,6 +533,22 @@ function applySetting(id, value) {
         var n = parseInt(value);
         if (!isNaN(n) && n > 0) s_fanLevel = n;
         refreshFan();
+    } else if (id === 'ac_mode') {
+        var m = parseInt(value) || 0;
+        s_acMode = (m === 1) ? 'cool' : (m === 2) ? 'eco' : 'off';
+        refreshHeat();
+    } else if (id === 'ac_fan_auto') {
+        s_acFanAuto = (value === '1' || value === 'true');
+        refreshFan();
+    } else if (id === 'ac_fan_speed') {
+        var sp = parseInt(value);
+        if (!isNaN(sp)) s_acFanSpeed = sp;
+        refreshFan();
+    } else if (id === 'ac_power') {
+        var pi = parseInt(value);
+        s_acPower = (pi === 1) ? 2.0 : 1.2;
+        cls('pwr12', 'btn-sel', s_acPower === 1.2);
+        cls('pwr20', 'btn-sel', s_acPower === 2.0);
     } else if (id === 'lang') {
         applyLanguage(value);
     }
@@ -593,22 +621,67 @@ function refreshSetpoint() {
     document.getElementById('spVal').textContent = s_temp.toFixed(1) + ' °C';
 }
 
+// Title + mode-row swap for the CALEFACCIÓN ↔ CLIMATIZACIÓN panel.
+function refreshClimate() {
+    var title = document.getElementById('heatTitle');
+    if (title) {
+        var key = s_openair ? 'climate' : 'heating';
+        title.setAttribute('data-i18n', key);
+        title.textContent = t(key);
+    }
+    cls('heatToggleRow', 'vis-hidden',  s_openair);
+    cls('acModeRow',     'vis-hidden', !s_openair);
+    if (s_openair) {
+        cls('acCool', 'btn-sel', !s_heat && s_acMode === 'cool');
+        cls('acEco',  'btn-sel', !s_heat && s_acMode === 'eco');
+        cls('acHeat', 'btn-sel',  s_heat);
+        cls('acOff',  'btn-sel', !s_heat && s_acMode === 'off');
+    }
+}
+
 function refreshHeat() {
-    cls('hBtnOn',  'btn-sel',  s_heat);
-    cls('hBtnOff', 'btn-sel', !s_heat);
-    cls('spRow',      'sp-hidden', !s_heat);
-    cls('fanHeatRow', 'vis-hidden', !s_heat);
-    cls('fanSbyRow',  'vis-hidden',  s_heat);
-    if (s_heat) cls('fanLvlRow', 'vis-hidden', true);
+    refreshClimate();
+    var spOn = s_openair ? (s_heat || s_acMode !== 'off') : s_heat;
+    cls('spRow', 'sp-hidden', !spOn);
+    // Power buttons only in cool / eco modes (not heat, not off).
+    cls('spPwr', 'pwr-hidden', !(s_openair && !s_heat && (s_acMode === 'cool' || s_acMode === 'eco')));
+    if (!s_openair) {
+        cls('hBtnOn',  'btn-sel',  s_heat);
+        cls('hBtnOff', 'btn-sel', !s_heat);
+    }
     refreshFan();
     refreshIndicators();
 }
 
 function refreshFan() {
+    // A/C fan context: A/C configured, in cool or eco mode.
+    // When acMode is 'off' fall through to Truma standby fan controls (Off/On + 1-10).
+    var acCtx = s_openair && !s_heat && s_acMode !== 'off';
+
+    cls('fanHeatRow', 'vis-hidden', acCtx || !s_heat);
+    cls('fanSbyRow',  'vis-hidden', acCtx ||  s_heat);
+    cls('acFanRow',   'vis-hidden', !acCtx);
+    // fanLvlRow: visible spacer (bottom slot) in normal mode; gone in A/C so
+    // acFanRow can sit at the top. ac-ctx declared after vis-hidden → wins tie.
+    cls('fanLvlRow', 'vis-hidden', true);
+    cls('fanLvlRow', 'ac-ctx', acCtx);
+    // acFanLvlRow: bottom-half spacer in A/C context so Auto/Man stay at top.
+    cls('acFanLvlRow', 'ac-spacer', acCtx);
+    cls('acFanLvlRow', 'vis-hidden', !acCtx);
+
+    if (acCtx) {
+        var cool    = s_acMode === 'cool';
+        var autoSel = cool ? s_acFanAuto : true;   // eco/off lock to Auto
+        cls('acFanAuto', 'btn-sel',  autoSel);
+        cls('acFanMan',  'btn-sel', !autoSel);
+        var ar = document.getElementById('acFanRow');
+        if (ar) ar.classList.toggle('row-disabled', !cool);
+        return;
+    }
     if (s_heat) {
         cls('fhEco',  'btn-sel', s_fan === 'eco');
         cls('fhHigh', 'btn-sel', s_fan === 'high');
-        cls('fhOff',  'btn-sel', s_fan === 'off');
+        cls('fanLvlRow', 'vis-hidden', true);
     } else {
         var fanOn = (s_fan !== 'off' && s_fan !== '0' && s_fan !== '');
         cls('fsBtnOn',  'btn-sel',  fanOn);
@@ -738,6 +811,43 @@ function setBoiler(value) {
     s_boiler = value;
     sendDebounced('/boiler', value);
     refreshBoiler();
+}
+
+// ── OpenAir A/C actions ───────────────────────────────────────────────────
+function setAcMode(mode) {
+    if (mode === 'heat') {
+        s_heat = true;  s_acMode = 'off';
+        sendDebounced('/heating', '1');
+        sendDebounced('/ac_mode', '0');
+    } else {
+        s_heat = false; s_acMode = mode;            // 'cool' | 'eco' | 'off'
+        sendDebounced('/heating', '0');
+        sendDebounced('/ac_mode', mode === 'cool' ? '1' : mode === 'eco' ? '2' : '0');
+    }
+    refreshHeat();
+}
+
+function setAcFanAuto(auto) {
+    s_acFanAuto = auto;
+    sendDebounced('/ac_fan_auto', auto ? '1' : '0');
+    refreshFan();
+}
+
+function changeAcFanLvl(delta) {
+    s_acFanSpeed = Math.min(6, Math.max(1, s_acFanSpeed + delta));
+    document.getElementById('acFanLvlVal').textContent = s_acFanSpeed;
+    sendDebounced('/ac_fan_speed', String(s_acFanSpeed));
+}
+
+function setPower(kw) {
+    s_acPower = kw;
+    cls('pwr12', 'btn-sel', kw === 1.2);
+    cls('pwr20', 'btn-sel', kw === 2.0);
+    sendDebounced('/ac_power', kw === 2.0 ? '1' : '0');
+}
+function refreshPower() {
+    cls('pwr12', 'btn-sel', s_acPower === 1.2);
+    cls('pwr20', 'btn-sel', s_acPower === 2.0);
 }
 
 // ── Truma error display ───────────────────────────────────────────────────
@@ -999,3 +1109,8 @@ function applyBatt(d) {
 refreshSetpoint();
 refreshHeat();
 refreshBoiler();
+refreshPower();
+// Show a "Connecting…" veil on first page load so the user doesn't read
+// stale placeholder values.  hideReloadVeil() is called when the snapshot
+// arrives (or reloadVeilTimedOut() fires after 24 s if the WS never connects).
+showReloadVeil('veil_connecting');

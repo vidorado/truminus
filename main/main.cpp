@@ -61,6 +61,27 @@ static const char* multiPowerJson(int32_t w, char* buf, size_t n) {
 // multiPowerChanged() and the BLE/LIN change-detection predicates live in the
 // host-tested ws_diff module; multiPowerJson() (formatting) stays here.
 
+// Cached "OpenAir PLUS A/C configured" flag (NVS namespace "openair", key
+// "addr").  Drives the CALEFACCIÓN→CLIMATIZACIÓN panel switch on both UIs.
+//
+// IMPORTANT: do NOT read NVS on every main-loop tick.  An NVS/flash read takes
+// the flash lock and briefly disables the cache; the MIPI-DSI ISR is not
+// cache-safe (CONFIG_LCD_DSI_ISR_CACHE_SAFE off), so a periodic read starves it
+// and the panel shows a full-frame underrun glitch.  Read once at boot and only
+// re-read when the A/C config is saved (openairCfgReload(), called from the
+// settings screen) so the panel switches without a reboot.
+static bool s_openairConfigured = false;
+
+void openairCfgReload() {
+    nvs_handle_t h;
+    if (nvs_open("openair", NVS_READONLY, &h) != ESP_OK) { s_openairConfigured = false; return; }
+    char buf[24] = {};
+    size_t len = sizeof(buf);
+    esp_err_t err = nvs_get_str(h, "addr", buf, &len);
+    nvs_close(h);
+    s_openairConfigured = (err == ESP_OK && buf[0] != '\0');
+}
+
 // ── WebSocket command dispatcher ─────────────────────────────────────────
 //
 // Routes {id,value} frames sent by the browser to the matching p4display
@@ -79,6 +100,19 @@ static void onWsCommand(const char* id, const char* value) {
         case WsCmdKind::Boiler:     if (cmd.valid) p4SetBoilerMode(cmd.intVal); break;
         case WsCmdKind::Temp:       p4SetRoomSetpoint(cmd.floatVal); break;
         case WsCmdKind::EnergyIdx:  p4SetEnergyIdx(cmd.intVal); break;
+        case WsCmdKind::AcMode:     if (cmd.valid) p4SetAcMode(cmd.intVal); break;
+        case WsCmdKind::AcFanAuto: {
+            P4ControlState cs; p4GetControlState(cs);
+            p4SetAcFan(cmd.boolVal, cs.acFanSpeed);
+            break;
+        }
+        case WsCmdKind::AcFanSpeed: {
+            if (!cmd.valid) break;
+            P4ControlState cs; p4GetControlState(cs);
+            p4SetAcFan(cs.acFanAuto, cmd.intVal);
+            break;
+        }
+        case WsCmdKind::AcPower:    if (cmd.valid) p4SetAcPower(cmd.intVal); break;
         case WsCmdKind::OtaCheck:   p4OtaCheckNow(); break;
         case WsCmdKind::OtaInstall: p4OtaInstall(); break;
         case WsCmdKind::OtaCancel:  p4OtaCancel(); break;
@@ -113,27 +147,37 @@ static void onWsConnected() {
     const char* ssid = (ws.connected && ws.ssid[0]) ? ws.ssid : "";
     const char* ip   = (ws.connected && ws.ip[0])   ? ws.ip   : "";
 
-    char buf[352];
+    char buf[448];
     snprintf(buf, sizeof(buf),
              "{\"command\":\"snapshot\","
              "\"settings\":{"
                  "\"/heating\":\"%d\","
                  "\"/fan\":\"%s\","
                  "\"/boiler\":\"%s\","
-                 "\"/temp\":\"%.1f\""
+                 "\"/temp\":\"%.1f\","
+                 "\"/ac_mode\":\"%d\","
+                 "\"/ac_fan_auto\":\"%d\","
+                 "\"/ac_fan_speed\":\"%d\","
+                 "\"/ac_power\":\"%d\""
              "},"
              "\"status\":{},"
              "\"ssid\":\"%s\","
              "\"ip\":\"%s\","
-             "\"energy_idx\":%d"
+             "\"energy_idx\":%d,"
+             "\"openair\":%d"
              "}",
              cs.heatingOn ? 1 : 0,
              fanIntToStr(cs.fanMode),
              boilerIntToStr(cs.boilerMode),
              cs.roomSetpoint,
+             cs.acMode,
+             cs.acFanAuto ? 1 : 0,
+             cs.acFanSpeed,
+             cs.acPower,
              ssid,
              ip,
-             cs.energyIdx);
+             cs.energyIdx,
+             s_openairConfigured ? 1 : 0);
     wsQueueSend(buf);
 
     // Push current BLE data so newly-connected browsers don't have to wait
@@ -271,6 +315,21 @@ static void broadcastControlChanges(const P4ControlState& cs) {
     if (!inited || cs.roomSetpoint != prev.roomSetpoint) {
         char v[8]; snprintf(v, sizeof(v), "%.1f", cs.roomSetpoint);
         emit("temp", v);
+    }
+    if (!inited || cs.acMode != prev.acMode) {
+        char v[8]; snprintf(v, sizeof(v), "%d", cs.acMode);
+        emit("ac_mode", v);
+    }
+    if (!inited || cs.acFanAuto != prev.acFanAuto) {
+        emit("ac_fan_auto", cs.acFanAuto ? "1" : "0");
+    }
+    if (!inited || cs.acFanSpeed != prev.acFanSpeed) {
+        char v[8]; snprintf(v, sizeof(v), "%d", cs.acFanSpeed);
+        emit("ac_fan_speed", v);
+    }
+    if (!inited || cs.acPower != prev.acPower) {
+        char v[4]; snprintf(v, sizeof(v), "%d", cs.acPower);
+        emit("ac_power", v);
     }
     prev   = cs;
     inited = true;
@@ -655,6 +714,9 @@ extern "C" void app_main(void)
     // Pick up persisted UI language before the display builds any labels.
     loadLanguage();
 
+    // Cache the OpenAir A/C configured flag once (re-read only on save).
+    openairCfgReload();
+
     ESP_LOGI(TAG, "TruMinus P4 — starting (heap=%lu)",
              (unsigned long)esp_get_free_heap_size());
 
@@ -790,6 +852,8 @@ extern "C" void app_main(void)
                    : (victronIsConfigured() || ultimatronIsConfigured()
                       || tankIsConfigured() || multiplusIsConfigured()) ? 1
                    : 0;
+
+        d.openairConfigured = s_openairConfigured;
 
         // Dummy overrides (in dummy_flags.h)
 #ifdef ENABLE_BOILER_DUMMY

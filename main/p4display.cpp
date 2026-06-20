@@ -36,6 +36,7 @@ static lv_font_t* s_font_splash  = nullptr;  // bold 52 — splash title only
 static lv_font_t* s_font_icons14 = nullptr;  // FontAwesome 4.x @ 14 (port headers)
 static lv_font_t* s_font_icons22 = nullptr;  // FontAwesome 4.x @ 22
 static lv_font_t* s_font_icons24 = nullptr;  // FontAwesome 4.x @ 24
+static lv_font_t* s_font_icons28 = nullptr;  // FontAwesome 4.x @ 28 (A/C eco button)
 static lv_font_t* s_font_icons36 = nullptr;  // FontAwesome 4.x @ 36 (settings menu)
 
 static P4Fonts s_fonts;
@@ -62,6 +63,9 @@ const P4Fonts* p4GetFonts() { return &s_fonts; }
 #define FA_PLUG_BOLT  "\xEE\x95\x9F"   // U+E55F (plug-circle-bolt)
 #define FA_ARROW_L    "\xEF\x85\xB7"   // U+F177 (arrow-left-long)
 #define FA_ARROW_R    "\xEF\x85\xB8"   // U+F178 (arrow-right-long)
+#define FA_SNOWFLAKE  "\xEF\x8B\x9C"   // U+F2DC (snowflake — A/C cool)
+#define FA_SUN        "\xEF\x86\x85"   // U+F185 (sun — Truma heat in climate panel)
+#define FA_SNOWLEAF   "\xEE\xA4\x80"   // U+E900 (custom snowflake+leaf — A/C eco)
 
 // ── Layout (800×480 landscape) ────────────────────────────────────────────────
 static constexpr int W         = 800;
@@ -80,9 +84,9 @@ static constexpr int ROW2_H  = CONTENT_H - ROW1_H;       // 176
 // back to 256 (giving the setpoint reading more breathing room) at the
 // expense of AGUA CALIENTE (350 → 330); the latter's button matrix is
 // narrowed by the same 20 px so the boiler drawing stays full-size.
-static constexpr int HEAT_W  = 256;
-static constexpr int WATER_X = 256;
-static constexpr int WATER_W = 320;
+static constexpr int HEAT_W  = 276;
+static constexpr int WATER_X = 276;
+static constexpr int WATER_W = 300;
 
 // Row 2: VENTILADOR | SOLAR | INVERSOR
 static constexpr int FAN_W   = 203;
@@ -148,10 +152,17 @@ static struct {
     int   fanMode      = 0;
     int   boilerMode   = 0;
     int   energyIdx    = 0;
+    // OpenAir PLUS A/C (cooling). Heat is still the Truma (heatingOn).
+    bool  openairConfigured = false;
+    int   acMode       = 0;       // 0=off, 1=cool, 2=eco
+    bool  acFanAuto    = true;    // cool mode: Auto (Mode AUTO) vs Man (Mode MAN)
+    int   acFanSpeed   = 3;       // cool+Man blower speed, 1..6
+    int   acPower      = 0;       // max power: 0=1.2 kW, 1=2.0 kW
 } st;
 
 // ── Widget handles ────────────────────────────────────────────────────────────
 static struct {
+
     // Top bar
     lv_obj_t* lbl_room_temp;
     lv_obj_t* lbl_outdoor;
@@ -164,12 +175,22 @@ static struct {
     lv_obj_t* icon_flame;  // heating status indicator
     lv_obj_t* btn_conf;
 
-    // CALEFACCIÓN panel
+    // CALEFACCIÓN / CLIMATIZACIÓN panel
+    lv_obj_t* lbl_heat_title;   // "CALEFACCIÓN" or "CLIMATIZACIÓN"
     lv_obj_t* lbl_room_sp;
     lv_obj_t* btn_sp_dn;
     lv_obj_t* btn_sp_up;
-    lv_obj_t* btnmx_heat;
+    lv_obj_t* btnmx_heat;       // Off | On (Truma-only mode)
+    lv_obj_t* row_ac;           // A/C mode row container (flex)
+    lv_obj_t* btn_ac[4];        // [cool][eco][heat][off] individual buttons
     lv_obj_t* row_sp;
+    lv_obj_t* btn_pwr[2];  // [0]=1.2 kW, [1]=2.0 kW — inside row_sp
+
+    // A/C fan sub-controls (cool/eco modes)
+    lv_obj_t* btnmx_ac_fan;     // Auto | Man
+    lv_obj_t* btn_acfan_dn;
+    lv_obj_t* btn_acfan_up;
+    lv_obj_t* lbl_acfan_lvl;
 
     // VENTILADOR panel
     lv_obj_t* btnmx_fan_heat;
@@ -225,6 +246,7 @@ static struct {
     // Status bar
     lv_obj_t* lbl_conn;
     lv_obj_t* lbl_status;
+
 } ui;
 
 // ── Forward declarations ──────────────────────────────────────────────────────
@@ -237,6 +259,11 @@ static void on_fan_off_changed(lv_event_t* e);
 static void on_fan_dn(lv_event_t* e);
 static void on_fan_up(lv_event_t* e);
 static void on_boiler_changed(lv_event_t* e);
+static void on_ac_btn_clicked(lv_event_t* e);
+static void on_pwr_clicked(lv_event_t* e);
+static void on_ac_fan_changed(lv_event_t* e);
+static void on_acfan_dn(lv_event_t* e);
+static void on_acfan_up(lv_event_t* e);
 static void on_conf_clicked(lv_event_t* e);
 
 // ── Font loader ───────────────────────────────────────────────────────────────
@@ -257,6 +284,7 @@ static void load_fonts()
     s_font_icons14 = lv_tiny_ttf_create_data(font_icons_ttf_start, ico_sz, 14);
     s_font_icons22 = lv_tiny_ttf_create_data(font_icons_ttf_start, ico_sz, 22);
     s_font_icons24 = lv_tiny_ttf_create_data(font_icons_ttf_start, ico_sz, 24);
+    s_font_icons28 = lv_tiny_ttf_create_data(font_icons_ttf_start, ico_sz, 28);
     s_font_icons36 = lv_tiny_ttf_create_data(font_icons_ttf_start, ico_sz, 36);
 
     // Set the icon font as fallback so labels can mix Latin text + FA glyphs
@@ -429,12 +457,17 @@ static void build_splash(lv_obj_t* scr)
 static lv_obj_t* s_main_scr  = nullptr;
 static bool      s_mainBuilt = false;
 
+// Cached LIN status from the last p4DisplayUpdate() call; used by
+// refresh_flame_icon() so the topbar updates immediately on LCD taps.
+static bool s_linOk = false;
+
 // Btnmatrix maps filled from i18n strings each time build_main_screen() runs.
 // Stored as module-level arrays so LVGL's pointer reference stays valid.
 static const char* s_heat_map[3]     = {};
 static const char* s_fan_heat_map[3] = {};
 static const char* s_fan_off_map[3]  = {};
 static const char* s_boiler_map[6]   = {};
+static const char* s_ac_fan_map[3]   = {};   // [Auto][Man]
 
 static void build_main_screen()
 {
@@ -454,6 +487,9 @@ static void build_main_screen()
     s_boiler_map[3]   = "60\xC2\xB0" "C";
     s_boiler_map[4]   = "60\xC2\xB0" "C " FA_BOLT;
     s_boiler_map[5]   = "";
+    s_ac_fan_map[0]   = t(TK::FAN_AUTO);
+    s_ac_fan_map[1]   = t(TK::FAN_MAN);
+    s_ac_fan_map[2]   = "";
 
     lv_obj_t* scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, C_BG, 0);
@@ -563,7 +599,9 @@ static void build_main_screen()
     // ── CALEFACCIÓN panel (col1 row1) ─────────────────────────────────────────
     lv_obj_t* p_heat = make_section(scr, 0, CONTENT_Y, HEAT_W, ROW1_H);
 
-    make_label(p_heat, t(TK::HEATING), s_font_title, C_DIM, 12, 8);
+    // Title: "CALEFACCIÓN" normally, swapped to "CLIMATIZACIÓN" by
+    // refresh_controls() when the OpenAir A/C is configured.
+    ui.lbl_heat_title = make_label(p_heat, t(TK::HEATING), s_font_title, C_DIM, 12, 8);
 
     // Off | On toggle as a 2-button matrix, mirroring the FAN standby row.
     ui.btnmx_heat = lv_buttonmatrix_create(p_heat);
@@ -576,6 +614,43 @@ static void build_main_screen()
     style_btnmatrix(ui.btnmx_heat, s_font_20);   // match the FAN buttons
     lv_obj_add_event_cb(ui.btnmx_heat, on_heat_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
+    // A/C mode row — four individual buttons so each can have its own font.
+    // [❄️ cool][❄️ECO][☀️ heat][Apag.]  Hidden by default; replaces btnmx_heat
+    // when the OpenAir A/C is configured.
+    {
+        static const char* s_ac_icons[3] = { FA_SNOWFLAKE, FA_SNOWLEAF, FA_FIRE };
+        ui.row_ac = lv_obj_create(p_heat);
+        lv_obj_remove_style_all(ui.row_ac);
+        lv_obj_set_pos(ui.row_ac, 12, 52);
+        lv_obj_set_size(ui.row_ac, HEAT_W - 24, 56);
+        lv_obj_set_style_bg_opa(ui.row_ac, LV_OPA_TRANSP, 0);
+        lv_obj_clear_flag(ui.row_ac, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_layout(ui.row_ac, LV_LAYOUT_FLEX);
+        lv_obj_set_flex_flow(ui.row_ac, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_pad_gap(ui.row_ac, 6, 0);
+        lv_obj_set_style_pad_all(ui.row_ac, 0, 0);
+        for (int i = 0; i < 4; ++i) {
+            ui.btn_ac[i] = lv_button_create(ui.row_ac);
+            lv_obj_set_flex_grow(ui.btn_ac[i], 1);
+            lv_obj_set_height(ui.btn_ac[i], LV_PCT(100));
+            style_button(ui.btn_ac[i]);
+            lv_obj_t* lbl = lv_label_create(ui.btn_ac[i]);
+            if (i < 3) {
+                lv_label_set_text(lbl, s_ac_icons[i]);
+                lv_obj_set_style_text_font(lbl, s_font_icons28, 0);
+            } else {
+                lv_label_set_text(lbl, t(TK::OFF));
+                lv_obj_set_style_text_font(lbl, s_font_20, 0);
+                lv_obj_set_style_text_letter_space(lbl, -1, 0);
+            }
+            lv_obj_set_style_text_color(lbl, C_TEXT, 0);
+            lv_obj_center(lbl);
+            lv_obj_add_event_cb(ui.btn_ac[i], on_ac_btn_clicked, LV_EVENT_CLICKED, NULL);
+        }
+        lv_obj_add_state(ui.btn_ac[3], LV_STATE_CHECKED);  // start with "off" selected
+        lv_obj_add_flag(ui.row_ac, LV_OBJ_FLAG_HIDDEN);
+    }
+
     ui.row_sp = lv_obj_create(p_heat);
     lv_obj_remove_style_all(ui.row_sp);
     lv_obj_set_pos(ui.row_sp, 12, 115);
@@ -583,8 +658,18 @@ static void build_main_screen()
     lv_obj_set_style_bg_opa(ui.row_sp, LV_OPA_TRANSP, 0);
     lv_obj_clear_flag(ui.row_sp, LV_OBJ_FLAG_SCROLLABLE);
 
+    // Layout: [▼ 46px] [temp label — centered in its slot] [▲ 46px] [4px] [1.2/2.0 col 48px]
+    static constexpr int SP_BTN_W  = 46;   // ▼/▲ button width
+    static constexpr int PWR_W     = 48;   // power button column width
+    static constexpr int PWR_H     = 26;   // each power button height
+    static constexpr int ROW_W     = HEAT_W - 24;                    // 252
+    static constexpr int PWR_X     = ROW_W - PWR_W;                  // 204
+    static constexpr int SP_UP_X   = PWR_X - 8 - SP_BTN_W;          // 150
+    // Temperature label centred in [SP_BTN_W .. SP_UP_X], i.e. [46..150] = 104 px slot
+    static constexpr int LBL_CTR_X = SP_BTN_W + (SP_UP_X - SP_BTN_W) / 2; // 98
+
     ui.btn_sp_dn = lv_button_create(ui.row_sp);
-    lv_obj_set_size(ui.btn_sp_dn, 58, 60);
+    lv_obj_set_size(ui.btn_sp_dn, SP_BTN_W, 60);
     lv_obj_set_pos(ui.btn_sp_dn, 0, 0);
     style_button(ui.btn_sp_dn);
     lv_obj_t* l_dn = lv_label_create(ui.btn_sp_dn);
@@ -595,13 +680,32 @@ static void build_main_screen()
 
     ui.lbl_room_sp = lv_label_create(ui.row_sp);
     lv_label_set_text(ui.lbl_room_sp, "20°C");
-    lv_obj_set_style_text_font(ui.lbl_room_sp, s_font_28, 0);
+    lv_obj_set_style_text_font(ui.lbl_room_sp, s_font_24, 0);
     lv_obj_set_style_text_color(ui.lbl_room_sp, C_TEXT, 0);
-    lv_obj_align(ui.lbl_room_sp, LV_ALIGN_CENTER, 0, 0);
+    // Centre the label within its slot, offset from the full-row centre.
+    lv_obj_align(ui.lbl_room_sp, LV_ALIGN_CENTER,
+                 LBL_CTR_X - ROW_W / 2, 0);  // = 100 - 126 = -26 px
+
+    // Power buttons (1.2 kW / 2.0 kW): column to the right of the temp label.
+    static const char* pwr_labels[2] = { "1.2", "2.0" };
+    for (int i = 0; i < 2; ++i) {
+        ui.btn_pwr[i] = lv_button_create(ui.row_sp);
+        lv_obj_set_size(ui.btn_pwr[i], PWR_W, PWR_H);
+        lv_obj_set_pos(ui.btn_pwr[i], PWR_X, i == 0 ? 2 : 60 - PWR_H - 2);
+        style_button(ui.btn_pwr[i]);
+        lv_obj_t* lbl = lv_label_create(ui.btn_pwr[i]);
+        lv_label_set_text(lbl, pwr_labels[i]);
+        lv_obj_set_style_text_font(lbl, s_font_18, 0);
+        lv_obj_set_style_text_color(lbl, C_TEXT, 0);
+        lv_obj_center(lbl);
+        lv_obj_add_event_cb(ui.btn_pwr[i], on_pwr_clicked, LV_EVENT_CLICKED,
+                            reinterpret_cast<void*>(i));
+    }
+    lv_obj_add_state(ui.btn_pwr[0], LV_STATE_CHECKED);  // 1.2 kW default
 
     ui.btn_sp_up = lv_button_create(ui.row_sp);
-    lv_obj_set_size(ui.btn_sp_up, 58, 60);
-    lv_obj_set_pos(ui.btn_sp_up, HEAT_W - 24 - 58, 0);
+    lv_obj_set_size(ui.btn_sp_up, SP_BTN_W, 60);
+    lv_obj_set_pos(ui.btn_sp_up, SP_UP_X, 0);
     style_button(ui.btn_sp_up);
     lv_obj_t* l_up = lv_label_create(ui.btn_sp_up);
     lv_label_set_text(l_up, FA_CARET_D);
@@ -668,6 +772,48 @@ static void build_main_screen()
     lv_obj_add_flag(ui.btn_fan_up,  LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(ui.lbl_fan_lvl, LV_OBJ_FLAG_HIDDEN);
 
+    // A/C fan controls (cool / eco modes).  Auto | Man toggle; in Man a 1–6
+    // blower-speed selector appears.  In eco/auto the toggle is locked to Auto
+    // and disabled.  All hidden until refresh_controls() reveals them.
+    ui.btnmx_ac_fan = lv_buttonmatrix_create(p_fan);
+    lv_obj_set_pos(ui.btnmx_ac_fan, 12, 54);
+    lv_obj_set_size(ui.btnmx_ac_fan, FAN_W - 24, 48);
+    lv_buttonmatrix_set_map(ui.btnmx_ac_fan, s_ac_fan_map);
+    lv_buttonmatrix_set_button_ctrl_all(ui.btnmx_ac_fan, LV_BUTTONMATRIX_CTRL_CHECKABLE);
+    lv_buttonmatrix_set_one_checked(ui.btnmx_ac_fan, true);
+    lv_buttonmatrix_set_selected_button(ui.btnmx_ac_fan, 0);
+    style_btnmatrix(ui.btnmx_ac_fan, s_font_20);
+    lv_obj_add_event_cb(ui.btnmx_ac_fan, on_ac_fan_changed, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_flag(ui.btnmx_ac_fan, LV_OBJ_FLAG_HIDDEN);
+
+    ui.btn_acfan_dn = lv_button_create(p_fan);
+    lv_obj_set_size(ui.btn_acfan_dn, 53, 50);
+    lv_obj_set_pos(ui.btn_acfan_dn, 12, 109);
+    style_button(ui.btn_acfan_dn);
+    lv_obj_t* l_acdn = lv_label_create(ui.btn_acfan_dn);
+    lv_label_set_text(l_acdn, FA_CARET_U);
+    lv_obj_set_style_text_font(l_acdn, s_font_icons24, 0);
+    lv_obj_center(l_acdn);
+    lv_obj_add_event_cb(ui.btn_acfan_dn, on_acfan_dn, LV_EVENT_CLICKED, NULL);
+
+    ui.lbl_acfan_lvl = make_label(p_fan, "3", s_font_28, C_TEXT, 71, 117);
+    lv_obj_set_width(ui.lbl_acfan_lvl, 50);
+    lv_obj_set_style_text_align(ui.lbl_acfan_lvl, LV_TEXT_ALIGN_CENTER, 0);
+
+    ui.btn_acfan_up = lv_button_create(p_fan);
+    lv_obj_set_size(ui.btn_acfan_up, 53, 50);
+    lv_obj_set_pos(ui.btn_acfan_up, 138, 109);
+    style_button(ui.btn_acfan_up);
+    lv_obj_t* l_acup = lv_label_create(ui.btn_acfan_up);
+    lv_label_set_text(l_acup, FA_CARET_D);
+    lv_obj_set_style_text_font(l_acup, s_font_icons24, 0);
+    lv_obj_center(l_acup);
+    lv_obj_add_event_cb(ui.btn_acfan_up, on_acfan_up, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_add_flag(ui.btn_acfan_dn,  LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui.btn_acfan_up,  LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui.lbl_acfan_lvl, LV_OBJ_FLAG_HIDDEN);
+
     // ── AGUA CALIENTE panel (col2 row1) ───────────────────────────────────────
     lv_obj_t* p_water = make_section(scr, WATER_X, CONTENT_Y, WATER_W, ROW1_H);
 
@@ -677,13 +823,13 @@ static void build_main_screen()
     lv_label_set_text(ui.lbl_water_temp, "--°C");
     lv_obj_set_style_text_font(ui.lbl_water_temp, s_font_22, 0);
     lv_obj_set_style_text_color(ui.lbl_water_temp, C_TEXT, 0);
-    lv_obj_set_pos(ui.lbl_water_temp, 247, 53);   // top aligned with the boiler buttons
+    lv_obj_set_pos(ui.lbl_water_temp, 232, 53);   // top aligned with the boiler buttons
     lv_obj_set_width(ui.lbl_water_temp, TANK_W);
     lv_obj_set_style_text_align(ui.lbl_water_temp, LV_TEXT_ALIGN_CENTER, 0);
 
     // Thermometer pill, centred under the temperature label (inside the 64 px
-    // column at x=247).
-    constexpr int WP_X = 247 + (TANK_W - WATER_PILL_W) / 2;
+    // column at x=232).
+    constexpr int WP_X = 232 + (TANK_W - WATER_PILL_W) / 2;
     constexpr int WP_Y = 85;   // below the temp label; bottom (169) matches the buttons
 
     ui.water_track = lv_obj_create(p_water);
@@ -1145,23 +1291,125 @@ static void build_main_screen()
 
 // ── Refresh widgets from local state ──────────────────────────────────────────
 
+// Update the topbar heat/cool indicator.  Shows a snowflake (blue) whenever
+// the A/C is in cooling mode; otherwise shows the flame in amber (bright when
+// the Truma is actually heating, dim when idle).
+static void refresh_flame_icon()
+{
+    bool cooling = st.openairConfigured && (st.acMode == 1 || st.acMode == 2);
+    if (cooling) {
+        lv_label_set_text(ui.icon_flame, FA_SNOWFLAKE);
+        lv_obj_set_style_text_color(ui.icon_flame, lv_color_hex(0x44aaff), 0);
+        lv_obj_set_style_text_opa(ui.icon_flame, LV_OPA_COVER, 0);
+    } else {
+        lv_label_set_text(ui.icon_flame, FA_FIRE);
+        lv_obj_set_style_text_color(ui.icon_flame, C_AMBER, 0);
+        lv_obj_set_style_text_opa(ui.icon_flame,
+            (s_linOk && st.heatingOn) ? LV_OPA_COVER : LV_OPA_30, 0);
+    }
+}
+
+// Set a one-of-N selection on a button matrix via the CHECKED ctrl bit.
+static void bm_select(lv_obj_t* bm, int sel, int count)
+{
+    for (int i = 0; i < count; ++i) {
+        if (i == sel)
+            lv_buttonmatrix_set_button_ctrl(bm, i, LV_BUTTONMATRIX_CTRL_CHECKED);
+        else
+            lv_buttonmatrix_clear_button_ctrl(bm, i, LV_BUTTONMATRIX_CTRL_CHECKED);
+    }
+}
+
+static void ac_btn_select(int sel)  // sel 0–3: cool/eco/heat/off
+{
+    for (int i = 0; i < 4; ++i) {
+        if (i == sel) lv_obj_add_state(ui.btn_ac[i], LV_STATE_CHECKED);
+        else          lv_obj_clear_state(ui.btn_ac[i], LV_STATE_CHECKED);
+    }
+}
+
 static void refresh_controls()
 {
     char buf[20];
     snprintf(buf, sizeof(buf), "%.1f°C", st.roomSetpoint);
     lv_label_set_text(ui.lbl_room_sp, buf);
 
-    {
-        int sel = st.heatingOn ? 1 : 0;
-        for (uint32_t i = 0; i < 2; i++) {
-            if ((int)i == sel)
-                lv_buttonmatrix_set_button_ctrl(ui.btnmx_heat, i, LV_BUTTONMATRIX_CTRL_CHECKED);
-            else
-                lv_buttonmatrix_clear_button_ctrl(ui.btnmx_heat, i, LV_BUTTONMATRIX_CTRL_CHECKED);
+    // ── Heat-source panel: CALEFACCIÓN (Truma only) vs CLIMATIZACIÓN (A/C) ──
+    if (st.openairConfigured) {
+        lv_label_set_text(ui.lbl_heat_title, t(TK::CLIMATE));
+        lv_obj_add_flag(ui.btnmx_heat, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(ui.row_ac, LV_OBJ_FLAG_HIDDEN);
+        int sel = st.heatingOn ? 2 : (st.acMode == 1) ? 0 : (st.acMode == 2) ? 1 : 3;
+        ac_btn_select(sel);
+        // Setpoint applies whenever any mode (cool/eco/heat) is active.
+        bool active = st.heatingOn || st.acMode != 0;
+        if (active) lv_obj_remove_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
+        else        lv_obj_add_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
+        // Power buttons: only in cool (1) or eco (2) — not heat, not off.
+        bool showPwr = !st.heatingOn && (st.acMode == 1 || st.acMode == 2);
+        for (int i = 0; i < 2; ++i) {
+            if (showPwr) {
+                lv_obj_remove_flag(ui.btn_pwr[i], LV_OBJ_FLAG_HIDDEN);
+                if (i == st.acPower) lv_obj_add_state(ui.btn_pwr[i], LV_STATE_CHECKED);
+                else                 lv_obj_clear_state(ui.btn_pwr[i], LV_STATE_CHECKED);
+            } else {
+                lv_obj_add_flag(ui.btn_pwr[i], LV_OBJ_FLAG_HIDDEN);
+            }
         }
+    } else {
+        lv_label_set_text(ui.lbl_heat_title, t(TK::HEATING));
+        lv_obj_add_flag(ui.row_ac, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(ui.btnmx_heat, LV_OBJ_FLAG_HIDDEN);
+        bm_select(ui.btnmx_heat, st.heatingOn ? 1 : 0, 2);
         if (st.heatingOn) lv_obj_remove_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
         else              lv_obj_add_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
+        // Hide power buttons in Truma-only (calefacción) mode.
+        for (int i = 0; i < 2; ++i)
+            lv_obj_add_flag(ui.btn_pwr[i], LV_OBJ_FLAG_HIDDEN);
     }
+
+    // ── VENTILADOR panel ──
+    // A/C fan context: A/C configured and in cool or eco mode.
+    // acMode==0 (off) falls through to Truma standby fan controls (Off/On + 1-10).
+    if (st.openairConfigured && !st.heatingOn && st.acMode != 0) {
+        lv_obj_add_flag(ui.btnmx_fan_heat, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ui.btnmx_fan_off,  LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ui.btn_fan_dn,     LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ui.btn_fan_up,     LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ui.lbl_fan_lvl,    LV_OBJ_FLAG_HIDDEN);
+
+        lv_obj_remove_flag(ui.btnmx_ac_fan, LV_OBJ_FLAG_HIDDEN);
+        bool cool = (st.acMode == 1);
+        // Auto/Man only selectable in cool mode; eco/off lock it to Auto.
+        bool autoSel = cool ? st.acFanAuto : true;
+        bm_select(ui.btnmx_ac_fan, autoSel ? 0 : 1, 2);
+        for (int i = 0; i < 2; ++i) {
+            if (cool) lv_buttonmatrix_clear_button_ctrl(ui.btnmx_ac_fan, i, LV_BUTTONMATRIX_CTRL_DISABLED);
+            else      lv_buttonmatrix_set_button_ctrl(ui.btnmx_ac_fan, i, LV_BUTTONMATRIX_CTRL_DISABLED);
+        }
+        lv_obj_set_style_opa(ui.btnmx_ac_fan, cool ? LV_OPA_COVER : LV_OPA_40, 0);
+
+        // Speed selector only in cool + Man.
+        if (cool && !st.acFanAuto) {
+            if (st.acFanSpeed < 1) st.acFanSpeed = 1;
+            if (st.acFanSpeed > 6) st.acFanSpeed = 6;
+            char b[8]; snprintf(b, sizeof(b), "%d", st.acFanSpeed);
+            lv_label_set_text(ui.lbl_acfan_lvl, b);
+            lv_obj_remove_flag(ui.btn_acfan_dn,  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(ui.btn_acfan_up,  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(ui.lbl_acfan_lvl, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(ui.btn_acfan_dn,  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(ui.btn_acfan_up,  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(ui.lbl_acfan_lvl, LV_OBJ_FLAG_HIDDEN);
+        }
+        goto boiler;
+    }
+
+    lv_obj_add_flag(ui.btnmx_ac_fan,   LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui.btn_acfan_dn,   LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui.btn_acfan_up,   LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui.lbl_acfan_lvl,  LV_OBJ_FLAG_HIDDEN);
 
     if (st.heatingOn) {
         lv_obj_remove_flag(ui.btnmx_fan_heat, LV_OBJ_FLAG_HIDDEN);
@@ -1207,6 +1455,7 @@ static void refresh_controls()
         }
     }
 
+boiler:
     int bi = (st.boilerMode >= 0 && st.boilerMode <= 3) ? st.boilerMode : 0;
     for (int i = 0; i < 4; ++i) {
         if (i == bi)
@@ -1214,6 +1463,8 @@ static void refresh_controls()
         else
             lv_buttonmatrix_clear_button_ctrl(ui.btnmx_boiler, i, LV_BUTTONMATRIX_CTRL_CHECKED);
     }
+
+    refresh_flame_icon();
 }
 
 // ── Event callbacks ───────────────────────────────────────────────────────────
@@ -1279,6 +1530,58 @@ static void on_boiler_changed(lv_event_t* e)
     uint32_t idx = lv_buttonmatrix_get_selected_button(bm);
     if (idx <= 3) {
         st.boilerMode = (int)idx;
+        refresh_controls();
+    }
+}
+
+// Apply the Truma heat-fan rule shared by the heat toggle and the climate
+// "heat" button: heat-on defaults the fan to eco; heat-off clears eco/high.
+static void apply_heat_fan_rule()
+{
+    if (st.heatingOn && (st.fanMode < 1 || st.fanMode > 2)) st.fanMode = 1;
+    if (!st.heatingOn && st.fanMode >= 1 && st.fanMode <= 2) st.fanMode = 0;
+}
+
+static void on_ac_fan_changed(lv_event_t* e)
+{
+    lv_obj_t* bm  = (lv_obj_t*)lv_event_get_target(e);
+    uint32_t  idx = lv_buttonmatrix_get_selected_button(bm);
+    if (idx <= 1) {
+        st.acFanAuto = (idx == 0);
+        refresh_controls();
+    }
+}
+
+static void on_acfan_dn(lv_event_t*)
+{
+    if (st.acFanSpeed > 1) { st.acFanSpeed--; refresh_controls(); }
+}
+
+static void on_acfan_up(lv_event_t*)
+{
+    if (st.acFanSpeed < 6) { st.acFanSpeed++; refresh_controls(); }
+}
+
+static void on_ac_btn_clicked(lv_event_t* e)
+{
+    lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+    int idx = -1;
+    for (int i = 0; i < 4; ++i) {
+        if (btn == ui.btn_ac[i]) { idx = i; break; }
+    }
+    if (idx < 0) return;
+    // 0=cool(acMode=1), 1=eco(acMode=2), 2=heat(Truma), 3=off(acMode=0)
+    st.heatingOn = (idx == 2);
+    st.acMode    = (idx == 0) ? 1 : (idx == 1) ? 2 : 0;
+    if (st.heatingOn) apply_heat_fan_rule();
+    refresh_controls();
+}
+
+static void on_pwr_clicked(lv_event_t* e)
+{
+    int idx = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
+    if (idx == 0 || idx == 1) {
+        st.acPower = idx;
         refresh_controls();
     }
 }
@@ -1518,6 +1821,10 @@ void p4GetControlState(P4ControlState& out)
     out.boilerMode   = st.boilerMode;
     out.energyIdx    = st.energyIdx;
     out.roomSetpoint = st.roomSetpoint;
+    out.acMode       = st.acMode;
+    out.acFanAuto    = st.acFanAuto;
+    out.acFanSpeed   = st.acFanSpeed;
+    out.acPower      = st.acPower;
 }
 
 // Remote setters (called from the WS dispatcher).  Take the LVGL lock so the
@@ -1572,6 +1879,38 @@ void p4SetRoomSetpoint(float celsius)
     if (celsius > 30.0f) celsius = 30.0f;
     if (!lvglLock(50)) return;
     st.roomSetpoint = celsius;
+    refresh_controls();
+    lvglUnlock();
+}
+
+void p4SetAcMode(int mode)
+{
+    if (mode < 0) mode = 0;
+    if (mode > 2) mode = 2;
+    if (!lvglLock(50)) return;
+    st.acMode = mode;
+    // Selecting a cooling mode clears Truma heat; "heat" arrives via p4SetHeating.
+    if (mode != 0) { st.heatingOn = false; apply_heat_fan_rule(); }
+    refresh_controls();
+    lvglUnlock();
+}
+
+void p4SetAcFan(bool autoMode, int speed)
+{
+    if (speed < 1) speed = 1;
+    if (speed > 6) speed = 6;
+    if (!lvglLock(50)) return;
+    st.acFanAuto  = autoMode;
+    st.acFanSpeed = speed;
+    refresh_controls();
+    lvglUnlock();
+}
+
+void p4SetAcPower(int idx)
+{
+    if (idx < 0 || idx > 1) return;
+    if (!lvglLock(50)) return;
+    st.acPower = idx;
     refresh_controls();
     lvglUnlock();
 }
@@ -1795,6 +2134,12 @@ void p4DisplayUpdate(const P4DisplayData& d)
 
     // st.* is the authoritative control state — only LVGL callbacks write it.
     // Do NOT overwrite it from d here; main.cpp reads it back via p4GetControlState.
+    // Exception: openairConfigured is a config flag (NVS-derived), not a user
+    // control; mirror it and rebuild the heat/fan panels when it flips.
+    if (d.openairConfigured != st.openairConfigured) {
+        st.openairConfigured = d.openairConfigured;
+        refresh_controls();
+    }
 
     if (!std::isnan(d.roomTemp))
         lv_label_set_text_fmt(ui.lbl_room_temp, "%.1f°C", d.roomTemp);
@@ -1816,8 +2161,8 @@ void p4DisplayUpdate(const P4DisplayData& d)
     // refreshIndicators() gating.
     lv_obj_set_style_text_opa(ui.icon_tint,
         (d.linOk && d.boilerMode != 0) ? LV_OPA_COVER : LV_OPA_30, 0);
-    lv_obj_set_style_text_opa(ui.icon_flame,
-        (d.linOk && d.heatingOn) ? LV_OPA_COVER : LV_OPA_30, 0);
+    s_linOk = d.linOk;
+    refresh_flame_icon();
 
     // BT icon: dark-grey=not configured, red=configured but no data, blue=has data
     {

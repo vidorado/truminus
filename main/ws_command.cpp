@@ -30,6 +30,22 @@ WsCommand parseWsCommand(const char* id, const char* value) {
         out.kind = WsCmdKind::EnergyIdx;
         out.intVal = atoi(value);
         out.valid = true;
+    } else if (strcmp(k, "ac_mode") == 0) {
+        out.kind = WsCmdKind::AcMode;
+        out.intVal = atoi(value);
+        out.valid = (out.intVal >= 0 && out.intVal <= 2);
+    } else if (strcmp(k, "ac_fan_auto") == 0) {
+        out.kind = WsCmdKind::AcFanAuto;
+        out.boolVal = (strcmp(value, "1") == 0) || (strcasecmp(value, "true") == 0);
+        out.valid = true;
+    } else if (strcmp(k, "ac_fan_speed") == 0) {
+        out.kind = WsCmdKind::AcFanSpeed;
+        out.intVal = atoi(value);
+        out.valid = (out.intVal >= 1 && out.intVal <= 6);
+    } else if (strcmp(k, "ac_power") == 0) {
+        out.kind = WsCmdKind::AcPower;
+        out.intVal = atoi(value);
+        out.valid = (out.intVal == 0 || out.intVal == 1);
     } else if (strcmp(k, "ota_check") == 0) {
         out.kind = WsCmdKind::OtaCheck;
         out.valid = true;
