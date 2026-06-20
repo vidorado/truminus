@@ -3,14 +3,14 @@
    every UI glyph except Bluetooth, which is a brand icon (F293). */
 @font-face {
   font-family: 'fa6s';
-  src: url('fa-solid.woff?v=c75b1adf') format('woff');
+  src: url('fa-solid.woff?v=c2719c57') format('woff');
   font-weight: 900;
   font-style: normal;
   font-display: block;
 }
 @font-face {
   font-family: 'fa6b';
-  src: url('fa-brands.woff?v=8783b65e') format('woff');
+  src: url('fa-brands.woff?v=59cc115e') format('woff');
   font-weight: 400;
   font-style: normal;
   font-display: block;
@@ -629,7 +629,10 @@ body {
   min-height: 34px;
 }
 .state-txt { font-size: .82em; color: var(--lbl); }
-.err-txt   { font-size: .82em; color: var(--err); font-weight: 600; }
+.err-txt   { font-size: .82em; color: var(--err); font-weight: 400; }
+/* Warning triangle (FA solid) a touch larger than the line text, without
+   changing the text size itself. */
+.err-txt .alert-tri { font-size: 1.25em; vertical-align: -1px; }
 
 /* ── Barra inferior fija ─────────────────────────────────────────────── */
 .statusbar {

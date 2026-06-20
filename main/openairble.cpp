@@ -34,6 +34,7 @@
 
 #include "openairble.hpp"
 #include "logs.hpp"
+#include "i18n.hpp"
 #include <cstring>
 #include <cctype>
 #include <cstdio>
@@ -76,6 +77,13 @@ static volatile uint32_t s_lastSeenMs  = 0;
 // include service-data in its passive-scan ADV_IND.
 static uint8_t s_advSvcData[16]        = {};
 static int     s_advSvcDataLen         = 0;
+
+// Full advertised address (incl. type) of the matched peer, captured at scan
+// time.  We connect with THIS rather than NimBLEAddress(mac, 0): the OpenAir
+// unit may advertise a random (type 1) address, and forcing public (type 0)
+// makes the link-layer connect time out.
+static NimBLEAddress s_advAddr;
+static bool          s_haveAdvAddr     = false;
 
 // 4-byte TruMinus identifier appended to service-data in the handshake.
 // The official app uses a hash of the Android device-id; we use a fixed tag.
@@ -198,19 +206,40 @@ static void buildWriteFrame(const OpenAirCmd& cmd, char out[61]) {
         (unsigned)cmd.flaps2);
 }
 
+// Disconnect and free a client safely.  deleteClient() will not free a
+// still-connected client, so a delete issued mid-teardown leaks it and
+// eventually exhausts the NimBLE client pool (createClient → null → panic).
+// Wait (bounded) for the async disconnect to finish before freeing.
+static void closeClient(NimBLEClient* client) {
+    if (!client) return;
+    client->disconnect();
+    for (int i = 0; i < 20 && client->isConnected(); i++) vTaskDelay(pdMS_TO_TICKS(50));
+    NimBLEDevice::deleteClient(client);
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 bool openairPollOnce() {
     if (!s_configured) return false;
 
     uint32_t t0 = millis();
-    std::string macStr = formatMac(s_targetAddr);
-    NimBLEAddress addr(macStr, 0);
+    // Connect with the exact address (and type) we saw advertising; fall back
+    // to the configured MAC as public only if we somehow never captured one.
+    NimBLEAddress addr = s_haveAdvAddr ? s_advAddr
+                                       : NimBLEAddress(formatMac(s_targetAddr), 0);
 
     NimBLEClient* client = NimBLEDevice::createClient();
+    if (!client) {
+        // The NimBLE client pool is full — every slot still holds a client that
+        // has not been freed.  Never dereference: setConnectTimeout() on a null
+        // client is a store-fault panic.  Skip this cycle; a freed slot returns.
+        ESP_LOGW(TAG, "createClient failed (client pool exhausted)");
+        return false;
+    }
     client->setConnectTimeout(5000);
 
-    ESP_LOGI(TAG, "connecting %s", macStr.c_str());
+    ESP_LOGI(TAG, "connecting %s (type=%d)",
+             addr.toString().c_str(), (int)addr.getType());
     bool connected = false;
     for (int attempt = 1; attempt <= 3 && !connected; attempt++) {
         connected = client->connect(addr);
@@ -218,7 +247,7 @@ bool openairPollOnce() {
     }
     if (!connected) {
         ESP_LOGW(TAG, "connect failed (+%ums)", (unsigned)(millis() - t0));
-        NimBLEDevice::deleteClient(client);
+        closeClient(client);
         return false;
     }
     ESP_LOGI(TAG, "connected (+%ums)", (unsigned)(millis() - t0));
@@ -228,7 +257,7 @@ bool openairPollOnce() {
     // sometimes fails on 128-bit custom UUIDs even when the service is present.
     if (!client->discoverAttributes()) {
         ESP_LOGW(TAG, "attribute discovery failed");
-        client->disconnect(); NimBLEDevice::deleteClient(client); return false;
+        closeClient(client); return false;
     }
 
     NimBLERemoteService* svc = client->getService(SVC_UUID);
@@ -238,14 +267,14 @@ bool openairPollOnce() {
         for (auto* s : client->getServices()) {
             ESP_LOGW(TAG, "  svc: %s", s->getUUID().toString().c_str());
         }
-        client->disconnect(); NimBLEDevice::deleteClient(client); return false;
+        closeClient(client); return false;
     }
 
     NimBLERemoteCharacteristic* hsChar   = svc->getCharacteristic(HANDSHAKE_UUID);
     NimBLERemoteCharacteristic* dataChar = svc->getCharacteristic(DATA_UUID);
     if (!hsChar || !dataChar) {
         ESP_LOGW(TAG, "characteristics not found");
-        client->disconnect(); NimBLEDevice::deleteClient(client); return false;
+        closeClient(client); return false;
     }
 
     // Handshake: [captured service-data bytes (0-12 bytes)] + [4-byte TruMinus ID]
@@ -267,7 +296,7 @@ bool openairPollOnce() {
     // Enable notifications on the data characteristic.
     if (!dataChar->subscribe(true, notifyCb)) {
         ESP_LOGW(TAG, "subscribe failed");
-        client->disconnect(); NimBLEDevice::deleteClient(client); return false;
+        closeClient(client); return false;
     }
 
     // Snapshot the latest pending command under its mutex.
@@ -290,8 +319,7 @@ bool openairPollOnce() {
     if (got) parseNotification(s_notifyBuf, s_notifyLen);
     else     ESP_LOGW(TAG, "no notification within 5 s");
 
-    client->disconnect();
-    NimBLEDevice::deleteClient(client);
+    closeClient(client);
     ESP_LOGI(TAG, "poll %s (+%ums)", got ? "ok" : "no-notify", (unsigned)(millis() - t0));
     return got;
 }
@@ -306,6 +334,8 @@ void openairBleHandleAd(const NimBLEAdvertisedDevice* dev) {
     if (devAddr != s_targetAddr) return;
 
     s_lastSeenMs = millis();
+    s_advAddr    = dev->getAddress();   // keep the real type for the connect
+    s_haveAdvAddr = true;
 
     // Capture service-data bytes once for use in the handshake write.
     if (s_advSvcDataLen == 0 && dev->haveServiceData()) {
@@ -363,6 +393,32 @@ void openairSaveConfig(const std::string& addr) {
     nvs_close(h);
 }
 
+// Localised error titles — decoded from the app's error.dart::listaErrores
+// (raw Errors value, decimal).  0 = treated as "no fault" (see skill note);
+// unknown codes return nullptr so the caller shows nothing.  t() returns the
+// current-language string, so the status bar follows the UI language.
+const char* openairErrorTitle(int errors) {
+    switch (errors) {
+        case 1:  return t(TK::AC_ERR_EFAN);
+        case 2:  return t(TK::AC_ERR_BLOWER);
+        case 6:  return t(TK::AC_ERR_FREEZE);
+        case 9:  return t(TK::AC_ERR_TILT);
+        case 18: return t(TK::AC_ERR_FLAP1);
+        case 19: return t(TK::AC_ERR_FLAP2);
+        default: return nullptr;
+    }
+}
+
+// Localised long description for the error modal body.  nullptr for no fault.
+const char* openairErrorDesc(int errors) {
+    switch (errors) {
+        case 1: case 2: case 6: return t(TK::AC_DESC_STOP);   // critical, unit stops
+        case 9:                 return t(TK::AC_DESC_TILT);   // temporary
+        case 18: case 19:       return t(TK::AC_DESC_FLAP);   // limited operation
+        default:                return nullptr;
+    }
+}
+
 static void load_config_internal() {
     std::string raw;
     if (!openairLoadConfig(raw) || raw.empty()) {
@@ -409,5 +465,7 @@ void openairSetCmd(const OpenAirCmd&) {}
 bool openairPollOnce()        { return false; }
 bool openairLoadConfig(std::string&)         { return false; }
 void openairSaveConfig(const std::string&)   {}
+const char* openairErrorTitle(int)           { return nullptr; }
+const char* openairErrorDesc(int)            { return nullptr; }
 
 #endif // ENABLE_BLE

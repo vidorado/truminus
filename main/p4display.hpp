@@ -146,6 +146,19 @@ void p4SetUpdateAvailable(bool available);
 // later in that case.  Thread-safe.
 bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver);
 
+// Show / hide the error-warning modal over the main screen (mirrors the web
+// error modal).  title/sub/desc are pre-localised; color is the 0xRRGGBB accent
+// for the icon, title and border (red = error, amber = warning).  Show returns
+// false (and does nothing) when the main screen isn't active — retry later.
+// Both are thread-safe (acquire the LVGL lock internally).
+bool p4DisplayShowErrorModal(const char* title, const char* sub,
+                             const char* desc, uint32_t color);
+void p4DisplayHideErrorModal();
+
+// Returns true exactly once after the user taps the modal's "Aceptar" button
+// (consumed on read), so the caller can mark that fault acknowledged.
+bool p4DisplayErrorModalDismissed();
+
 // ── Public API ────────────────────────────────────────────────────────────
 
 // Call once from app_main (before any task uses LVGL).

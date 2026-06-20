@@ -163,6 +163,17 @@ enum class TK : uint8_t {
     AC_INFO,           // helper text under the A/C MAC field
     FAN_AUTO,          // A/C fan toggle: "Auto"
     FAN_MAN,           // A/C fan toggle: "Man"
+    // ── OpenAir A/C fault titles (status bar) ──────────────────────────────
+    AC_ERR_EFAN,       // "A/C: Error electroventilador" / "A/C: Electric-Fan Error"
+    AC_ERR_BLOWER,     // "A/C: Error ventilador" / "A/C: Blower Error"
+    AC_ERR_FREEZE,     // "A/C: Error sonda antihielo" / "A/C: Freeze Probe Error"
+    AC_ERR_TILT,       // "A/C: Error de inclinación" / "A/C: Tilt Error"
+    AC_ERR_FLAP1,      // "A/C: Error compuerta 1" / "A/C: Flap 1 Error"
+    AC_ERR_FLAP2,      // "A/C: Error compuerta 2" / "A/C: Flap 2 Error"
+    // ── OpenAir A/C fault descriptions (error modal body) ──────────────────
+    AC_DESC_STOP,      // critical: unit cannot work until serviced
+    AC_DESC_TILT,      // temporary: vehicle over-tilted, auto-recovers
+    AC_DESC_FLAP,      // warning: limited operation, visit workshop
     _COUNT
 };
 

@@ -150,8 +150,35 @@ Structure and the command direction are now CONFIRMED (see the byte table). Rema
    beyond 0/1, and `TempScale` °C/°F codes.
 3. Real-world telemetry **scaling**: what raw value the **physical** unit reports per field
    (`BatteryValue`, `Sonda*`, `Errors` bitmap, RPMs). The simulator cannot supply this — needs the unit.
-4. `Errors` → `MiError` mapping (`error.dart` `listaErrores`); unknown codes fall back to
-   "Error no encontrado". Decode the catalog from `error.dart` when wiring the warnings screen.
+4. ~~`Errors` → `MiError` mapping~~ — **DECODED** from the disassembly (see below).
+   Only the raw "no fault" sentinel and the exact `Lb` (Low Battery) trigger still want the unit.
+
+### `Errors` → `MiError` catalog — CONFIRMED (decoded from `error.dart::listaErrores`)
+
+`Mensaje.dart` formats the raw `Errors` value with `toRadixString(16).padLeft(2,'0')`
+(`_toPow2String(16)` + `padLeft`) and does a `singleWhere` over `listaErrores` by that
+**2-digit hex** code; an unmatched code falls back to `"Error no encontrado"`. So the catalog
+codes are **hex** — `"12"`/`"13"` are decimal **18/19**, not 12/13.
+
+| Code (hex) | Raw int | Title | Severity (`field_13`) | App behaviour text |
+|-----------|---------|-------|-----------------------|--------------------|
+| `00` | 0  | Recirculation probe Error | 0 (warning) | Works without external temp control, limited operation. Visit workshop. |
+| `01` | 1  | Electric-Fan Error        | 2 (critical) | **Cannot work** until solved. Workshop. |
+| `02` | 2  | Blower Error              | 2 (critical) | **Cannot work** until solved. Workshop. |
+| `06` | 6  | Freeze Probe Error       | 2 (critical) | **Cannot work** until solved. Workshop. |
+| `09` | 9  | Tilt Error               | 1 (temporary) | Vehicle over-tilted; auto-recovers when level. |
+| `12` | 18 | Flap 1 Error             | 0 (warning) | Works, limited operation. Workshop. |
+| `13` | 19 | Flap 2 Error             | 0 (warning) | Works, limited operation. Workshop. |
+| `Lb` | —  | Low Battery              | 1 (temporary) | Battery insufficient; auto-recovers when charged. |
+
+Severity (`MiError.field_13`): **0** = warning / limited operation · **1** = temporary,
+auto-recovering · **2** = critical, unit stops. `Lb` is a **special non-numeric flag** (not a
+hex code) — how it is derived from the frame is still unverified.
+
+> ⚠️ Raw `Errors == 0` is ambiguous: the catalog maps `00` → "Recirculation probe Error", but the
+> app has a *separate* "NO ERROR" branch, so a healthy unit likely reports a different sentinel
+> (not 0). The firmware therefore treats `errors == 0` as **no fault** (shows nothing) to avoid a
+> permanent false alarm; confirm the real no-fault value against the unit before trusting `00`.
 
 ### Primary method — the OpenAir simulator (a priori, no real unit) — DONE for commands
 

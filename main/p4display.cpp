@@ -2043,6 +2043,116 @@ bool p4DisplayShowUpdatePrompt(const char* from_ver, const char* to_ver)
     return true;
 }
 
+// ── Error/warning modal ───────────────────────────────────────────────────
+// Pops over the main screen on a new A/C or Truma fault (driven from main.cpp),
+// mirroring the web's error modal.  Single "Aceptar" button dismisses it; the
+// status bar keeps the rotating alert while the fault persists.
+static lv_obj_t*     s_err_modal = nullptr;
+static volatile bool s_err_modal_dismissed = false;   // set on "Aceptar" tap
+
+void p4DisplayHideErrorModal()
+{
+    if (!lvglLock(50)) return;
+    if (s_err_modal) {
+        lv_obj_delete(s_err_modal);
+        s_err_modal = nullptr;
+    }
+    lvglUnlock();
+}
+
+// True once after the user taps "Aceptar" — consumed (cleared) by the read so
+// main.cpp can attribute the dismissal to the fault the modal was showing.
+bool p4DisplayErrorModalDismissed()
+{
+    bool d = s_err_modal_dismissed;
+    s_err_modal_dismissed = false;
+    return d;
+}
+
+static void on_err_modal_ok(lv_event_t*)
+{
+    if (s_err_modal) {
+        lv_obj_delete(s_err_modal);
+        s_err_modal = nullptr;
+    }
+    s_err_modal_dismissed = true;
+}
+
+bool p4DisplayShowErrorModal(const char* title, const char* sub,
+                             const char* desc, uint32_t color)
+{
+    if (!lvglLock(50)) return false;
+    // Only over the main screen — never on a settings/OTA screen or the splash.
+    if (!s_main_scr || lv_screen_active() != s_main_scr) {
+        lvglUnlock();
+        return false;
+    }
+    if (s_err_modal) { lv_obj_delete(s_err_modal); s_err_modal = nullptr; }
+
+    lv_obj_t* back = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(back);
+    lv_obj_set_size(back, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_pos(back, 0, 0);
+    lv_obj_set_style_bg_color(back, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(back, LV_OPA_50, 0);
+    lv_obj_clear_flag(back, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
+    s_err_modal = back;
+
+    lv_obj_t* box = lv_obj_create(back);
+    lv_obj_set_size(box, 520, 300);
+    lv_obj_center(box);
+    lv_obj_set_style_bg_color(box, C_TOPBAR, 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(box, lv_color_hex(color), 0);
+    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_radius(box, 8, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Warning-triangle icon (FA U+F071) at the top, in the severity colour.
+    lv_obj_t* icon = lv_label_create(box);
+    lv_label_set_text(icon, "\xEF\x81\xB1");
+    lv_obj_set_style_text_font(icon, s_font_icons24 ? s_font_icons24 : s_font_20, 0);
+    lv_obj_set_style_text_color(icon, lv_color_hex(color), 0);
+    lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 6);
+
+    lv_obj_t* lbl_title = lv_label_create(box);
+    lv_label_set_text(lbl_title, title ? title : "");
+    lv_obj_set_style_text_font(lbl_title, s_font_title ? s_font_title : s_font_24, 0);
+    lv_obj_set_style_text_color(lbl_title, lv_color_hex(color), 0);
+    lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, 40);
+
+    if (sub && sub[0]) {
+        lv_obj_t* lbl_sub = lv_label_create(box);
+        lv_label_set_text(lbl_sub, sub);
+        lv_obj_set_style_text_font(lbl_sub, s_font_18, 0);
+        lv_obj_set_style_text_color(lbl_sub, C_LABEL, 0);
+        lv_obj_align(lbl_sub, LV_ALIGN_TOP_MID, 0, 78);
+    }
+
+    lv_obj_t* lbl_desc = lv_label_create(box);
+    lv_label_set_text(lbl_desc, desc ? desc : "");
+    lv_label_set_long_mode(lbl_desc, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(lbl_desc, 480);
+    lv_obj_set_style_text_font(lbl_desc, s_font_18, 0);
+    lv_obj_set_style_text_color(lbl_desc, C_TEXT, 0);
+    lv_obj_align(lbl_desc, LV_ALIGN_TOP_MID, 0, 104);
+
+    lv_obj_t* btn = lv_button_create(box);
+    lv_obj_set_size(btn, 200, 56);
+    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -4);
+    style_button(btn);
+    lv_obj_set_style_bg_color(btn, C_BTN_ACTIVE, 0);
+    lv_obj_t* l_ok = lv_label_create(btn);
+    lv_label_set_text(l_ok, t(TK::ACCEPT));
+    lv_obj_set_style_text_font(l_ok, s_font_20, 0);
+    lv_obj_center(l_ok);
+    lv_obj_add_event_cb(btn, on_err_modal_ok, LV_EVENT_CLICKED, NULL);
+
+    lvglUnlock();
+    return true;
+}
+
 // LVGL timer (500 ms period) that repaints the cloud icon based on
 // s_tunnel_state.  Decoupling from p4SetTunnelState() lets us blink at a
 // fixed cadence regardless of how often main.cpp polls wstunnelUiState().

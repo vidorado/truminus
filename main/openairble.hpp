@@ -59,3 +59,11 @@ bool openairPollOnce();
 
 bool openairLoadConfig(std::string& addr);
 void openairSaveConfig(const std::string& addr);
+
+// English title for an OpenAir `Errors` value (decoded from the app's
+// listaErrores; see the openair-plus skill).  Returns nullptr for 0 (no fault)
+// or any unrecognised code, so callers can use it as a "show this?" predicate.
+const char* openairErrorTitle(int errors);
+
+// Localised long description for the error modal body (nullptr = no fault).
+const char* openairErrorDesc(int errors);

@@ -159,6 +159,15 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "BLE \"My OpenAir PLUS\". Opcional.",                            // AC_INFO
     "Auto",                                                          // FAN_AUTO
     "Man",                                                           // FAN_MAN
+    "A/C: Error electroventilador",                                  // AC_ERR_EFAN
+    "A/C: Error ventilador",                                         // AC_ERR_BLOWER
+    "A/C: Error sonda antihielo",                                    // AC_ERR_FREEZE
+    "A/C: Error de inclinaci\xC3\xB3n",                              // AC_ERR_TILT
+    "A/C: Error compuerta 1",                                        // AC_ERR_FLAP1
+    "A/C: Error compuerta 2",                                        // AC_ERR_FLAP2
+    "El aire acondicionado no puede funcionar hasta resolver la aver\xC3\xAD" "a. Acude al servicio t\xC3\xA9" "cnico m\xC3\xA1s cercano.",  // AC_DESC_STOP
+    "El veh\xC3\xAD" "culo tiene una inclinaci\xC3\xB3n excesiva. El equipo volver\xC3\xA1 a funcionar al nivelarse.",  // AC_DESC_TILT
+    "Problema en la compuerta. El equipo puede seguir funcionando con operaci\xC3\xB3n limitada. Acude al servicio t\xC3\xA9" "cnico.",  // AC_DESC_FLAP
 };
 
 static const char* EN_STRINGS[(int)TK::_COUNT] = {
@@ -313,6 +322,15 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "BLE \"My OpenAir PLUS\". Optional.",                            // AC_INFO
     "Auto",                                                          // FAN_AUTO
     "Man",                                                           // FAN_MAN
+    "A/C: Electric-Fan Error",                                       // AC_ERR_EFAN
+    "A/C: Blower Error",                                             // AC_ERR_BLOWER
+    "A/C: Freeze Probe Error",                                       // AC_ERR_FREEZE
+    "A/C: Tilt Error",                                               // AC_ERR_TILT
+    "A/C: Flap 1 Error",                                             // AC_ERR_FLAP1
+    "A/C: Flap 2 Error",                                             // AC_ERR_FLAP2
+    "Your AC unit cannot work until this issue is solved. Please visit your nearest Technical Service Workshop.",  // AC_DESC_STOP
+    "Your vehicle has an excessive tilt. The AC unit returns to normal operation when the vehicle is level.",      // AC_DESC_TILT
+    "Problem with the flap. The AC unit can keep working with limited operation. Please visit your Technical Service.",  // AC_DESC_FLAP
 };
 
 const char* t(TK key) {

@@ -305,14 +305,19 @@ static void onWsConnected() {
              "{\"command\":\"status\",\"id\":\"/outdoor_temp\",\"value\":\"%s\"}", ot);
     wsQueueSend(buf);
 
-    // Icon states (BLE + tunnel)
+    // Icon states (BLE + tunnel).  Gotcha: this snapshot must reflect EVERY
+    // source the change-broadcaster (broadcastIconStates) covers — that
+    // broadcaster only emits on change, so any state already stable when a
+    // client connects is delivered here or never.
     VictronData    vx = victronGetData();
     UltimatronData ux = ultimatronGetData();
     TankData       tx = tankGetData();
     MultiplusData  mx = multiplusGetData();
-    int ble = (vx.valid || ux.valid || tx.valid || mx.valid) ? 2
+    OpenAirData    ox = openairGetData();
+    int ble = (vx.valid || ux.valid || tx.valid || mx.valid || ox.valid) ? 2
             : (victronIsConfigured() || ultimatronIsConfigured()
-               || tankIsConfigured() || multiplusIsConfigured()) ? 1
+               || tankIsConfigured() || multiplusIsConfigured()
+               || openairIsConfigured()) ? 1
             : 0;
     snprintf(buf, sizeof(buf), "{\"command\":\"icon\",\"id\":\"ble\",\"state\":%d}", ble);
     wsQueueSend(buf);
@@ -916,16 +921,110 @@ extern "C" void app_main(void)
         Am2301Data am = am2301GetData();
         d.outdoorTemp = am.valid ? am.tempC : NAN;
 
-        // Status line: switch to "No LIN bus" once we've given the bus a few
-        // seconds to come up.  Mirrors the web UI's red "No LIN bus" message.
-        // Only push on transitions so the slot remains free for ad-hoc messages.
+        // Status line: shows the active alert(s) in red — "No LIN bus" and/or an
+        // OpenAir A/C fault title.  When more than one is active they share the
+        // single line by rotating one every 5 s (the status bar is one line, so
+        // a No-LIN state must not permanently hide an A/C fault, or vice-versa).
+        // Only pushes on a set change or a rotation tick so the slot stays free
+        // for ad-hoc messages the rest of the time.
         {
-            static int  prevStatus = -1;   // -1=unknown, 0=ok/empty, 1=no-LIN
-            int  newStatus = (iter >= 10 && !lin.linOk) ? 1 : 0;
-            if (newStatus != prevStatus) {
-                if (newStatus == 1)        p4DisplaySetStatus(t(TK::STATUS_NO_LIN), true);
-                else if (prevStatus != 0)  p4DisplaySetStatus("", false);  // clear boot "Iniciando…" / No-LIN
-                prevStatus = newStatus;
+            OpenAirData oas = openairGetData();
+            const char* acErr = (s_openairConfigured && oas.valid)
+                                ? openairErrorTitle(oas.errors) : nullptr;
+            bool noLin = (iter >= 10 && !lin.linOk);
+
+            // Prefix every alert with the FontAwesome warning triangle
+            // (U+F071 "\xEF\x81\xB1", added to font_icons.ttf).  The status font
+            // (s_font_20) falls back to the icon font, so the glyph renders even
+            // though the text font has no warning sign of its own.
+            static char buf0[80], buf1[80];
+            const char* msgs[2];
+            int nmsg = 0;
+            if (noLin) { snprintf(buf0, sizeof(buf0), "\xEF\x81\xB1 %s", t(TK::STATUS_NO_LIN)); msgs[nmsg++] = buf0; }
+            if (acErr) { snprintf(buf1, sizeof(buf1), "\xEF\x81\xB1 %s", acErr);                msgs[nmsg++] = buf1; }
+
+            // Signature of the active set: re-render immediately when it changes
+            // (a new fault, a cleared fault, LIN up/down) so the user isn't left
+            // looking at a stale line for up to 5 s.
+            int sig = (noLin ? 1 : 0) | (acErr ? (oas.errors << 1) : 0);
+
+            static int      prevSig    = -1;
+            static int      cycleIdx   = 0;
+            static uint32_t lastRotIt  = 0;
+            static bool     inited     = false;
+
+            bool setChanged = (sig != prevSig);
+            if (setChanged) { cycleIdx = 0; prevSig = sig; }
+
+            if (nmsg == 0) {
+                // Clear the slot once when the last alert goes away (but never
+                // wipe the very first boot "Iniciando…" before any alert showed).
+                if (setChanged && inited) p4DisplaySetStatus("", false);
+            } else {
+                bool rotate = setChanged || (nmsg > 1 && (iter - lastRotIt) >= 5);
+                if (rotate) {
+                    if (cycleIdx >= nmsg) cycleIdx = 0;
+                    p4DisplaySetStatus(msgs[cycleIdx], true);
+                    cycleIdx  = (cycleIdx + 1) % nmsg;
+                    lastRotIt = iter;
+                    inited    = true;
+                }
+            }
+        }
+
+        // Error modal (mirrors the web).  Dismissal is tracked INDEPENDENTLY per
+        // peripheral: acknowledging a Truma fault doesn't clear an A/C one and
+        // vice-versa.  A Truma fault takes priority for display (it still runs
+        // heating + hot water even with the A/C configured), but each source
+        // keeps its own ack so a masked fault re-surfaces only if not yet acked.
+        {
+            int truma = lin.errCode;
+            OpenAirData omd = openairGetData();
+            int ac = (s_openairConfigured && omd.valid) ? omd.errors : 0;
+            if (ac != 0 && !openairErrorTitle(ac)) ac = 0;   // unknown A/C code → ignore
+
+            static int trumaAcked = -1, acAcked = -1;   // last dismissed code per source
+            static int shownSrc   = 0,  shownCode = 0;   // fault the modal shows now
+
+            // Attribute a dismiss tap to the fault currently on screen.
+            if (p4DisplayErrorModalDismissed()) {
+                if (shownSrc == 1)      trumaAcked = shownCode;
+                else if (shownSrc == 2) acAcked    = shownCode;
+                shownSrc = 0; shownCode = 0;
+            }
+            // Forget a dismissal once its source clears, so the same code can
+            // re-pop later (matches the web: ack resets when the code changes).
+            if (truma == 0) trumaAcked = -1;
+            if (ac    == 0) acAcked    = -1;
+
+            int  actSrc  = truma ? 1 : (ac ? 2 : 0);     // Truma priority
+            int  actCode = truma ? truma : ac;
+            bool acked   = (actSrc == 1 && actCode == trumaAcked) ||
+                           (actSrc == 2 && actCode == acAcked);
+            bool show    = (actSrc != 0) && !acked;
+
+            if (!show) {
+                if (shownSrc) { p4DisplayHideErrorModal(); shownSrc = 0; shownCode = 0; }
+            } else if (actSrc != shownSrc || actCode != shownCode) {
+                const char* mTitle; const char* mSub = nullptr; const char* mDesc;
+                uint32_t    mColor;
+                static char subBuf[48];
+                if (actSrc == 1) {
+                    TK sevTk;
+                    if (lin.errClass == 1 || lin.errClass == 2) { sevTk = TK::WARN_LBL;   mColor = 0xffaa00; }
+                    else if (lin.errClass == 40)                { sevTk = TK::LOCKED_LBL; mColor = 0xcc2222; }
+                    else                                        { sevTk = TK::ERROR_LBL;  mColor = 0xff4444; }
+                    snprintf(subBuf, sizeof(subBuf), t(TK::ERR_SUBTITLE_FMT),
+                             lin.errClass, lin.errCode);
+                    mTitle = t(sevTk); mSub = subBuf; mDesc = "";
+                } else {
+                    mTitle = openairErrorTitle(actCode);   // e.g. "A/C: Error de inclinación"
+                    mDesc  = openairErrorDesc(actCode);
+                    mColor = 0xff4444;                     // all A/C faults are red
+                }
+                if (p4DisplayShowErrorModal(mTitle, mSub, mDesc, mColor)) {
+                    shownSrc = actSrc; shownCode = actCode;
+                }
             }
         }
 

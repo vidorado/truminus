@@ -24,6 +24,8 @@ var s_acFanAuto   = true;        // cool mode: Auto (Mode AUTO) vs Man (Mode MAN
 var s_acFanSpeed  = 3;           // cool+Man blower speed 1..6
 var s_acPower     = 1.2;         // A/C max power kW: 1.2 or 2.0
 var s_acConnected = false;       // true when BLE poll returned valid telemetry
+var s_acErrCode   = 0;           // OpenAir Errors value (0 = no fault)
+var s_acErrAcked  = false;       // A/C error modal acknowledged
 var s_waterDemand = false;
 var s_waterTemp   = null;
 var s_errClass    = 0;
@@ -44,15 +46,14 @@ function updateStatusBar() {
         msg.textContent  = t('ws_conn');
         msg.style.color  = '#ffaa00';
         if (ip) { ip.textContent = ''; }
-    } else if (linerror) {
-        msg.textContent  = t('ws_no_lin');
-        msg.style.color  = '#ff4444';
-        if (ip) { ip.textContent = ipText; }
     } else {
+        // "No LIN bus" no longer lives here — it rotates through the footer
+        // alert slot together with any fault, mirroring the LCD status bar.
         msg.textContent  = '';
         msg.style.color  = '';
         if (ip) { ip.textContent = ipText; }
     }
+    renderFooterAlerts();
 }
 updateStatusBar();
 // Hide mobile browser address bar by scrolling past the URL chrome.
@@ -842,6 +843,12 @@ function setAcMode(mode) {
         s_heat = false; s_acMode = mode;            // 'cool' | 'eco' | 'off'
         sendDebounced('/heating', '0');
         sendDebounced('/ac_mode', mode === 'cool' ? '1' : mode === 'eco' ? '2' : '0');
+        // "Apagado" means the whole climate is off: default the Truma standby
+        // fan to off too (mirrors setHeating's heat-off→fan-off), so the panel
+        // doesn't flash the stale "on N" from cooling before the firmware
+        // reports the fan off.  s_fanLevel is kept as the memorised level so
+        // re-enabling the standby fan restores it with no abrupt jump.
+        if (mode === 'off') { s_fan = 'off'; sendDebounced('/fan', 'off'); }
     }
     refreshHeat();
 }
@@ -879,37 +886,101 @@ function errSeverity(cls) {
 
 var ERR_COLOR = { none: '', warn: '#ffaa00', error: '#ff4444', locked: '#cc2222' };
 
-function updateErrorDisplay() {
-    var line = document.getElementById('error_line');
-    if (!line) return;
-
-    if (s_errCode === 0) {
-        line.textContent = '';
-        line.style.color = '';
-        hideErrorModal();
-        s_errAcked = false;
-        return;
+// Resolve the active fault (Truma first — it still runs heating + hot water
+// even when the A/C is configured, so its faults are never masked by an A/C
+// warning).  Returns { col, lbl, sub, desc, short, acked } or null.
+//   lbl/sub/desc → the detailed modal.   short → the one-line footer/LCD text.
+function resolveFault() {
+    if (s_errCode !== 0) {
+        var sev  = errSeverity(s_errClass);
+        var lbl  = t('err_' + sev) || sev.toUpperCase();
+        var desc = (typeof ErrText !== 'undefined' && ErrText[s_errCode])
+                   ? ErrText[s_errCode] : 'Code ' + s_errCode;
+        return {
+            col: ERR_COLOR[sev], lbl: lbl,
+            sub: 'Class ' + s_errClass + ' / Code ' + s_errCode,
+            desc: desc, short: lbl + ' · ' + desc, acked: s_errAcked
+        };
     }
-
-    var sev  = errSeverity(s_errClass);
-    var col  = ERR_COLOR[sev];
-    var lbl  = t('err_' + sev) || sev.toUpperCase();
-    var desc = (typeof ErrText !== 'undefined' && ErrText[s_errCode])
-               ? ErrText[s_errCode] : 'Code ' + s_errCode;
-
-    line.textContent = lbl + '  (class ' + s_errClass + ' / code ' + s_errCode + ')  ' + desc;
-    line.style.color = col;
-
-    if (!s_errAcked) showErrorModal(lbl, col, desc);
+    if (typeof OpenAirErr !== 'undefined' && OpenAirErr[s_acErrCode]) {
+        var e = OpenAirErr[s_acErrCode];
+        // Every A/C fault is named "… Error" → always red, matching the LCD
+        // status bar (which paints all faults red).  e.sev is kept in the
+        // catalog for reference but no longer drives the colour.
+        return {
+            col: ERR_COLOR['error'],
+            lbl: t('ac_pfx') + ' — ' + (t('err_error') || 'ERROR'),
+            sub: t(e.tk), desc: t(e.dk),
+            short: t('ac_pfx') + ': ' + t(e.tk),   // matches the LCD status line
+            acked: s_acErrAcked
+        };
+    }
+    return null;
 }
 
-function showErrorModal(label, color, desc) {
+// Footer alert slot: cycles the SAME short messages as the LCD status bar —
+// "No LIN bus" and/or the active fault title — one at a time, rotating every
+// 5 s when more than one is active (see renderFooterAlerts / the interval).
+var s_alertIdx = 0;
+var s_alertSig = '';
+function footerAlerts() {
+    var list = [];
+    if (!wserror && linerror) list.push({ text: t('ws_no_lin'), col: '#ff4444' });
+    var f = resolveFault();
+    if (f) list.push({ text: f.short, col: f.col });
+    return list;
+}
+function renderFooterAlerts() {
+    var line = document.getElementById('error_line');
+    if (!line) return;
+    // While the socket is down the footer shows "Connecting…" in statusMsg;
+    // don't also surface stale alerts here.
+    if (wserror) { line.textContent = ''; line.style.color = ''; return; }
+
+    var list = footerAlerts();
+    var sig  = list.map(function (a) { return a.text; }).join('|');
+    if (sig !== s_alertSig) { s_alertSig = sig; s_alertIdx = 0; }  // new set → first
+    if (list.length === 0) { line.textContent = ''; line.style.color = ''; return; }
+    if (s_alertIdx >= list.length) s_alertIdx = 0;
+    var a = list[s_alertIdx];
+    // FA solid warning triangle (U+F071, fa6s) + the message, matching the LCD.
+    line.textContent = '';
+    var ico = document.createElement('i');
+    ico.className = 'fi alert-tri';
+    ico.textContent = '\uF071';
+    line.appendChild(ico);
+    line.appendChild(document.createTextNode(' ' + a.text));
+    line.style.color = a.col;
+}
+// Rotate the footer alert every 5 s (only advances when >1 alert is active).
+setInterval(function () {
+    var list = footerAlerts();
+    if (!wserror && list.length > 1) {
+        s_alertIdx = (s_alertIdx + 1) % list.length;
+        renderFooterAlerts();
+    }
+}, 5000);
+
+// Drive the modal (full detail) on a new unacknowledged fault, and refresh the
+// rotating footer slot.
+function updateErrorDisplay() {
+    var info = resolveFault();
+    if (!info) {
+        hideErrorModal();
+        s_errAcked   = false;
+        s_acErrAcked = false;
+    } else if (!info.acked) {
+        showErrorModal(info.lbl, info.col, info.sub, info.desc);
+    }
+    renderFooterAlerts();
+}
+
+function showErrorModal(label, color, sub, desc) {
     var modal = document.getElementById('err-modal');
     if (!modal) return;
     document.getElementById('err-modal-title').textContent = label;
     document.getElementById('err-modal-title').style.color = color;
-    document.getElementById('err-modal-sub').textContent   =
-        'Class ' + s_errClass + ' / Code ' + s_errCode;
+    document.getElementById('err-modal-sub').textContent   = sub;
     document.getElementById('err-modal-desc').textContent  = desc;
     modal.classList.remove('hidden');
 }
@@ -919,8 +990,10 @@ function hideErrorModal() {
     if (modal) modal.classList.add('hidden');
 }
 
+// Acknowledge whichever error is currently driving the modal (Truma first).
 function acknowledgeError() {
-    s_errAcked = true;
+    if (s_errCode !== 0) s_errAcked = true;
+    else                 s_acErrAcked = true;
     hideErrorModal();
 }
 
@@ -1073,7 +1146,13 @@ function applyMulti(d) {
 
 function applyAc(d) {
     s_acConnected = !!d.valid;
+    var code = parseInt(d.errors) || 0;
+    if (code !== s_acErrCode) {
+        s_acErrCode = code;
+        if (code !== 0) s_acErrAcked = false;   // new fault → pop the modal again
+    }
     refreshIndicators();   // updates the snowflake icon state
+    updateErrorDisplay();
 }
 
 function applyBatt(d) {

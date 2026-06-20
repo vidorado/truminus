@@ -102,6 +102,17 @@ static void parseResponse(const uint8_t* d, int len) {
 }
 
 // ── Single poll ───────────────────────────────────────────────────────────
+// Disconnect and free a client safely.  deleteClient() will not free a
+// still-connected client, so a delete issued mid-teardown leaks it and
+// eventually exhausts the NimBLE client pool (createClient → null → panic).
+// Wait (bounded) for the async disconnect to finish before freeing.
+static void closeClient(NimBLEClient* client) {
+    if (!client) return;
+    client->disconnect();
+    for (int i = 0; i < 20 && client->isConnected(); i++) vTaskDelay(pdMS_TO_TICKS(50));
+    NimBLEDevice::deleteClient(client);
+}
+
 bool ultimatronPollOnce() {
     if (!s_configured || s_ultSuspended) return false;
 
@@ -110,6 +121,10 @@ bool ultimatronPollOnce() {
     NimBLEAddress addr(macStr, 0);
 
     NimBLEClient* client = NimBLEDevice::createClient();
+    if (!client) {
+        LOG_ULT_PL("[ult] createClient failed (client pool exhausted)");
+        return false;
+    }
     client->setConnectTimeout(5000);
 
     bool connected = false;
@@ -119,21 +134,21 @@ bool ultimatronPollOnce() {
     }
     if (!connected) {
         LOG_ULT_PF("[ult] connect failed (+%ums)\n", (unsigned)(millis() - t0));
-        NimBLEDevice::deleteClient(client);
+        closeClient(client);
         return false;
     }
 
     NimBLERemoteService* svc = client->getService("ff00");
     if (!svc) {
-        client->disconnect(); NimBLEDevice::deleteClient(client); return false;
+        closeClient(client); return false;
     }
     NimBLERemoteCharacteristic* notifChar = svc->getCharacteristic("ff01");
     NimBLERemoteCharacteristic* writeChar = svc->getCharacteristic("ff02");
     if (!notifChar || !writeChar) {
-        client->disconnect(); NimBLEDevice::deleteClient(client); return false;
+        closeClient(client); return false;
     }
     if (!notifChar->subscribe(true, notifyCb)) {
-        client->disconnect(); NimBLEDevice::deleteClient(client); return false;
+        closeClient(client); return false;
     }
 
     // Optional password authentication
@@ -162,8 +177,7 @@ bool ultimatronPollOnce() {
         got = (xSemaphoreTake(s_rxSem, pdMS_TO_TICKS(2000)) == pdTRUE);
     }
 
-    client->disconnect();
-    NimBLEDevice::deleteClient(client);
+    closeClient(client);
     if (got) parseResponse(s_rxBuf, s_rxLen);
     LOG_ULT_PF("[ult] poll %s (+%ums)\n", got ? "ok" : "failed", (unsigned)(millis() - t0));
     return got;

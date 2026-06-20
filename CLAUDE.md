@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **All project code, comments, identifiers, commit messages, log strings, documentation files (READMEs, SKILL.md, design notes) and PR descriptions MUST be in English.** Conversation with the user can be in Spanish, but anything that lands in the repository is English-only. UI-facing strings remain bilingual through `i18n.cpp` (`TK` enum) — never hardcode Spanish text in source files; add a key and use `t(TK::KEY)`.
 
+## Comment policy
+
+**Comments describe the current state of the code, not its history.** Once a bug is fixed, the comment explains how the code works now — never "this used to do X", "previously failed because…", or "changed from Y". The one exception is a **gotcha that can recur**: a non-obvious constraint a future change could re-break (e.g. "the snapshot must list every field the change-broadcaster covers"). Phrase those as a forward-looking invariant, not a war story. The same applies to commit messages: describe the change, don't narrate the debugging journey.
+
 ## Project Overview
 
 TruMinus is firmware for the **JC4880P443C** board (ESP32-P4) that emulates a Truma CP-Plus D control unit to manage a **Truma Combi D** heater over the LIN bus. Control surfaces: MQTT, WebSocket web UI, serial CLI, and a physical 800×480 LCD with capacitive touch. Solar charge data (Victron BLE) and battery SOC (Ultimatron BLE) are surfaced on both the LCD and the web UI.

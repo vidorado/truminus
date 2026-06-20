@@ -64,3 +64,19 @@ ErrText= {
 180:"Truma electronics does not match the heater, wrong or missing dongle",
 255:"Operating lock of the Truma electronics due to overheating"
 };
+
+// OpenAir PLUS A/C error catalog — decoded from the Bergstrom/Dirna app
+// (error.dart::listaErrores). Key = raw Errors value (decimal). sev: 0=warning
+// (limited operation), 1=temporary (auto-recovers), 2=critical (unit stops).
+// See .claude/skills/openair-plus/SKILL.md. Note: raw 0 is treated as "no
+// fault" elsewhere, so it is intentionally absent here.
+// tk = i18n key for the title, dk = i18n key for the description (resolved with
+// t() at render time so the line follows the UI language). See i18n.js.
+var OpenAirErr = {
+    1:  { tk: 'ac_efan',   dk: 'ac_d_stop', sev: 2 },
+    2:  { tk: 'ac_blower', dk: 'ac_d_stop', sev: 2 },
+    6:  { tk: 'ac_freeze', dk: 'ac_d_stop', sev: 2 },
+    9:  { tk: 'ac_tilt',   dk: 'ac_d_tilt', sev: 1 },
+    18: { tk: 'ac_flap1',  dk: 'ac_d_flap', sev: 0 },
+    19: { tk: 'ac_flap2',  dk: 'ac_d_flap', sev: 0 }
+};

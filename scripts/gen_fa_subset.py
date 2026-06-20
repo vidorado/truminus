@@ -39,6 +39,7 @@ SOLID = [
     0xF177,  # arrow-left-long  (BAT discharging in INVERSOR panel)
     0xF178,  # arrow-right-long (BAT charging in INVERSOR panel)
     0xF2DC,  # snowflake (A/C cool and eco — CLIMATIZACIÓN panel)
+    0xF071,  # triangle-exclamation (footer alert prefix: No-LIN / A/C fault)
 ]
 BRANDS = [
     0xF293,  # bluetooth-b
