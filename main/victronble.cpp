@@ -3,6 +3,7 @@
 #include "ultimatronble.hpp"
 #include "tankble.hpp"
 #include "multiplusble.hpp"
+#include "openairble.hpp"
 #include "wifi_manager.hpp"
 #include "logs.hpp"
 #include "heapdiag.hpp"
@@ -180,6 +181,9 @@ class VictronScanCb : public NimBLEScanCallbacks {
         // DIAGNOSTIC: feed the Ultimatron observer so we know whether the BMS
         // is actually advertising before we sink 16 s into a blind connect.
         ultimatronBleHandleAd(dev);
+
+        // Feed the OpenAir observer so we know when the A/C is in range.
+        openairBleHandleAd(dev);
 
         // Diagnostic: log every advertisement that matches the target MAC so
         // we can tell "the device isn't advertising" from "it advertises but
@@ -393,7 +397,7 @@ static void bleSupervisorTask(void* /*arg*/) {
         }
 
         constexpr uint32_t SCAN_MS = 5000;
-        if ((s_configured || tankIsConfigured() || multiplusIsConfigured()) && s_bleScan) {
+        if ((s_configured || tankIsConfigured() || multiplusIsConfigured() || openairIsConfigured()) && s_bleScan) {
             s_bleScan->clearResults();
             s_scanAdvCount = 0;   // diagnostic: reset per-window advert counter
             s_supervisorInScan = true;
@@ -441,6 +445,19 @@ static void bleSupervisorTask(void* /*arg*/) {
                 LOG_BLE_PL("[ble-sup] skip ult poll — not advertising recently");
             }
         }
+
+        // OpenAir PLUS A/C — poll every cycle when the device is in range.
+        // Commands need low latency (user taps a button; A/C should respond
+        // within one cycle = ~5-15 s depending on scan + connect time).
+        if (openairIsConfigured()) {
+            uint32_t seen = openairLastSeenMs();
+            if (seen && (millis() - seen) < 30000) {
+                openairPollOnce();
+            } else {
+                LOG_BLE_PL("[ble-sup] skip openair poll — not seen recently");
+            }
+        }
+
         cycleCount++;
 
         // Cycle pacing: 5 s scan + idle.  With aggressive=true (default) and
@@ -540,11 +557,10 @@ void bleSupervisorStart() {
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
     // Create the scan handle whenever any passive-scan source is bound:
-    // Victron, the BTHome tank, or Multiplus.  The tank and multiplus
-    // receivers piggyback on VictronScanCb, so gating this on Victron alone
-    // left a tank-only setup with s_bleScan == nullptr and no scanning at all.
+    // Victron, the BTHome tank, Multiplus, or OpenAir.  The tank, multiplus
+    // and openair receivers piggyback on VictronScanCb.
     // Ultimatron is polled over GATT (not scanned), so it does not count.
-    if (s_configured || tankIsConfigured() || multiplusIsConfigured()) {
+    if (s_configured || tankIsConfigured() || multiplusIsConfigured() || openairIsConfigured()) {
         s_bleScan = NimBLEDevice::getScan();
         s_bleScan->setScanCallbacks(new VictronScanCb(), true);
         // PASSIVE scan (no scan requests).  All data the supervisor consumes —

@@ -461,6 +461,10 @@ static bool      s_mainBuilt = false;
 // refresh_flame_icon() so the topbar updates immediately on LCD taps.
 static bool s_linOk = false;
 
+// Cached OpenAir A/C "confirmed by BLE" flag (see P4DisplayData::acConnected);
+// gates the topbar snowflake brightness in refresh_flame_icon().
+static bool s_acConnected = false;
+
 // Btnmatrix maps filled from i18n strings each time build_main_screen() runs.
 // Stored as module-level arrays so LVGL's pointer reference stays valid.
 static const char* s_heat_map[3]     = {};
@@ -1292,15 +1296,18 @@ static void build_main_screen()
 // ── Refresh widgets from local state ──────────────────────────────────────────
 
 // Update the topbar heat/cool indicator.  Shows a snowflake (blue) whenever
-// the A/C is in cooling mode; otherwise shows the flame in amber (bright when
-// the Truma is actually heating, dim when idle).
+// the A/C cooling mode is selected; otherwise shows the flame in amber.  Both
+// glyphs follow the selected mode but stay dim until the appliance confirms it
+// is active: the flame on (s_linOk && heatingOn), the snowflake on the A/C's
+// BLE telemetry (s_acConnected) — mirrors the web refreshIndicators() gating.
 static void refresh_flame_icon()
 {
     bool cooling = st.openairConfigured && (st.acMode == 1 || st.acMode == 2);
     if (cooling) {
         lv_label_set_text(ui.icon_flame, FA_SNOWFLAKE);
         lv_obj_set_style_text_color(ui.icon_flame, lv_color_hex(0x44aaff), 0);
-        lv_obj_set_style_text_opa(ui.icon_flame, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_opa(ui.icon_flame,
+            s_acConnected ? LV_OPA_COVER : LV_OPA_30, 0);
     } else {
         lv_label_set_text(ui.icon_flame, FA_FIRE);
         lv_obj_set_style_text_color(ui.icon_flame, C_AMBER, 0);
@@ -2162,6 +2169,7 @@ void p4DisplayUpdate(const P4DisplayData& d)
     lv_obj_set_style_text_opa(ui.icon_tint,
         (d.linOk && d.boilerMode != 0) ? LV_OPA_COVER : LV_OPA_30, 0);
     s_linOk = d.linOk;
+    s_acConnected = d.acConnected;
     refresh_flame_icon();
 
     // BT icon: dark-grey=not configured, red=configured but no data, blue=has data

@@ -88,6 +88,9 @@ The LCD has an AM2301/DHT22 sensor on **GPIO52** (`AM2301_DATA_PIN` in `main/mai
 ### LVGL lock for `p4display.cpp::st` mutations
 The remote setters (`p4SetHeating`, `p4SetFanMode`, `p4SetBoilerMode`, `p4SetEnergyIdx`, `p4SetRoomSetpoint`, `p4SetScreenTimeoutIdx`) take `bsp_display_lock(50)`; the on-screen button callbacks already run on the LVGL task with the lock held. The diff-broadcast helper (`broadcastControlChanges` in `main.cpp`) reads `st` via `p4GetControlState` from `wsPumpTask` *without* the lock — safe because each field is a plain int/bool/float, but don't introduce composite reads. Prefer a short lock timeout (e.g. 10 ms) over `portMAX_DELAY` to avoid deadlocks if the LVGL task is busy.
 
+### p4GetControlState checklist
+**Every** field in `P4ControlState` (control_state.hpp) must have a matching `out.field = st.field` line in `p4GetControlState()`. Missing one silently breaks LCD→Web sync for that field: `broadcastControlChanges` always reads 0/false and never emits the change, while Web→LCD still works because `p4Set*` writes directly to `st`. When adding a new field to `P4ControlState`, update `p4GetControlState`, `broadcastControlChanges`, the `onWsConnected` snapshot JSON, and the web's `applySetting` handler.
+
 ---
 
 ## Status indicators (tint and fire)

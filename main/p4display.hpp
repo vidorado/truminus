@@ -87,6 +87,11 @@ struct P4DisplayData {
     // mode buttons and the FAN panel gains the A/C Auto/Man control.
     bool openairConfigured;
 
+    // OpenAir A/C confirmed by BLE (at least one valid telemetry poll).  Gates
+    // the topbar snowflake brightness the same way linOk gates the flame: the
+    // glyph follows the selected mode, but stays dim until the unit responds.
+    bool acConnected;
+
     // Peripherals
     P4SolarData solar;
     P4BattData  batt;

@@ -20,6 +20,7 @@
 #include "truma_lin.hpp"
 #include "tankble.hpp"
 #include "multiplusble.hpp"
+#include "openairble.hpp"
 #include "am2301.hpp"
 #include "flags.h"
 #include "mode_controller.hpp"
@@ -60,6 +61,45 @@ static const char* multiPowerJson(int32_t w, char* buf, size_t n) {
 
 // multiPowerChanged() and the BLE/LIN change-detection predicates live in the
 // host-tested ws_diff module; multiPowerJson() (formatting) stays here.
+
+// Translate the current P4ControlState A/C fields into an OpenAir PLUS command.
+// Called whenever the A/C control state may have changed so the next BLE poll
+// delivers the latest setpoint + mode to the unit.
+//
+// acMode mapping:  0=off → PowerState=0
+//                  1=cool → PowerState=1, Mode=AUTO or MAN (per acFanAuto)
+//                  2=eco  → PowerState=1, Mode=1 (ECO — TO VERIFY on real unit)
+// Setpoint clamped to 16.0–32.0 °C (the gauge minimum confirmed 16.0 from the app).
+static OpenAirCmd buildOpenAirCmd(const P4ControlState& cs) {
+    OpenAirCmd cmd = {};
+    cmd.ledBright     = 1;
+    cmd.ledColor      = 1;
+    cmd.scheduledTime = 0;
+    cmd.flaps1        = 0;
+    cmd.flaps2        = 0;
+
+    int tempTenths = (int)roundf(cs.roomSetpoint * 10.0f);
+    if (tempTenths < 160) tempTenths = 160;
+    if (tempTenths > 320) tempTenths = 320;
+    cmd.tempTenths = tempTenths;
+
+    if (cs.acMode == 0) {
+        cmd.powerState  = 0;
+        cmd.mode        = 0;
+        cmd.blowerSpeed = 1;
+    } else if (cs.acMode == 1) {
+        cmd.powerState  = 1;
+        cmd.mode        = cs.acFanAuto ? 0 : 2;
+        int spd = cs.acFanSpeed;
+        cmd.blowerSpeed = (spd >= 1 && spd <= 6) ? spd : 1;
+    } else {
+        // acMode == 2 (eco)
+        cmd.powerState  = 1;
+        cmd.mode        = 1;   // ECO — TO VERIFY against real unit
+        cmd.blowerSpeed = 1;
+    }
+    return cmd;
+}
 
 // Cached "OpenAir PLUS A/C configured" flag (NVS namespace "openair", key
 // "addr").  Drives the CALEFACCIÓN→CLIMATIZACIÓN panel switch on both UIs.
@@ -218,6 +258,19 @@ static void onWsConnected() {
              (unsigned)mp.soc);
     wsQueueSend(buf);
 
+    // OpenAir A/C telemetry (last poll result, if any).
+    if (openairIsConfigured()) {
+        OpenAirData oa = openairGetData();
+        snprintf(buf, sizeof(buf),
+                 "{\"command\":\"ac\",\"valid\":%s,"
+                 "\"probe1\":%.1f,\"probe2\":%.1f,"
+                 "\"blower_pct\":%d,\"comp_rpm\":%d,\"errors\":%d}",
+                 oa.valid ? "true" : "false",
+                 oa.probe1C, oa.probe2C,
+                 oa.blowerSpeedPct, oa.compressorSpeedRpm, oa.errors);
+        wsQueueSend(buf);
+    }
+
     // Push current LIN snapshot so freshly-loaded pages get room/water temp
     // without waiting for the next change in broadcastLinTemps().
     TrumaLinSnapshot lin;
@@ -331,6 +384,11 @@ static void broadcastControlChanges(const P4ControlState& cs) {
         char v[4]; snprintf(v, sizeof(v), "%d", cs.acPower);
         emit("ac_power", v);
     }
+
+    // Keep the pending OpenAir command in sync with the latest control state
+    // so the next BLE poll delivers the current setpoint without a separate signal.
+    openairSetCmd(buildOpenAirCmd(cs));
+
     prev   = cs;
     inited = true;
 }
@@ -429,6 +487,37 @@ static void broadcastMultiplusData() {
     inited = true;
 }
 
+// Broadcast OpenAir PLUS A/C telemetry to every connected WS client on change.
+// Frame: {"command":"ac","valid":bool,"probe1":F,"probe2":F,
+//          "blower_pct":N,"comp_rpm":N,"errors":N}
+static void broadcastOpenAirData() {
+    static OpenAirData prev   = {};
+    static bool        inited = false;
+    if (!openairIsConfigured()) return;
+
+    OpenAirData d = openairGetData();
+    bool changed = !inited
+                || d.valid       != prev.valid
+                || d.errors      != prev.errors
+                || d.blowerSpeedPct != prev.blowerSpeedPct
+                || d.compressorSpeedRpm != prev.compressorSpeedRpm
+                || fabsf(d.probe1C - prev.probe1C) > 0.5f
+                || fabsf(d.probe2C - prev.probe2C) > 0.5f;
+    if (!changed) return;
+
+    char buf[192];
+    snprintf(buf, sizeof(buf),
+             "{\"command\":\"ac\",\"valid\":%s,"
+             "\"probe1\":%.1f,\"probe2\":%.1f,"
+             "\"blower_pct\":%d,\"comp_rpm\":%d,\"errors\":%d}",
+             d.valid ? "true" : "false",
+             d.probe1C, d.probe2C,
+             d.blowerSpeedPct, d.compressorSpeedRpm, d.errors);
+    wsQueueSend(buf);
+    prev   = d;
+    inited = true;
+}
+
 // Broadcast tank-level (BTHome) to every connected WS client on change.
 // Frame shape mirrors solar/batt: {"command":"tank","valid":bool,"pct":N}.
 static void broadcastTankData() {
@@ -512,9 +601,11 @@ static void broadcastIconStates() {
     UltimatronData u  = ultimatronGetData();
     TankData       tk = tankGetData();
     MultiplusData  mp = multiplusGetData();
-    int ble = (v.valid || u.valid || tk.valid || mp.valid) ? 2
+    OpenAirData    oa = openairGetData();
+    int ble = (v.valid || u.valid || tk.valid || mp.valid || oa.valid) ? 2
             : (victronIsConfigured() || ultimatronIsConfigured()
-               || tankIsConfigured() || multiplusIsConfigured()) ? 1
+               || tankIsConfigured() || multiplusIsConfigured()
+               || openairIsConfigured()) ? 1
             : 0;
     int tun = static_cast<int>(wstunnelUiState());
 
@@ -564,6 +655,7 @@ static void wsPumpTask(void* /*arg*/) {
         broadcastBleData();
         broadcastTankData();
         broadcastMultiplusData();
+        broadcastOpenAirData();
         broadcastLinTemps();
         broadcastIconStates();
         broadcastOtaStatus();
@@ -622,6 +714,7 @@ static void bootTask(void* /*arg*/) {
     ultimatronBleInit();
     tankBleInit();
     multiplusBleInit();
+    openairBleInit();
     heapDiagMark("ble_inits");
     // NimBLE init + supervisor task creation is deferred to the end of bootTask
     // (after boot:complete) so it does not interleave with the sequential
@@ -848,12 +941,15 @@ extern "C" void app_main(void)
                 p4OtaMarkPrompted();
         }
 
-        d.bleState = (vd.valid || ud.valid || td.valid || mp.valid) ? 2
+        OpenAirData oad = openairGetData();
+        d.bleState = (vd.valid || ud.valid || td.valid || mp.valid || oad.valid) ? 2
                    : (victronIsConfigured() || ultimatronIsConfigured()
-                      || tankIsConfigured() || multiplusIsConfigured()) ? 1
+                      || tankIsConfigured() || multiplusIsConfigured()
+                      || openairIsConfigured()) ? 1
                    : 0;
 
         d.openairConfigured = s_openairConfigured;
+        d.acConnected       = oad.valid;
 
         // Dummy overrides (in dummy_flags.h)
 #ifdef ENABLE_BOILER_DUMMY

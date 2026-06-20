@@ -36,6 +36,7 @@ idf_component_register(
         "bthome_codec.cpp"
         "multiplusble.cpp"
         "multiplus_codec.cpp"
+        "openairble.cpp"
         "am2301.cpp"
         "am2301_codec.cpp"
         "faultlog.cpp"

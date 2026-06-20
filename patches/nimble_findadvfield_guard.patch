@@ -1,0 +1,30 @@
+Guard NimBLEAdvertisedDevice::findAdvField() against a corrupt/oversized
+m_payload.
+
+On BLE_GAP_EVENT_DISC_COMPLETE during active scanning, NimBLEScan flushes its
+"waiting list" (connectable + scannable peers that never returned a scan
+response within the window) by calling onResult() on each device. If such a
+device's m_payload is stale/corrupt, the field walk in findAdvField() runs off
+the end of the buffer — observed on the JC4880P443C as a Load access fault at
+PSRAM_top+4 (0x4c000004), rebooting the board once per scan cycle (~every 5 s).
+The crash surfaced when an OpenAir PLUS A/C (connectable, slow/absent scan
+response) was in range of the supervisor scan.
+
+The supervisor scan is now passive (main/victronble.cpp), which avoids the
+waiting list entirely; this guard is defense-in-depth that also protects the
+user-initiated active discovery scans. Applied by scripts/apply_patches.py.
+
+--- a/managed_components/h2zero__esp-nimble-cpp/src/NimBLEAdvertisedDevice.cpp
++++ b/managed_components/h2zero__esp-nimble-cpp/src/NimBLEAdvertisedDevice.cpp
+@@ uint8_t NimBLEAdvertisedDevice::findAdvField(uint8_t type, uint8_t index, size_t* data_loc) const {
+     size_t  length = m_payload.size();
++    // TruMinus guard: a corrupt/oversized payload (seen on the active-scan
++    // DISC_COMPLETE waiting-list flush) would make the walk below run off the
++    // end of the buffer (load fault past the PSRAM top).  62 B = max legacy
++    // adv+scanrsp, 1650 B = max BLE5 extended adv; anything larger is
++    // corruption, so bail.
++    if (length > 1650) {
++        return 0;
++    }
+     size_t  data   = 0;
+     uint8_t count  = 0;

@@ -19,6 +19,7 @@
 #include "ultimatronble.hpp"
 #include "tankble.hpp"
 #include "multiplusble.hpp"
+#include "openairble.hpp"
 #include "esp_log.h"
 #include "nvs.h"
 #include "lvgl.h"
@@ -1266,7 +1267,8 @@ static void ble_save_cb(lv_event_t*) {
     nvs_write("multiplus", "addr", lv_textarea_get_text(bl_ctx.ta_multi_mac));
     nvs_write("multiplus", "key",  lv_textarea_get_text(bl_ctx.ta_multi_key));
     nvs_write("openair",   "addr", lv_textarea_get_text(bl_ctx.ta_ac_mac));
-    openairCfgReload();   // refresh the cached A/C flag (no per-tick NVS read)
+    openairCfgReload();         // refresh the UI switch flag (main.cpp, no per-tick NVS read)
+    openairBleReloadConfig();   // reload target MAC in the BLE driver
     victronBleReloadConfig();
     ultimatronBleReloadConfig();
     tankBleReloadConfig();

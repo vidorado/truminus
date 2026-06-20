@@ -23,6 +23,7 @@ var s_acMode      = 'off';       // 'off' | 'cool' | 'eco'
 var s_acFanAuto   = true;        // cool mode: Auto (Mode AUTO) vs Man (Mode MAN)
 var s_acFanSpeed  = 3;           // cool+Man blower speed 1..6
 var s_acPower     = 1.2;         // A/C max power kW: 1.2 or 2.0
+var s_acConnected = false;       // true when BLE poll returned valid telemetry
 var s_waterDemand = false;
 var s_waterTemp   = null;
 var s_errClass    = 0;
@@ -184,6 +185,7 @@ ws.onmessage = function (event) {
     if (d.command === 'batt')  { applyBatt(d);  return; }
     if (d.command === 'tank')  { applyTank(d);  return; }
     if (d.command === 'multi') { applyMulti(d); return; }
+    if (d.command === 'ac')   { applyAc(d);    return; }
     if (d.command === 'icon')  { applyIcon(d);  return; }
     if (d.command === 'ota')   { applyOta(d);   return; }
     if (d.command === 'fsupdate') { applyFsUpdate(d); return; }
@@ -676,6 +678,14 @@ function refreshFan() {
         cls('acFanMan',  'btn-sel', !autoSel);
         var ar = document.getElementById('acFanRow');
         if (ar) ar.classList.toggle('row-disabled', !cool);
+        // Speed sub-control: visible in cool + Man mode only
+        var showSpd = cool && !autoSel;
+        cls('acFanLvlRow', 'vis-hidden', !showSpd);
+        cls('acFanLvlRow', 'ac-spacer',  !showSpd);
+        if (showSpd) {
+            var lv = document.getElementById('acFanLvlVal');
+            if (lv) lv.textContent = s_acFanSpeed;
+        }
         return;
     }
     if (s_heat) {
@@ -712,10 +722,19 @@ function refreshIndicators() {
     cls('ind-tint', 'ind-on',     boilerOn && !wDemand);
     cls('ind-tint', 'ind-active', wDemand);
 
+    // Glyph follows the SELECTED mode (snowflake when cooling is chosen);
+    // the lit/bright state follows hardware confirmation, mirroring the flame
+    // (dimmed glyph by default, bright when the device confirms it's active).
+    var acSelected = s_openair && !s_heat &&
+                     (s_acMode === 'cool' || s_acMode === 'eco');
+    var coolOn      = acSelected && s_acConnected;   // confirmed by BLE poll
     var heatOn      = linOk && s_heat;
     var heatDemand  = heatOn && s_roomTemp !== null && (s_roomTemp < s_temp - 0.3);
-    cls('ind-fire', 'ind-on',     heatOn && !heatDemand);
-    cls('ind-fire', 'ind-active', heatDemand);
+    var fireIcon = document.querySelector('#ind-fire i');
+    if (fireIcon) fireIcon.textContent = acSelected ? '' : '';
+    cls('ind-fire', 'ind-cool',   acSelected);
+    cls('ind-fire', 'ind-on',     coolOn || (heatOn && !heatDemand));
+    cls('ind-fire', 'ind-active', !acSelected && heatDemand);
 
     // Water temperature bar (matches CYD display)
     var wTempVal = document.getElementById('water_temp_val');
@@ -1050,6 +1069,11 @@ function applyMulti(d) {
                 bh.textContent = t('inv_batt');
         }
     }
+}
+
+function applyAc(d) {
+    s_acConnected = !!d.valid;
+    refreshIndicators();   // updates the snowflake icon state
 }
 
 function applyBatt(d) {
