@@ -669,6 +669,14 @@ static void wsPumpTask(void* /*arg*/) {
     }
 }
 
+// Set when each subsystem genuinely starts trying to connect, so the topbar
+// status icons stay dim until then (see p4display).  WiFi/LIN begin in
+// bootTask; BLE is latched in the main loop on the supervisor's first scan
+// (it defers scanning until WiFi has associated and settled).
+static volatile bool s_wifiAttempting = false;
+static volatile bool s_linAttempting  = false;
+static volatile bool s_bleAttempting  = false;
+
 // Background boot: everything that does not need to block the splash.
 // Runs in parallel with the splash screen so the user sees pixels as fast
 // as bsp_display_start_with_config() returns.  Each step is independent and
@@ -704,6 +712,7 @@ static void bootTask(void* /*arg*/) {
     }
 
     wifi_manager_start();
+    s_wifiAttempting = true;
     heapDiagMark("wifi_start");
 
     // Initialize C6 BT controller via ESP-Hosted RPC before NimBLE starts.
@@ -764,6 +773,7 @@ static void bootTask(void* /*arg*/) {
     // LIN scheduler — emulates the CP-Plus D control unit on UART1.
     // Pinned to Core 0 (legacy convention: blocking serial off the LVGL core).
     trumaLinStart(LIN_TX_PIN, LIN_RX_PIN);
+    s_linAttempting = true;
     heapDiagMark("am2301+lin");
 
     // Self-OTA: periodic GitHub release check + post-OTA self-test/rollback.
@@ -852,6 +862,15 @@ extern "C" void app_main(void)
         if (iter % 30 == 0) heapDiagMark("steady");
 
         // (WS drain + LCD-change broadcast run in wsPumpTask at 100 ms.)
+
+        // Topbar status-icon "attempt started" flags (see p4display).  BLE is
+        // latched on the supervisor's first scan window (~15 s after boot: it
+        // waits for WiFi to associate and settle), not when the task spawns, so
+        // the FAILED grace clock doesn't start ticking before scanning begins.
+        if (victronBleScanActive()) s_bleAttempting = true;
+        d.wifiAttempting = s_wifiAttempting;
+        d.linAttempting  = s_linAttempting;
+        d.bleAttempting  = s_bleAttempting;
 
         // WiFi status
         WifiStatus ws = wifi_manager_get_status();

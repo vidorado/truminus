@@ -170,6 +170,12 @@ static struct {
     lv_obj_t* icon_bt;
     lv_obj_t* icon_cloud;
     lv_obj_t* icon_lin;
+    // Diagonal "slash" bars drawn over the four status icons in the FAILED
+    // state (no FontAwesome glyph exists for a crossed-out icon).
+    lv_obj_t* slash_wifi;
+    lv_obj_t* slash_bt;
+    lv_obj_t* slash_cloud;
+    lv_obj_t* slash_lin;
     lv_obj_t* icon_ota;    // firmware-update reminder (hidden unless available)
     lv_obj_t* icon_tint;   // water (boiler) status indicator
     lv_obj_t* icon_flame;  // heating status indicator
@@ -248,6 +254,93 @@ static struct {
     lv_obj_t* lbl_status;
 
 } ui;
+
+// ── Topbar status-icon state machine ──────────────────────────────────────
+// The four status glyphs (WiFi, LIN, BLE, cloud/tunnel) share one all-white
+// visual vocabulary: DISABLED = dim, CONNECTING = blink, CONNECTED = solid,
+// FAILED = solid with a diagonal slash struck over the glyph (no FontAwesome
+// glyph exists for a crossed-out icon).  Icon indices: 0 WiFi, 1 LIN, 2 BLE,
+// 3 cloud.
+enum IconSt : uint8_t { IST_DISABLED, IST_CONNECTING, IST_CONNECTED, IST_FAILED };
+static IconSt s_iconSt[4] = { IST_DISABLED, IST_DISABLED, IST_DISABLED, IST_DISABLED };
+static bool   s_iconBlink = false;   // CONNECTING blink phase, toggled by the 500 ms timer
+
+static lv_obj_t* icon_obj(int i)
+{
+    switch (i) { case 0: return ui.icon_wifi; case 1: return ui.icon_lin;
+                 case 2: return ui.icon_bt;   default: return ui.icon_cloud; }
+}
+static lv_obj_t* slash_obj(int i)
+{
+    switch (i) { case 0: return ui.slash_wifi; case 1: return ui.slash_lin;
+                 case 2: return ui.slash_bt;   default: return ui.slash_cloud; }
+}
+
+// Diagonal slash bar over an icon: a white core with a C_BG border, so the
+// border "cuts" a gap out of the white glyph while the white core stays
+// visible against the dark topbar — readable on both.
+static lv_obj_t* make_slash(lv_obj_t* parent, lv_obj_t* over)
+{
+    lv_obj_t* s = lv_obj_create(parent);
+    lv_obj_remove_style_all(s);
+    lv_obj_set_size(s, 30, 6);
+    lv_obj_set_style_radius(s, 1, 0);
+    lv_obj_set_style_bg_color(s, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s, C_BG, 0);      // dark edges "cut" the glyph;
+    lv_obj_set_style_border_width(s, 2, 0);         // 2 px white core stays visible
+    lv_obj_set_style_border_opa(s, LV_OPA_COVER, 0);
+    lv_obj_set_style_transform_pivot_x(s, 15, 0);   // centre of the 30×6 bar
+    lv_obj_set_style_transform_pivot_y(s, 3, 0);
+    lv_obj_set_style_transform_rotation(s, 450, 0); // 45.0°
+    lv_obj_add_flag(s, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(s, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align_to(s, over, LV_ALIGN_CENTER, 0, 0);
+    return s;
+}
+
+static void repaint_icon(int i)
+{
+    lv_obj_t* ic = icon_obj(i);
+    if (!ic) return;
+    lv_obj_t* sl = slash_obj(i);
+    lv_opa_t opa = LV_OPA_COVER;
+    bool slash   = false;
+    switch (s_iconSt[i]) {
+    case IST_DISABLED:   opa = LV_OPA_40; break;
+    case IST_CONNECTING: opa = s_iconBlink ? LV_OPA_COVER : LV_OPA_20; break;
+    case IST_CONNECTED:  opa = LV_OPA_COVER; break;
+    case IST_FAILED:     opa = LV_OPA_COVER; slash = true; break;
+    }
+    lv_obj_set_style_text_color(ic, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(ic, opa, 0);
+    if (sl) {
+        if (slash) lv_obj_clear_flag(sl, LV_OBJ_FLAG_HIDDEN);
+        else       lv_obj_add_flag(sl, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void set_icon_state(int i, IconSt s)
+{
+    if (s_iconSt[i] == s) return;
+    s_iconSt[i] = s;
+    repaint_icon(i);
+}
+
+// Map a subsystem's boolean health to the icon vocabulary: dim until it is
+// attempting, blinking while it connects, struck-through once the grace window
+// elapses without a connection.  `downSince` (caller-owned, per icon) records
+// the lv_tick when the attempt began; 0 means "not currently attempting".
+static const uint32_t ICON_GRACE_MS = 15000;
+static IconSt derive_icon_state(bool ok, bool attempting, uint32_t& downSince,
+                                uint32_t now)
+{
+    if (ok)         { downSince = 0; return IST_CONNECTED; }
+    if (!attempting){ downSince = 0; return IST_DISABLED;  }
+    if (!downSince) downSince = now;
+    return (now - downSince < ICON_GRACE_MS) ? IST_CONNECTING : IST_FAILED;
+}
 
 // ── Forward declarations ──────────────────────────────────────────────────────
 static void refresh_controls();
@@ -555,29 +648,34 @@ static void build_main_screen()
     lv_obj_set_style_text_color(ui.lbl_outdoor, C_AMBER, 0);
     lv_obj_align(ui.lbl_outdoor, LV_ALIGN_LEFT_MID, 272, 0);
 
+    // The four status glyphs are painted by repaint_icon() through the white
+    // DISABLED/CONNECTING/CONNECTED/FAILED vocabulary; creation only places them.
     ui.icon_lin = lv_label_create(topbar);
     lv_label_set_text(ui.icon_lin, FA_RANDOM);
     lv_obj_set_style_text_font(ui.icon_lin, s_font_icons24, 0);
-    lv_obj_set_style_text_color(ui.icon_lin, C_RED, 0);
     lv_obj_align(ui.icon_lin, LV_ALIGN_RIGHT_MID, -16, 0);
 
     ui.icon_wifi = lv_label_create(topbar);
     lv_label_set_text(ui.icon_wifi, FA_WIFI);
     lv_obj_set_style_text_font(ui.icon_wifi, s_font_icons24, 0);
-    lv_obj_set_style_text_color(ui.icon_wifi, C_RED, 0);
     lv_obj_align_to(ui.icon_wifi, ui.icon_lin, LV_ALIGN_OUT_LEFT_MID, -16, 0);
 
     ui.icon_bt = lv_label_create(topbar);
     lv_label_set_text(ui.icon_bt, FA_BLUETOOTH);
     lv_obj_set_style_text_font(ui.icon_bt, s_font_icons24, 0);
-    lv_obj_set_style_text_color(ui.icon_bt, lv_color_hex(0x444466), 0);  // dark grey = not configured
     lv_obj_align_to(ui.icon_bt, ui.icon_wifi, LV_ALIGN_OUT_LEFT_MID, -16, 0);
 
     ui.icon_cloud = lv_label_create(topbar);
     lv_label_set_text(ui.icon_cloud, FA_CLOUD);
     lv_obj_set_style_text_font(ui.icon_cloud, s_font_icons24, 0);
-    lv_obj_set_style_text_color(ui.icon_cloud, lv_color_hex(0x444466), 0);  // dark grey = disconnected
     lv_obj_align_to(ui.icon_cloud, ui.icon_bt, LV_ALIGN_OUT_LEFT_MID, -16, 0);
+
+    // Strike-through bars for the FAILED state, one per icon (hidden otherwise).
+    ui.slash_lin   = make_slash(topbar, ui.icon_lin);
+    ui.slash_wifi  = make_slash(topbar, ui.icon_wifi);
+    ui.slash_bt    = make_slash(topbar, ui.icon_bt);
+    ui.slash_cloud = make_slash(topbar, ui.icon_cloud);
+    for (int i = 0; i < 4; i++) repaint_icon(i);
 
     // Firmware-update reminder icon, in a reserved slot between the cloud
     // status icon and the Config button.  Hidden until p4SetUpdateAvailable(true)
@@ -1630,7 +1728,7 @@ static lv_obj_t*     s_wake_overlay      = nullptr;  // transparent shield on
 // Dim level = 20 % of normal brightness, floor 8.
 static int dim_level() { int d = s_brightness_normal / 5; return d < 8 ? 8 : d; }
 
-static void tunnel_icon_timer_cb(lv_timer_t*);   // defined below
+static void icon_blink_timer_cb(lv_timer_t*);   // defined below
 
 static void wake_overlay_release_cb(lv_event_t*)
 {
@@ -1766,9 +1864,9 @@ void p4DisplayInit()
         // Timer runs always (handles brightness animation); only idle logic
         // is gated on s_timeout_ms > 0.
         lv_timer_create(screen_timeout_cb, 50, nullptr);
-        // 500 ms repaint cadence for the topbar cloud icon — provides the
+        // 500 ms repaint cadence for the topbar status icons — provides the
         // CONNECTING blink without coupling to main.cpp's loop frequency.
-        lv_timer_create(tunnel_icon_timer_cb, 500, nullptr);
+        lv_timer_create(icon_blink_timer_cb, 500, nullptr);
         if (s_timeout_ms > 0)
             ESP_LOGI(TAG, "screen timeout: %lu ms, normal brightness: %d%%",
                      (unsigned long)s_timeout_ms, (int)brite);
@@ -2153,29 +2251,19 @@ bool p4DisplayShowErrorModal(const char* title, const char* sub,
     return true;
 }
 
-// LVGL timer (500 ms period) that repaints the cloud icon based on
-// s_tunnel_state.  Decoupling from p4SetTunnelState() lets us blink at a
-// fixed cadence regardless of how often main.cpp polls wstunnelUiState().
-static void tunnel_icon_timer_cb(lv_timer_t*)
+// LVGL timer (500 ms period): advances the CONNECTING blink phase for all
+// status icons and re-derives the cloud icon from the volatile tunnel state,
+// so the cloud stays responsive regardless of how often main.cpp polls
+// wstunnelUiState() / calls p4DisplayUpdate().
+static void icon_blink_timer_cb(lv_timer_t*)
 {
-    static bool blink_phase = false;
-    blink_phase = !blink_phase;
     if (!ui.icon_cloud) return;
-    lv_color_t c;
-    switch (s_tunnel_state) {
-    case 2: // CONNECTED
-        c = lv_color_make(70, 131, 210); break;
-    case 1: // CONNECTING
-        c = blink_phase ? lv_color_make(70, 131, 210)
-                        : lv_color_hex(0x444466);
-        break;
-    case 3: // FAILED
-        c = lv_color_hex(0xC03030); break;       // red
-    case 0: // DISABLED
-    default:
-        c = lv_color_hex(0x444466); break;       // dark grey
-    }
-    lv_obj_set_style_text_color(ui.icon_cloud, c, 0);
+    s_iconBlink = !s_iconBlink;
+    s_iconSt[3] = (s_tunnel_state == 2) ? IST_CONNECTED
+                : (s_tunnel_state == 1) ? IST_CONNECTING
+                : (s_tunnel_state == 3) ? IST_FAILED
+                                        : IST_DISABLED;
+    for (int i = 0; i < 4; i++) repaint_icon(i);
 }
 
 void p4DisplayRebuild()
@@ -2268,8 +2356,20 @@ void p4DisplayUpdate(const P4DisplayData& d)
     else
         lv_label_set_text(ui.lbl_outdoor, "--°C");
 
-    lv_obj_set_style_text_color(ui.icon_wifi, d.wifiOk ? C_GREEN : C_RED, 0);
-    lv_obj_set_style_text_color(ui.icon_lin,  d.linOk  ? C_GREEN : C_RED, 0);
+    // WiFi/LIN/BLE only report a boolean (or a 3-level BLE state), so each icon
+    // stays dim until its subsystem starts in bootTask's sequence, then blinks
+    // while attempting and falls to a struck-through FAILED if the grace window
+    // expires without connecting.  derive_icon_state() owns that mapping.
+    {
+        uint32_t now = lv_tick_get();
+        static uint32_t s_wifiDown = 0, s_linDown = 0, s_bleDown = 0;
+        set_icon_state(0, derive_icon_state(d.wifiOk, d.wifiAttempting, s_wifiDown, now));
+        set_icon_state(1, derive_icon_state(d.linOk,  d.linAttempting,  s_linDown,  now));
+        // BLE: configured (bleState >= 1) is the precondition for "attempting".
+        set_icon_state(2, derive_icon_state(d.bleState >= 2,
+                                            d.bleAttempting && d.bleState >= 1,
+                                            s_bleDown, now));
+    }
 
     // Tint (water) and flame (heat) topbar indicators: bright only when LIN
     // is up AND the function is requested.  Without LIN the values reported
@@ -2281,14 +2381,6 @@ void p4DisplayUpdate(const P4DisplayData& d)
     s_linOk = d.linOk;
     s_acConnected = d.acConnected;
     refresh_flame_icon();
-
-    // BT icon: dark-grey=not configured, red=configured but no data, blue=has data
-    {
-        lv_color_t btc = (d.bleState >= 2) ? lv_color_hex(0x44aaff)
-                       : (d.bleState == 1) ? C_RED
-                                           : lv_color_hex(0x444466);
-        lv_obj_set_style_text_color(ui.icon_bt, btc, 0);
-    }
 
     // Boiler thermometer.  The scale tops out at the selected boiler target
     // (40 °C in eco, 60 °C otherwise) so the fill rescales with the setpoint.

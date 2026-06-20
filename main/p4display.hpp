@@ -79,6 +79,13 @@ struct P4DisplayData {
     const char* ssid;
     const char* ip;
 
+    // "Attempt started" flags, set as each subsystem comes up in bootTask's
+    // sequence.  A status icon stays dim (DISABLED) until its flag is set, then
+    // blinks (CONNECTING) until it connects or the grace window expires (FAILED).
+    bool        wifiAttempting;
+    bool        linAttempting;
+    bool        bleAttempting;
+
     // BLE status: 0=not configured, 1=configured but no data, 2=has data
     int bleState;
 

@@ -95,20 +95,22 @@ ws.onopen = function () {
     if (s_wsDownTimer) { clearTimeout(s_wsDownTimer); s_wsDownTimer = null; }
     wserror = false;
     updateStatusBar();
-    setDot('dot-wifi', 'ok');
+    dotOk('dot-wifi');
     ws.send('settings');
 };
 ws.onclose = function () {
     // If the socket drops mid-install, the device is rebooting into the new
     // image — arm a one-shot page reload for when the socket comes back.
     if (s_otaInstalling) s_otaReloadPending = true;
+    // Link down: WiFi and LIN go straight to CONNECTING (blink) and self-
+    // escalate to FAILED (slash) via dotConnecting's grace timer.
+    dotConnecting('dot-wifi');
+    dotConnecting('dot-lin');
     if (s_wsDownTimer) return;   // already counting down
     s_wsDownTimer = setTimeout(function () {
         s_wsDownTimer = null;
         wserror = true;
         updateStatusBar();
-        setDot('dot-wifi', 'err');
-        setDot('dot-lin',  'err');
     }, 3000);
 };
 // Re-request the full snapshot whenever the tab returns to the foreground.
@@ -227,14 +229,32 @@ function send(id, value) {
 }
 
 // ── Status dot ────────────────────────────────────────────────────────────
+// state: 'dis' dim · 'warn' blinking (connecting) · 'ok' solid · 'err' slash.
 function setDot(id, state) {
     var el = document.getElementById(id);
     if (el) el.className = 'sdot sdot-' + state;
 }
 
+// WiFi and LIN have no explicit "trying" signal, so a dropped link shows
+// 'warn' (blink) immediately and escalates to 'err' (slash) only after a grace
+// window — mirroring the LCD's CONNECTING→FAILED behaviour.
+var s_dotFailTimer = {};
+function dotConnecting(id) {
+    setDot(id, 'warn');
+    if (s_dotFailTimer[id]) return;
+    s_dotFailTimer[id] = setTimeout(function () {
+        s_dotFailTimer[id] = null;
+        setDot(id, 'err');
+    }, 4000);
+}
+function dotOk(id) {
+    if (s_dotFailTimer[id]) { clearTimeout(s_dotFailTimer[id]); s_dotFailTimer[id] = null; }
+    setDot(id, 'ok');
+}
+
 // ── Icon state (BLE / tunnel) ────────────────────────────────────────────
-// state: 0=disabled(grey), 1=configured-no-data(amber), 2=connected(blue)
-// tunnel adds: 1=connecting(blink), 3=failed(red)
+// BLE state: 0=not-configured(dim), 1=configured-no-data(blink), 2=connected(solid)
+// tunnel adds: 1=connecting(blink), 3=failed(slash)
 var BLE_DOT    = { 0: 'dis', 1: 'warn', 2: 'ok' };
 var TUNNEL_DOT = { 0: 'dis', 1: 'warn', 2: 'ok', 3: 'err' };
 function applyIcon(d) {
@@ -576,7 +596,7 @@ function applyStatus(id, value) {
     if (id === 'linok') {
         linerror = parseInt(value) !== 1;
         updateStatusBar();
-        setDot('dot-lin', linerror ? 'err' : 'ok');
+        if (linerror) dotConnecting('dot-lin'); else dotOk('dot-lin');
         // Indicators are LIN-gated — re-render so they dim on bus loss
         // and re-illuminate when the bus comes back.
         refreshIndicators();

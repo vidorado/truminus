@@ -175,20 +175,37 @@ body {
 
 /* Estado WiFi / LIN */
 .sdot {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 4px;
   border-radius: 3px;
   line-height: 0;
+  color: #fff;
 }
 .sdot .fi { font-size: 1.15em; line-height: 1; }
-.sdot-ok   { color: var(--ok); }
-.sdot-warn { color: var(--warn); }
-.sdot-err  { color: var(--err); }
-.sdot-dis  { color: var(--lbl); }
-#dot-bt.sdot-ok    { color: #44aaff; }
-#dot-cloud.sdot-ok { color: #4683d2; }
+/* One white vocabulary for every status icon: dis = dim, warn = blinking
+   (connecting), ok = solid, err = solid with a diagonal slash struck over it. */
+.sdot-dis  { opacity: 0.35; }
+.sdot-ok   { opacity: 1; }
+.sdot-warn { opacity: 1; animation: sdot-blink 1s ease-in-out infinite; }
+.sdot-err  { opacity: 1; }
+/* FAILED slash: a white line backed by a thicker --bg-coloured bar, so the
+   backing "cuts" a gap out of the white glyph while the white line reads
+   against the dark topbar — visible on both. */
+.sdot-err::before,
+.sdot-err::after {
+  content: "";
+  position: absolute;
+  left: 6%; right: 6%; top: 50%;
+  transform: translateY(-50%) rotate(-45deg);
+  transform-origin: center;
+  pointer-events: none;
+}
+.sdot-err::before { height: 5px; background: var(--bg); }
+.sdot-err::after  { height: 2px; background: #fff; }
+@keyframes sdot-blink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
 
 /* ── LCD-mirror layout ──────────────────────────────────────────────────
    Panel widths use the same proportions as the physical 800×480 panel:
