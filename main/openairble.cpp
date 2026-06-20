@@ -85,9 +85,13 @@ static int     s_advSvcDataLen         = 0;
 static NimBLEAddress s_advAddr;
 static bool          s_haveAdvAddr     = false;
 
-// 4-byte TruMinus identifier appended to service-data in the handshake.
-// The official app uses a hash of the Android device-id; we use a fixed tag.
-static const uint8_t TRUMINUS_ID[4]   = {0x54, 0x52, 0x4D, 0x4E}; // "TRMN"
+// Device-id block appended to the service-data in the handshake write.  The
+// official app (writeId/getDeviceIdBytes) appends EXACTLY 8 bytes: a 32-bit
+// id (Java-style String.hashCode of "<androidId>_<brand>_<model>") in
+// little-endian, followed by 4 zero bytes.  The unit only stores it (it can't
+// know a phone's hash beforehand), so the value is free — but the 8-byte
+// length and the trailing zeros must match.  We use a stable 32-bit tag.
+static const uint32_t TRUMINUS_ID32   = 0x4E4D5254u; // "TRMN" as LE u32
 
 // Notification receive buffer — written by the NimBLE host task, read from
 // the supervisor task after the semaphore handshake.
@@ -277,16 +281,20 @@ bool openairPollOnce() {
         closeClient(client); return false;
     }
 
-    // Handshake: [captured service-data bytes (0-12 bytes)] + [4-byte TruMinus ID]
+    // Handshake (matches the app's writeId): [captured service-data bytes] +
+    // [4-byte id, little-endian] + [4 zero bytes]  → 8 trailing bytes total.
     {
-        uint8_t hsBuf[20];
+        uint8_t hsBuf[24];
         int hsLen = 0;
-        if (s_advSvcDataLen > 0 && s_advSvcDataLen <= (int)(sizeof(hsBuf) - 4)) {
+        if (s_advSvcDataLen > 0 && s_advSvcDataLen <= (int)(sizeof(hsBuf) - 8)) {
             memcpy(hsBuf, s_advSvcData, (size_t)s_advSvcDataLen);
             hsLen = s_advSvcDataLen;
         }
-        memcpy(hsBuf + hsLen, TRUMINUS_ID, 4);
-        hsLen += 4;
+        hsBuf[hsLen++] = (uint8_t)(TRUMINUS_ID32 & 0xFF);
+        hsBuf[hsLen++] = (uint8_t)((TRUMINUS_ID32 >> 8)  & 0xFF);
+        hsBuf[hsLen++] = (uint8_t)((TRUMINUS_ID32 >> 16) & 0xFF);
+        hsBuf[hsLen++] = (uint8_t)((TRUMINUS_ID32 >> 24) & 0xFF);
+        hsBuf[hsLen++] = 0; hsBuf[hsLen++] = 0; hsBuf[hsLen++] = 0; hsBuf[hsLen++] = 0;
         hsChar->writeValue(hsBuf, (size_t)hsLen, false);
         ESP_LOGI(TAG, "handshake written (%d bytes)", hsLen);
     }

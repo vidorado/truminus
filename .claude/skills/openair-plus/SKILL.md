@@ -143,15 +143,37 @@ layout (through `Flaps2Mode`).
 
 ## Still TO VERIFY (values, not structure)
 
-Structure and the command direction are now CONFIRMED (see the byte table). Remaining unknowns:
+Structure and the command direction are CONFIRMED (see the byte table). After a second
+disassembly pass, most "unknowns" were resolved from the app — only one truly needs the unit:
 
-1. Full `Mode` enum — only AUTO=0 and MAN=2 observed; 1 (likely ECO) and any others not yet seen.
-2. `BlowerSpeed` full range (1 and 3 seen), `LedColor` palette (1, 3, 10 seen), `Flaps1/2Mode`
-   beyond 0/1, and `TempScale` °C/°F codes.
-3. Real-world telemetry **scaling**: what raw value the **physical** unit reports per field
-   (`BatteryValue`, `Sonda*`, `Errors` bitmap, RPMs). The simulator cannot supply this — needs the unit.
-4. ~~`Errors` → `MiError` mapping~~ — **DECODED** from the disassembly (see below).
-   Only the raw "no fault" sentinel and the exact `Lb` (Low Battery) trigger still want the unit.
+1. ~~Full `Mode` enum~~ — **CONFIRMED `AUTO=0, ECO=1, MAN=2`**. `acc_mode_toggle_button.dart`
+   builds the label list in order `["AUTO","ECO","MAN"]` indexed by the Mode value.
+2. `BlowerSpeed`/`LedColor`/`Flaps`/`TempScale` full ranges — only matter for *displaying* every
+   option the unit offers; irrelevant for our firmware, which only ever **sends** valid values
+   chosen in our own UI (blower 1–6, etc.). Not blocking.
+3. Real-world telemetry **scaling** — the **one genuine unit-only unknown**, and for a specific
+   reason: **the app never displays the probe temperatures**. `Sonda1C`/`Sonda2C` are referenced
+   *only* inside `Mensaje.dart` (parsed, never shown), so there is no raw→°C conversion in the
+   code to copy. `BatteryValue`/RPM scaling is likewise not surfaced. The firmware exposes the raw
+   `int16` values; the divisor (likely ×10 like the write-side `Temp`, but unconfirmed) needs a
+   `btsnoop` capture correlated with a known probe reading.
+4. ~~`Errors` → `MiError` mapping~~ — **DECODED** (see catalog below). The raw "no fault" sentinel
+   stays the only ambiguity (firmware treats `0` as no-fault, the safe default).
+
+### Handshake (`writeId`) — CONFIRMED (exact bytes)
+
+`bluetooth_service.dart::writeId` writes to the handshake char (`9d667ea8`) the value
+`serviceData ++ getDeviceIdBytes()`, after a 500 ms delay, *before* subscribing:
+
+- `serviceData` = the bytes the unit advertised under its service data (`field_57`).
+- `getDeviceIdBytes()` (`SharedData.dart`) = **exactly 8 bytes**: a 32-bit id **little-endian**
+  followed by **4 zero bytes** (`ByteData(8)`, `setUint32(0, …)`, rest left 0).
+- The 32-bit id = `_hash32("<androidId>_<brand>_<model>")`, where `_hash32` is the classic Java
+  `String.hashCode`: `h = 0; for b in utf8(s): h = (h*31 + b) & 0xFFFFFFFF`.
+
+The unit only **stores** this id (it can't know a phone's hash in advance), so the *value* is
+free — but the **8-byte length and the trailing 4 zeros must match**. The firmware appends a
+stable 32-bit tag (LE) + 4 zeros to the captured service-data, matching the frame the app sends.
 
 ### `Errors` → `MiError` catalog — CONFIRMED (decoded from `error.dart::listaErrores`)
 

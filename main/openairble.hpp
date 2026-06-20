@@ -6,8 +6,9 @@ class NimBLEAdvertisedDevice;
 
 // Telemetry received via GATT notifications from the OpenAir PLUS unit.
 // Fields 13-27 of the Mensaje frame (read-only half of the wire format).
-// Probe temperatures: raw value units TBD (tenths °C or direct °C — verify
-// against real unit).  The web UI shows them as-is for now.
+// Probe temperatures: raw value units unknown — the official app never
+// displays Sonda1C/2C (parsed but not shown), so there is no raw→°C conversion
+// to copy; the scaling needs a btsnoop capture against the unit.  Surfaced raw.
 struct OpenAirData {
     float    probe1C;            // Sonda1C — probe 1 temperature
     float    probe2C;            // Sonda2C — probe 2 temperature
@@ -24,7 +25,7 @@ struct OpenAirData {
 // Maps from P4ControlState (see main.cpp::buildOpenAirCmd).
 struct OpenAirCmd {
     int  powerState;     // 0=OFF, 1=ON
-    int  mode;           // 0=AUTO, 1=ECO(?), 2=MAN  (TO VERIFY: 1=ECO unconfirmed)
+    int  mode;           // 0=AUTO, 1=ECO, 2=MAN  (confirmed from acc_mode_toggle_button)
     int  tempTenths;     // setpoint °C × 10  (e.g. 210 = 21.0 °C; range 160-320)
     int  blowerSpeed;    // fan level 1–6 (used only in MAN mode)
     int  ledBright;      // panel LED brightness 0/1
