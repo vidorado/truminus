@@ -47,6 +47,7 @@ SOLID_GLYPHS = {
     0xF1EB: "wifi              FA_WIFI",
     0xF2C9: "thermometer-half  FA_THERM_HALF",
     0xF7E4: "fire-flame-curved FA_FIRE",
+    0xF2DC: "snowflake         FA_SNOWFLAKE (A/C cool + snoweco component)",
     # p4settings.cpp — settings menu
     0xF0E0: "envelope          FA_ENVELOPE  (MQTT)",
     0xF185: "sun               FA_SUN       (Solar/BLE)",
@@ -79,6 +80,97 @@ BRANDS_GLYPHS = {
 ALL_GLYPHS = {**SOLID_GLYPHS, **BRANDS_GLYPHS}
 # Virtual alias verified separately (not in source fonts, added via cmap patch).
 ALIAS_GLYPHS = {0xF8A2: "enter arrow (aliased from U+F2F6)  LV_SYMBOL_NEW_LINE"}
+# Custom composite glyphs built from existing outlines (not in any source font).
+CUSTOM_GLYPHS = {0xE900: "snowflake+ECO   FA_SNOWLEAF (A/C eco, snowflake + ECO text from font_regular)"}
+
+
+def add_snoweco_glyph(dst: Path):
+    """Build a custom 'snowflake + ECO' glyph at U+E900.
+
+    Upper ~58% of the cell: snowflake (U+F2DC) from the icon font.
+    Lower ~38%: letters E, C, O in bold, outlines taken from
+    main/font_bold.ttf so they read clearly at small sizes.
+    Both bands are shifted ~0.07 em down from the previous layout so the
+    glyph sits centred in the button rather than appearing top-heavy.
+    """
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    from fontTools.pens.transformPen import TransformPen
+
+    font = TTFont(str(dst))
+    cmap = font.getBestCmap()
+    snow_name = cmap[0xF2DC]
+    glyf = font["glyf"]
+    gs   = font.getGlyphSet()
+    em   = font["head"].unitsPerEm  # 512 for FA6
+
+    reg_src  = Path(dst).parent.parent / "main" / "font_bold.ttf"
+    reg_font = TTFont(str(reg_src))
+    reg_cmap = reg_font.getBestCmap()
+    reg_gs   = reg_font.getGlyphSet()
+    reg_em   = reg_font["head"].unitsPerEm
+    # Uniform baseline metrics so E, C, O all scale to the same visual height.
+    # Using the per-glyph bbox would make O/C appear smaller than E because
+    # their curves produce larger sh (overshoot / undershoot) → smaller fit().
+    os2_tbl  = reg_font.get("OS/2")
+    cap_h    = (os2_tbl.sCapHeight if (os2_tbl and os2_tbl.sCapHeight)
+                else int(0.72 * reg_em))
+    reg_hmtx = reg_font["hmtx"].metrics
+
+    def bbox_fa(name):
+        g = glyf[name]
+        g.recalcBounds(glyf)
+        return g.xMin, g.yMin, g.xMax, g.yMax
+
+    def fit(b, t):
+        sx0, sy0, sx1, sy1 = b
+        tx0, ty0, tx1, ty1 = t
+        sw, sh = sx1 - sx0, sy1 - sy0
+        s = min((tx1 - tx0) / sw, (ty1 - ty0) / sh)
+        dx = tx0 + ((tx1 - tx0) - sw * s) / 2 - sx0 * s
+        dy = ty0 + ((ty1 - ty0) - sh * s) / 2 - sy0 * s
+        return (s, 0, 0, s, dx, dy)
+
+    pen = TTGlyphPen(gs)
+
+    # Snowflake: upper band — slightly larger than before to give it more presence.
+    gs[snow_name].draw(TransformPen(pen, fit(bbox_fa(snow_name),
+                                             (0, int(0.27 * em), em, int(0.96 * em)))))
+
+    # ECO letters (bold): lower band, zero inter-letter gap so the letters
+    # sit as close together as the slot width allows (tighter kerning).
+    eco_y0, eco_y1 = int(-0.15 * em), int(0.24 * em)
+    gap    = 0
+    slot_w = em // 3
+    # All three letters must share the SAME source rectangle so fit() gives
+    # them an identical scale factor.  Using each letter's own adv_w makes
+    # 'O' (widest) smaller than 'E'/'C'.  Using the widest advance as a
+    # common reference width equalises them.
+    letter_names = [reg_cmap.get(ord(ch)) for ch in "ECO"]
+    ref_w = max((reg_hmtx.get(n, (reg_em, 0))[0] for n in letter_names if n),
+                default=reg_em)
+    for i, gname in enumerate(letter_names):
+        if not gname:
+            continue
+        x0 = i * (slot_w + gap)
+        x1 = x0 + slot_w
+        reg_gs[gname].draw(TransformPen(pen, fit((0, 0, ref_w, cap_h),
+                                                 (x0, eco_y0, x1, eco_y1))))
+
+    new_glyph = pen.glyph()
+    new_glyph.recalcBounds(glyf)
+
+    name = "snoweco"
+    glyf[name] = new_glyph
+    font["hmtx"][name] = (em, 0)
+    order = font.getGlyphOrder()
+    if name not in order:
+        order.append(name)
+        font.setGlyphOrder(order)
+    font["maxp"].numGlyphs = len(font.getGlyphOrder())
+    for sub in font["cmap"].tables:
+        if hasattr(sub, "cmap"):
+            sub.cmap[0xE900] = name
+    font.save(str(dst))
 
 
 def subset_font(src: Path, codepoints: list, label: str) -> str:
@@ -121,6 +213,9 @@ def main():
                 subtable.cmap[0xF8A2] = sign_in_glyph
         out.save(str(DST))
 
+    # Build the custom snowflake+ECO glyph (U+E900).
+    add_snoweco_glyph(DST)
+
     # Verify
     out  = TTFont(str(DST))
     cmap = out.getBestCmap()
@@ -136,6 +231,11 @@ def main():
     for cp, desc in sorted(ALIAS_GLYPHS.items()):
         found = cp in cmap
         print(f"  U+{cp:04X} [alias ]  {'✓' if found else '✗ MISSING'}  {desc}")
+        if not found:
+            ok = False
+    for cp, desc in sorted(CUSTOM_GLYPHS.items()):
+        found = cp in cmap
+        print(f"  U+{cp:04X} [custom]  {'✓' if found else '✗ MISSING'}  {desc}")
         if not found:
             ok = False
     if not ok:

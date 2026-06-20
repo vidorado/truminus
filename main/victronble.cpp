@@ -547,7 +547,16 @@ void bleSupervisorStart() {
     if (s_configured || tankIsConfigured() || multiplusIsConfigured()) {
         s_bleScan = NimBLEDevice::getScan();
         s_bleScan->setScanCallbacks(new VictronScanCb(), true);
-        s_bleScan->setActiveScan(true);
+        // PASSIVE scan (no scan requests).  All data the supervisor consumes —
+        // Victron mfr-data, BTHome tank service-data, Multiplus mfr-data — rides
+        // in the ADV payload, never the scan response, so passive loses nothing.
+        // It also avoids NimBLE-cpp's active-scan "waiting list": connectable,
+        // scannable peers (e.g. the OpenAir A/C) that don't return a scan
+        // response within the window get flushed at BLE_GAP_EVENT_DISC_COMPLETE
+        // via onResult() on a device whose m_payload can be stale/corrupt,
+        // crashing findAdvField() (load fault past the PSRAM top) and rebooting
+        // the board every scan cycle.  Passive scan never enters that path.
+        s_bleScan->setActiveScan(false);
         // Continuous scan (window == interval): on the JC4880P443C the BLE radio
         // lives on the ESP32-C6 co-processor and time-shares a single RF front
         // end with WiFi. A 50% scan duty cycle (window 80 / interval 160) plus

@@ -38,6 +38,7 @@ SOLID = [
     0xE55F,  # plug-circle-bolt (AC mains connected in INVERSOR panel)
     0xF177,  # arrow-left-long  (BAT discharging in INVERSOR panel)
     0xF178,  # arrow-right-long (BAT charging in INVERSOR panel)
+    0xF2DC,  # snowflake (A/C cool and eco — CLIMATIZACIÓN panel)
 ]
 BRANDS = [
     0xF293,  # bluetooth-b

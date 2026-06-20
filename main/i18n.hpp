@@ -156,6 +156,13 @@ enum class TK : uint8_t {
     OTA_FW_UPDATING,   // OTA progress screen title: "Actualizando firmware" / "Updating firmware"
     OTA_NO_POWER_OFF,  // OTA progress screen warning: "No apagues el dispositivo" / "Do not power off"
     TODAY,             // solar yield suffix: "hoy" / "today"
+    // ── Climate / OpenAir PLUS A/C ─────────────────────────────────────────
+    CLIMATE,           // panel title when A/C configured: "CLIMATIZACIÓN" / "CLIMATE"
+    AC_SECTION,        // monitoring section title: "AC OpenAIR Plus Bergstrom"
+    SCAN_AC,           // scan overlay title: "Buscar AC OpenAir" / "Scan OpenAir A/C"
+    AC_INFO,           // helper text under the A/C MAC field
+    FAN_AUTO,          // A/C fan toggle: "Auto"
+    FAN_MAN,           // A/C fan toggle: "Man"
     _COUNT
 };
 

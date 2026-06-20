@@ -34,6 +34,19 @@ VSCode: install `espressif.esp-idf-extension`, copy `.vscode/settings.json.templ
 
 **Before touching the build** (sdkconfig, components, link errors, IRAM overflow, corrupted `build/`, ModemManager, CI caching, the VSCode Flash button), **read `.claude/skills/pio-idf-p4/SKILL.md`** — all the IDF 6.0 + ESP32-P4 pitfalls live there.
 
+### Patching managed_components (durable)
+
+`managed_components/` is gitignored and re-downloaded by the IDF component
+manager, so editing those files directly does NOT persist. The durable way to
+patch a registry component (or PlatformIO platform files) is **`scripts/apply_patches.py`**,
+run automatically at cmake-configure time (wired in `CMakeLists.txt`). Each
+entry is an idempotent string find/replace (no-op once applied), so it
+re-applies after any component re-download. To add one: append an entry to the
+`PATCHES` list (target path + old/new strings + desc) and, by convention, drop
+a documentation diff in `patches/`. Existing patches cover `esp_lcd_st7701`,
+`jc4880_bsp`, `esp_lvgl_port` (GT911 graceful I2C), `esp-nimble-cpp`
+(`findAdvField` OOB-read guard) and PlatformIO bootloader linker includes.
+
 ### Web assets are served from LittleFS (8 MB partition)
 
 Files in `data/` are baked into a LittleFS image by `littlefs_create_partition_image()` (`main/CMakeLists.txt`) and flashed to the `littlefs` partition at `0x810000`. A `web_assets_prep` `ALL` target runs on every build *before* the image is regenerated: `scripts/cache_bust.py` rewrites `?v=<sha1>` querystrings so browsers refetch changed assets, and `scripts/gen_gz.py` pre-gzips compressible files as adjacent `<file>.gz` (`mtime=0` for determinism). `serveFile()` prefers a sibling `.gz` with `Content-Encoding: gzip`; `data/*.gz` is gitignored. Web-only reflash: `idf.py littlefs-flash-littlefs`. (The old `compress_fs.py` → `main/webfiles.h` embed pipeline is gone; the script remains but is unused.)
@@ -143,6 +156,7 @@ void lvglUnlock();
 | `batt` | `addr` | Ultimatron BLE MAC |
 | `tank` | `addr` | Tank BTHome sensor MAC (moisture tag 0x2F). Empty = disabled. |
 | `multiplus` | `addr`, `key` | VE.Bus dongle MAC + per-device AES-128 bind key. Empty = panel hidden. |
+| `openair` | `addr` | OpenAir PLUS A/C (Bergstrom/Dirna) BLE MAC. Empty = CALEFACCIÓN panel; set = CLIMATIZACIÓN panel with cool/eco/heat/off modes. No driver yet (UI-only). |
 | `tunnel` | `enabled`, `server`, `token`, `pass` | WSS tunnel config + BasicAuth password for tunneled web access (see wss-tunnel skill) |
 | `ota` | `rb_why`, `rb_heap` | Last rollback reason + heap (see firmware-ota skill) |
 

@@ -44,8 +44,8 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "BLOQUEADO",                // LOCKED_LBL
     "Clase %02Xh  /  Cod.%d",  // ERR_SUBTITLE_FMT
     "Aceptar",                  // ACCEPT
-    "Monitorizaci\xC3\xB3n",    // SOLAR_CFG (label kept for compat — screen retitled)
-    "Config. Monitorizaci\xC3\xB3n", // SOLAR_TITLE
+    "Perif\xC3\xA9ricos",        // SOLAR_CFG
+    "Perif\xC3\xA9ricos / Peripherals", // SOLAR_TITLE
     "Direcc. MAC",              // SOLAR_ADDR
     "Clave cifrado",            // SOLAR_KEY
     "Sin datos",                // SOLAR_NO_DATA
@@ -68,7 +68,7 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "usuario...",
     "contrase\xC3\xB1" "a (opcional)...",
     "Introduce los datos del broker MQTT",
-    "TruMinus - Monitorizaci\xC3\xB3n",
+    "TruMinus - Perif\xC3\xA9ricos",
     "Bater\xC3\xAD" "a Ultimatron",
     "MAC BLE (12 hex, sin \":\"): ",
     "Clave cifrado (32 hex):",
@@ -153,6 +153,12 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Actualizando firmware",                                         // OTA_FW_UPDATING
     "No apagues el dispositivo",                                     // OTA_NO_POWER_OFF
     "hoy",                                                           // TODAY
+    "CLIMATIZACI\xC3\x93N",                                          // CLIMATE
+    "AC OpenAIR Plus Bergstrom",                                     // AC_SECTION
+    "Buscar AC OpenAir",                                             // SCAN_AC
+    "BLE \"My OpenAir PLUS\". Opcional.",                            // AC_INFO
+    "Auto",                                                          // FAN_AUTO
+    "Man",                                                           // FAN_MAN
 };
 
 static const char* EN_STRINGS[(int)TK::_COUNT] = {
@@ -192,8 +198,8 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "LOCKED",
     "Class %02Xh  /  Code %d",
     "Accept",
-    "Monitoring",
-    "Monitoring Config",
+    "Peripherals",
+    "Peripherals / Periféricos",
     "MAC Address",
     "Enc. Key",
     "No data",
@@ -216,7 +222,7 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "user...",
     "password (optional)...",
     "Enter MQTT broker details",
-    "TruMinus - Monitoring",
+    "TruMinus - Peripherals",
     "Ultimatron Battery",
     "MAC BLE (12 hex, no \":\"):",
     "Encryption Key (32 hex):",
@@ -301,6 +307,12 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Updating firmware",                                             // OTA_FW_UPDATING
     "Do not power off",                                              // OTA_NO_POWER_OFF
     "today",                                                         // TODAY
+    "CLIMATE",                                                       // CLIMATE
+    "AC OpenAIR Plus Bergstrom",                                     // AC_SECTION
+    "Scan OpenAir A/C",                                              // SCAN_AC
+    "BLE \"My OpenAir PLUS\". Optional.",                            // AC_INFO
+    "Auto",                                                          // FAN_AUTO
+    "Man",                                                           // FAN_MAN
 };
 
 const char* t(TK key) {

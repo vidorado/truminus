@@ -28,6 +28,10 @@
 
 static const char* TAG = "cfg";
 
+// Defined in main.cpp — re-read the cached "OpenAir A/C configured" flag after
+// the Monitorización screen saves it, so the panel switches without a reboot.
+extern void openairCfgReload();
+
 // ── Colours (same palette as p4display.cpp) ──────────────────────────────────
 #define C_BG         lv_color_hex(0x1a1a2e)
 #define C_TOPBAR     lv_color_hex(0x0f0f22)
@@ -46,7 +50,8 @@ static const char* TAG = "cfg";
 #define FA_COG       "\xEF\x80\x93"   // U+F013
 #define FA_WIFI      "\xEF\x87\xAB"   // U+F1EB
 #define FA_ENVELOPE  "\xEF\x83\xA0"   // U+F0E0
-#define FA_SUN       "\xEF\x86\x85"   // U+F185
+#define FA_SUN        "\xEF\x86\x85"   // U+F185
+#define FA_BLUETOOTH  "\xEF\x8A\x93"   // U+F293 (brand icon — Periféricos menu)
 #define FA_DISPLAY   "\xEF\x84\x88"   // U+F108
 #define FA_GLOBE     "\xEF\x82\xAC"   // U+F0AC
 #define FA_EYE       "\xEF\x81\xAE"   // U+F06E
@@ -469,7 +474,7 @@ static void show_menu(lv_obj_t* /*from*/) {
 #ifdef NO_MQTT
     static const MenuBtn ITEMS[] = {
         { FA_WIFI,     TK::WIFI_CFG,    menu_wifi_cb     },
-        { FA_SUN,      TK::SOLAR_CFG,   menu_ble_cb      },
+        { FA_BLUETOOTH, TK::SOLAR_CFG,   menu_ble_cb      },
         { FA_DISPLAY,  TK::DISP_CFG,    menu_display_cb  },
         { FA_GLOBE,    TK::LANGUAGE,    menu_language_cb },
         { FA_CLOUD,    TK::TUNNEL_CFG,  menu_tunnel_cb   },
@@ -479,7 +484,7 @@ static void show_menu(lv_obj_t* /*from*/) {
     static const MenuBtn ITEMS[] = {
         { FA_WIFI,     TK::WIFI_CFG,    menu_wifi_cb     },
         { FA_ENVELOPE, TK::MQTT_CFG,    menu_mqtt_cb     },
-        { FA_SUN,      TK::SOLAR_CFG,   menu_ble_cb      },
+        { FA_BLUETOOTH, TK::SOLAR_CFG,   menu_ble_cb      },
         { FA_DISPLAY,  TK::DISP_CFG,    menu_display_cb  },
         { FA_GLOBE,    TK::LANGUAGE,    menu_language_cb },
         { FA_CLOUD,    TK::TUNNEL_CFG,  menu_tunnel_cb   },
@@ -1112,6 +1117,7 @@ struct BleCtx {
     lv_obj_t* ta_tank_mac;
     lv_obj_t* ta_multi_mac;
     lv_obj_t* ta_multi_key;
+    lv_obj_t* ta_ac_mac;
     lv_obj_t* kb;
     lv_obj_t* lbl_status;
     lv_obj_t* prev;
@@ -1178,6 +1184,16 @@ static void ble_multi_select_cb(lv_event_t* e) {
     lv_obj_delete(ov);
 }
 
+static void ble_ac_select_cb(lv_event_t* e) {
+    lv_obj_t* btn   = lv_event_get_target_obj(e);
+    const char* mac = (const char*)lv_obj_get_user_data(btn);
+    lv_textarea_set_text(bl_ctx.ta_ac_mac, mac ? mac : "");
+    lv_obj_t* ov   = lv_obj_get_parent(lv_obj_get_parent(btn));
+    lv_obj_t* prev = (lv_obj_t*)lv_obj_get_user_data(ov);
+    lv_screen_load(prev);
+    lv_obj_delete(ov);
+}
+
 static void ble_scan_victron_cb(lv_event_t*) {
     lv_obj_t* list = nullptr;
     lv_obj_t* sp   = nullptr;
@@ -1228,6 +1244,19 @@ static void ble_scan_multi_cb(lv_event_t*) {
     bleDiscoveryScan(true, ble_scan_done, ctx);
 }
 
+static void ble_scan_ac_cb(lv_event_t*) {
+    lv_obj_t* list = nullptr;
+    lv_obj_t* sp   = nullptr;
+    make_scan_overlay(bl_ctx.scr, t(TK::SCAN_AC), &list, &sp);
+    auto* ctx      = (BleScanCtx*)malloc(sizeof(BleScanCtx));
+    ctx->list      = list;
+    ctx->spinner   = sp;
+    ctx->select_cb = ble_ac_select_cb;
+    // OpenAir advertises a plain GAP name ("My OpenAir PLUS"), no Victron
+    // mfr-data — show all devices so the user can pick it.
+    bleDiscoveryScan(false, ble_scan_done, ctx);
+}
+
 static void ble_save_cb(lv_event_t*) {
     nvs_write("solar", "addr", lv_textarea_get_text(bl_ctx.ta_solar_mac));
     nvs_write("solar", "key",  lv_textarea_get_text(bl_ctx.ta_solar_key));
@@ -1236,6 +1265,8 @@ static void ble_save_cb(lv_event_t*) {
     nvs_write("tank",  "addr", lv_textarea_get_text(bl_ctx.ta_tank_mac));
     nvs_write("multiplus", "addr", lv_textarea_get_text(bl_ctx.ta_multi_mac));
     nvs_write("multiplus", "key",  lv_textarea_get_text(bl_ctx.ta_multi_key));
+    nvs_write("openair",   "addr", lv_textarea_get_text(bl_ctx.ta_ac_mac));
+    openairCfgReload();   // refresh the cached A/C flag (no per-tick NVS read)
     victronBleReloadConfig();
     ultimatronBleReloadConfig();
     tankBleReloadConfig();
@@ -1430,6 +1461,38 @@ static void show_ble(lv_obj_t* from) {
     lv_obj_set_pos(lbl_tinfo, COL2_X, 394);
     lv_obj_set_width(lbl_tinfo, COL2_W);
     lv_label_set_long_mode(lbl_tinfo, LV_LABEL_LONG_WRAP);
+
+    // ── OpenAir PLUS A/C (Bergstrom/Dirna) — RIGHT column, below the tank.
+    //    MAC only (no key); empty = panel stays CALEFACCIÓN, set = CLIMATIZACIÓN.
+    lv_obj_t* lbl_ac_title = make_label(bl_ctx.panel, t(TK::AC_SECTION), f->title, C_DIM);
+    lv_obj_set_pos(lbl_ac_title, COL2_X, 470);
+
+    lv_obj_t* lbl_acmac = make_label(bl_ctx.panel, t(TK::MAC_BLE_LABEL), f->f22, C_LABEL);
+    lv_obj_set_pos(lbl_acmac, COL2_X, 510);
+
+    bl_ctx.ta_ac_mac = lv_textarea_create(bl_ctx.panel);
+    lv_obj_set_pos(bl_ctx.ta_ac_mac, COL2_X, 538);
+    lv_obj_set_size(bl_ctx.ta_ac_mac, 286, 52);
+    lv_obj_set_style_text_font(bl_ctx.ta_ac_mac, f->f22, 0);
+    lv_textarea_set_one_line(bl_ctx.ta_ac_mac, true);
+    nvs_read("openair", "addr", buf, sizeof(buf));
+    if (buf[0]) lv_textarea_set_text(bl_ctx.ta_ac_mac, buf);
+    lv_obj_add_event_cb(bl_ctx.ta_ac_mac, ble_alpha_focus_cb, LV_EVENT_FOCUSED, nullptr);
+
+    {
+        lv_obj_t* sb = lv_button_create(bl_ctx.panel);
+        lv_obj_set_pos(sb, COL2_X + 294, 538);
+        lv_obj_set_size(sb, 46, 52);
+        style_btn(sb);
+        lv_obj_add_event_cb(sb, ble_scan_ac_cb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t* sl = make_label(sb, FA_SEARCH, f->icons22, C_TEXT);
+        lv_obj_center(sl);
+    }
+
+    lv_obj_t* lbl_acinfo = make_label(bl_ctx.panel, t(TK::AC_INFO), f->f20, C_LABEL);
+    lv_obj_set_pos(lbl_acinfo, COL2_X, 602);
+    lv_obj_set_width(lbl_acinfo, COL2_W);
+    lv_label_set_long_mode(lbl_acinfo, LV_LABEL_LONG_WRAP);
 
     // ── Status + Save button — fixed children of scr (always visible at bottom) ──
     bl_ctx.lbl_status = make_label(bl_ctx.scr, "", f->f20, C_LABEL);

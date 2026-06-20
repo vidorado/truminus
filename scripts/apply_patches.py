@@ -123,6 +123,40 @@ PATCHES = [
         "desc": "esp_lvgl_port: graceful I2C error handling in touchpad read",
     },
 
+    # ── ESP-IDF component: esp-nimble-cpp — findAdvField OOB read ───────────
+    # On BLE_GAP_EVENT_DISC_COMPLETE during *active* scanning, NimBLEScan
+    # flushes its "waiting list" (connectable/scannable peers that never
+    # returned a scan response) by calling onResult() on each.  If such a
+    # device's m_payload is stale/corrupt, findAdvField() walks past the end
+    # of the buffer — observed as a Load access fault at PSRAM_top+4
+    # (0x4c000004) that reboots the board every scan cycle.  Bail out when the
+    # payload size is impossible (legal legacy adv+scanrsp <= 62 B, BLE5
+    # extended <= 1650 B) instead of walking off the end.
+    # Patch: patches/nimble_findadvfield_guard.patch
+    {
+        "target": ROOT / "managed_components" / "h2zero__esp-nimble-cpp"
+                  / "src" / "NimBLEAdvertisedDevice.cpp",
+        "old": (
+            "    size_t  length = m_payload.size();\n"
+            "    size_t  data   = 0;\n"
+            "    uint8_t count  = 0;"
+        ),
+        "new": (
+            "    size_t  length = m_payload.size();\n"
+            "    // TruMinus guard: a corrupt/oversized payload (seen on the\n"
+            "    // active-scan DISC_COMPLETE waiting-list flush) would make the\n"
+            "    // walk below run off the end of the buffer (load fault past the\n"
+            "    // PSRAM top).  62 B = max legacy adv+scanrsp, 1650 B = max BLE5\n"
+            "    // extended adv; anything larger is corruption, so bail.\n"
+            "    if (length > 1650) {\n"
+            "        return 0;\n"
+            "    }\n"
+            "    size_t  data   = 0;\n"
+            "    uint8_t count  = 0;"
+        ),
+        "desc":   "esp-nimble-cpp: guard findAdvField against corrupt/oversized m_payload",
+    },
+
     # Same patch for the versioned copy of the platform (if present).
     {
         "target": Path.home() / ".platformio" / "platforms"
