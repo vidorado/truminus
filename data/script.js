@@ -78,6 +78,11 @@ fetchFsVer(function (v) { s_fsVerLoaded = v; });
 
 // ── WebSocket ─────────────────────────────────────────────────────────────
 var ws = new ReconnectingWebSocket(gateway);
+// Bound the reconnect backoff: the library otherwise decays up to 30 s, so a
+// few failed attempts while the tab was backgrounded would leave a long wait
+// before the next try on return.  Cap it so a reconnect is never more than a
+// few seconds away.
+ws.maxReconnectInterval = 4000;
 // Liveness is handled by WS control PING (opcode 0x9) sent every 20 s from
 // the firmware; browsers auto-respond with PONG.  No JS heartbeat needed.
 
@@ -102,10 +107,12 @@ ws.onclose = function () {
     // If the socket drops mid-install, the device is rebooting into the new
     // image — arm a one-shot page reload for when the socket comes back.
     if (s_otaInstalling) s_otaReloadPending = true;
-    // Link down: WiFi and LIN go straight to CONNECTING (blink) and self-
-    // escalate to FAILED (slash) via dotConnecting's grace timer.
+    // WiFi dot tracks the web link itself: blink, then escalate to the slash.
     dotConnecting('dot-wifi');
-    dotConnecting('dot-lin');
+    // LIN state belongs to the board, not the web socket — don't blink it on a
+    // WS drop.  Forget the last value so the reconnect snapshot sets the real
+    // state straight away (struck if already down), with no spurious blink.
+    s_linPrevOk = undefined;
     if (s_wsDownTimer) return;   // already counting down
     s_wsDownTimer = setTimeout(function () {
         s_wsDownTimer = null;
@@ -113,6 +120,21 @@ ws.onclose = function () {
         updateStatusBar();
     }, 3000);
 };
+// A returning tab often holds a socket that still reads OPEN (readyState 1)
+// but is actually half-dead — sends vanish and the browser is slow (~10 s) to
+// notice.  After re-requesting state on a supposedly-live socket, arm a short
+// probe: if nothing comes back, force a fresh reconnect immediately instead of
+// waiting for the browser's dead-connection detection.  Any inbound WS message
+// (onmessage) cancels it.
+var s_rxProbeTimer = null;
+function armRxProbe(ms) {
+    if (s_rxProbeTimer) clearTimeout(s_rxProbeTimer);
+    s_rxProbeTimer = setTimeout(function () {
+        s_rxProbeTimer = null;
+        ws.refresh();   // drop the half-dead socket; the library reconnects
+    }, ms);
+}
+
 // Re-request the full snapshot whenever the tab returns to the foreground.
 // A phone that slept may have missed broadcasts (or hold a half-open socket
 // that hasn't reconnected yet); this refreshes the state without waiting for
@@ -166,8 +188,12 @@ document.addEventListener('visibilitychange', function () {
     var stale = s_hiddenAt && (Date.now() - s_hiddenAt) > STALE_AFTER_MS;
     s_hiddenAt = 0;
     if (!stale) {
-        // Short absence: a live socket can just re-pull the snapshot.
-        if (ws.readyState === 1) ws.send('settings');
+        // Short absence: re-pull the snapshot on the supposedly-live socket and
+        // probe — if no reply lands quickly, armRxProbe forces a reconnect so
+        // recovery is ~1.5 s instead of waiting on the browser's dead-socket
+        // detection.  If the socket isn't OPEN, the library is already
+        // reconnecting (bounded by maxReconnectInterval).
+        if (ws.readyState === 1) { ws.send('settings'); armRxProbe(1500); }
         return;
     }
     // Long sleep: the socket often looks OPEN but is half-dead (very common
@@ -182,6 +208,8 @@ document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') closeAbout();
 });
 ws.onmessage = function (event) {
+    // Any inbound frame proves the socket is alive — cancel the re-focus probe.
+    if (s_rxProbeTimer) { clearTimeout(s_rxProbeTimer); s_rxProbeTimer = null; }
     var d = JSON.parse(event.data);
     if (!d.command) return;
     if (d.command === 'solar') { applySolar(d); return; }
@@ -235,9 +263,11 @@ function setDot(id, state) {
     if (el) el.className = 'sdot sdot-' + state;
 }
 
-// WiFi and LIN have no explicit "trying" signal, so a dropped link shows
-// 'warn' (blink) immediately and escalates to 'err' (slash) only after a grace
-// window — mirroring the LCD's CONNECTING→FAILED behaviour.
+// A live link drop blinks ('warn') then escalates to the slash ('err') after a
+// grace window, mirroring the LCD's CONNECTING→FAILED.  A state that arrives
+// already-down (e.g. the reconnect snapshot, when the board has long been in
+// FAILED and isn't retrying) goes straight to 'err' via dotFailed — no spurious
+// blink.
 var s_dotFailTimer = {};
 function dotConnecting(id) {
     setDot(id, 'warn');
@@ -251,6 +281,14 @@ function dotOk(id) {
     if (s_dotFailTimer[id]) { clearTimeout(s_dotFailTimer[id]); s_dotFailTimer[id] = null; }
     setDot(id, 'ok');
 }
+function dotFailed(id) {
+    if (s_dotFailTimer[id]) { clearTimeout(s_dotFailTimer[id]); s_dotFailTimer[id] = null; }
+    setDot(id, 'err');
+}
+// Last known LIN ok-ness, so we only blink on a live ok→down transition.
+// Reset on WS drop (see onclose) so the next snapshot reflects the board's real
+// state immediately.
+var s_linPrevOk;
 
 // ── Icon state (BLE / tunnel) ────────────────────────────────────────────
 // BLE state: 0=not-configured(dim), 1=configured-no-data(blink), 2=connected(solid)
@@ -594,9 +632,13 @@ function applyStatus(id, value) {
     if (id === 'ssid' || id === 'ip') return;
 
     if (id === 'linok') {
-        linerror = parseInt(value) !== 1;
+        var linOk = parseInt(value) === 1;
+        linerror = !linOk;
         updateStatusBar();
-        if (linerror) dotConnecting('dot-lin'); else dotOk('dot-lin');
+        if (linOk)                     dotOk('dot-lin');
+        else if (s_linPrevOk === true) dotConnecting('dot-lin'); // live drop: blink→strike
+        else                           dotFailed('dot-lin');     // already down: strike now
+        s_linPrevOk = linOk;
         // Indicators are LIN-gated — re-render so they dim on bus loss
         // and re-illuminate when the bus comes back.
         refreshIndicators();
