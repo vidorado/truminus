@@ -29,9 +29,7 @@
 
 static const char* TAG = "cfg";
 
-// Defined in main.cpp — re-read the cached "OpenAir A/C configured" flag after
-// the Monitorización screen saves it, so the panel switches without a reboot.
-extern void openairCfgReload();
+#include "openair_config.hpp"
 
 // ── Colours (same palette as p4display.cpp) ──────────────────────────────────
 #define C_BG         lv_color_hex(0x1a1a2e)
