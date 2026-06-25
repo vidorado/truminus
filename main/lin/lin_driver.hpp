@@ -1,8 +1,6 @@
 #pragma once
-// LIN bus driver — ESP-IDF UART implementation.
-// Drop-in replacement for the former Arduino-based Lin_Interface library.
-// The LIN protocol logic (break, sync, PID, checksum) is identical;
-// only the UART API changed from HardwareSerial to driver/uart.h.
+// LIN bus driver — ESP-IDF UART implementation (driver/uart.h).
+// Implements LIN break, sync, PID and enhanced checksum over half-duplex UART.
 
 #include <cstdint>
 #include "driver/uart.h"

@@ -41,8 +41,8 @@
 // #define LOG_ULT_ENABLED         // Ultimatron BMS — chatty per poll
 // #define LOG_WIFI_ENABLED        // (not used by current wifi_manager — see §3)
 // #define LOG_WEB_ENABLED         // (not used by current webserver  — see §3)
-// #define LOG_LIN_ENABLED         // dormant Arduino LIN frame layer
-// #define LOG_SETTINGS_ENABLED    // dormant settings.cpp
+// #define LOG_LIN_ENABLED         // dormant legacy LIN frame layer
+// #define LOG_SETTINGS_ENABLED    // dormant settings.cpp (not yet ported to IDF)
 // #define LOG_MEM_ENABLED
 // #define LOG_LVGL_ENABLED
 // #define LOG_SNIFF_ENABLED

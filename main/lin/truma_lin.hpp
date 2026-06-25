@@ -9,9 +9,9 @@
 // through a single shared snapshot that the LCD / WebSocket main loop polls.
 //
 // Setpoints come from p4GetControlState() — that is, whatever the LCD or the
-// WebSocket dispatcher last wrote.  Wakeup → on/off logic mirrors the legacy
-// Arduino implementation: turn on when heating, boiler or fan is active;
-// linger 20 s after the last activity before sending the off command.
+// WebSocket dispatcher last wrote.  Wakeup → on/off logic: turn on when
+// heating, boiler or fan is active; linger 20 s after the last activity
+// before sending the off command.
 //
 
 #include <cstdint>

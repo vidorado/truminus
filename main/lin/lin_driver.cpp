@@ -134,8 +134,7 @@ void LinDriver::sendBreak() {
     // dominant pulse at normal baud.  LIN spec minimum break is 13 bits.
     // The native uart_write_bytes_with_break() API appends break AFTER
     // data, so it can't generate a leading break without a dummy prefix
-    // byte; we tried that variant and saw no behaviour change.  This is
-    // the same break the Arduino driver on the C5 board produces.
+    // byte; we tried that variant and saw no behaviour change.
     uart_wait_tx_done(m_uart, pdMS_TO_TICKS(10));
     uart_set_baudrate(m_uart, m_baud >> 1);
     uint8_t zero = 0x00;
