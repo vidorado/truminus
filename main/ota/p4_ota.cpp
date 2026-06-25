@@ -94,7 +94,8 @@ static constexpr uint32_t OTA_DL_PACE_MS    = 5;
 // Created at static-init time (C++ global constructors run on the main task
 // with the FreeRTOS scheduler already up) so the public getters are safe to
 // call from the display loop before bootTask reaches p4OtaStart().
-static SemaphoreHandle_t s_lock = xSemaphoreCreateMutex();
+static SemaphoreHandle_t s_lock         = xSemaphoreCreateMutex();
+static SemaphoreHandle_t s_prep_trigger = nullptr;  // given by p4OtaInstall(); taken by prep task
 static P4OtaStatus       s_status = {};
 static std::atomic<bool> s_installing{false};
 static char              s_asset_url[256] = "";
@@ -560,11 +561,13 @@ fail:
     esp_restart();   // never returns
 }
 
-// Orchestrator (own task, off the LVGL/WS caller context since the NimBLE
-// teardown blocks): frees internal DRAM by tearing NimBLE down entirely, THEN
-// spawns the install task.  Freeing NimBLE's tens of KB gives the SDIO RX path
-// the headroom it needs AND lets the tunnel stay up for remote progress.
+// Orchestrator pre-created at boot (stack in DRAM, allocated before NimBLE
+// starts).  Parks on s_prep_trigger; p4OtaInstall() unblocks it by giving the
+// semaphore — no task allocation happens at install time.
+// Tears down NimBLE (frees tens of KB) then spawns the real install task.
 static void install_prep_task(void*) {
+    xSemaphoreTake(s_prep_trigger, portMAX_DELAY);
+
     ESP_LOGI(TAG, "install prep: free_int=%u largest=%u",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
@@ -607,16 +610,8 @@ void p4OtaInstall() {
     bool expected = false;
     if (!s_installing.compare_exchange_strong(expected, true)) return;
 
-    // Small prep task frees DRAM (NimBLE teardown) then spawns the real install
-    // task.  A modest stack so it allocates even with the board's tight internal.
-    BaseType_t cr = xTaskCreate(install_prep_task, "p4_ota_prep",
-                                4096, nullptr, 4, nullptr);
-    if (cr != pdPASS) {
-        ESP_LOGE(TAG, "install prep create failed — aborting");
-        s_installing.store(false);
-        status_set_error("low memory");
-        broadcast_status();
-    }
+    // Unblock the prep task pre-created at boot — no allocation at install time.
+    xSemaphoreGive(s_prep_trigger);
 }
 
 // ── Periodic check task ──────────────────────────────────────────────────
@@ -1285,4 +1280,8 @@ void p4OtaStart() {
     // must yield CPU to the WiFi/tunnel tasks (the real contention is airtime,
     // but keeping it below everything networking-related costs nothing).
     xTaskCreate(check_task,    "p4_ota_check",  6144, nullptr, 1, nullptr);
+    // Pre-create the install prep task now (DRAM plentiful, NimBLE not yet
+    // started) so p4OtaInstall() only needs to give a semaphore at install time.
+    s_prep_trigger = xSemaphoreCreateBinary();
+    xTaskCreate(install_prep_task, "p4_ota_prep", 4096, nullptr, 4, nullptr);
 }
