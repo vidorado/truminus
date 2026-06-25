@@ -1812,6 +1812,7 @@ static void screen_timeout_cb(lv_timer_t*) {
     } else if (!s_dimmed && !s_blanked && idle >= s_timeout_ms - 7000) {
         s_target = dim_level();
         s_dimmed = true;
+        install_wake_overlay();   // first tap while dimmed wakes only, same as blanked
     }
 }
 
