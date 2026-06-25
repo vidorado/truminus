@@ -19,9 +19,6 @@ build/
 managed_components/
 sdkconfig.old
 
-# Graphify
-graphify-out/cache
-
 # Pre-gzipped web assets — rebuilt by scripts/gen_gz.py on every build,
 # stored next to their source files in data/ for the webserver to serve
 # with Content-Encoding: gzip.  Build artifact, not source.
@@ -44,4 +41,5 @@ main/slave_fw/*.bin
 *.eez-project-ui-state
 
 # Graphify output — regenerate with `graphify update .`
-graphify-out/
+# Graphify
+graphify-out
