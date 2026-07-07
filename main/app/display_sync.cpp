@@ -157,7 +157,20 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
     // heating + hot water even with the A/C configured), but each source
     // keeps its own ack so a masked fault re-surfaces only if not yet acked.
     {
-        int truma = lin.errCode;
+        // A GetErrorInfo reply is only a real fault when its class is one the
+        // Truma actually defines (see truma-protocol skill). At cold boot the
+        // 0x3D read can arrive one byte misaligned and echo request bytes back
+        // (e.g. class 0x46 / code 0x20), which would otherwise pop a spurious
+        // red modal — so ignore any class outside the known set, mirroring the
+        // "unknown A/C code → ignore" guard below.
+        auto trumaClassKnown = [](uint8_t c) {
+            switch (c) {
+                case 0x01: case 0x02: case 0x05: case 0x06:
+                case 0x10: case 0x20: case 0x30: case 0x40: return true;
+                default: return false;
+            }
+        };
+        int truma = trumaClassKnown(lin.errClass) ? lin.errCode : 0;
         OpenAirData omd = openairGetData();
         int ac = (openairCfgIsActive() && omd.valid) ? omd.errors : 0;
         if (ac != 0 && !openairErrorTitle(ac)) ac = 0;   // unknown A/C code → ignore

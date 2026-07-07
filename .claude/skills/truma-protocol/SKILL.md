@@ -341,6 +341,15 @@ byte[6] = errorShort
 | 0x10, 0x20, 0x30 | Error | Software reset may clear it |
 | 0x40  | Locked | Requires technical support or 12 V power-cycle |
 
+> ⚠️ **Only surface a fault when `errClass` is one of the classes above.** At cold
+> boot the `0x3D` reply can arrive **one byte misaligned** (the half-duplex echo is
+> read as 1 or 2 bytes non-deterministically — see `lin_driver.cpp`), so the parser
+> loads `errClass`/`errCode` from the *request* frame's `byte[5]=0x46` / `byte[6]=0x20`
+> instead of a real reply. That surfaces as a spurious **"Clase 46h / Cod.32"** red
+> modal on the LCD. `0x46` is not a defined class, so `display_sync.cpp` gates the
+> Truma error modal on a known-class check (`trumaClassKnown`), mirroring the
+> "unknown A/C code → ignore" guard. Never treat an out-of-set class as a fault.
+
 ---
 
 ## Error reset sequence
