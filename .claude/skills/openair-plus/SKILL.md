@@ -112,8 +112,8 @@ layout (through `Flaps2Mode`).
 | Bytes | Field | W/R | Confirmed values / scaling |
 |-------|-------|-----|----------------------------|
 | 0–3   | `RealTimeClock` (u32) | W | seconds since midnight, from the **phone** clock (e.g. 56075 = 15:34:35) |
-| 4–5   | `BatteryType` | W | constant **1** (in the real-unit capture; app never exposes it) |
-| 6–7   | `Power` | W | constant **0** (real-unit capture — command frames send 0, not 1) |
+| 4–5   | `BatteryType` | W | **`0` = Pb (lead-acid), `1` = lithium** (confirmed live: switching the unit's battery type flips this bit) |
+| 6–7   | `Power` | W | **`0` = 2.0 kW, `1` = 1.2 kW** (confirmed live — NOTE the mapping is inverted from what one might guess; small index = high power) |
 | 8–9   | `TempScale` | W | 0 (°C) |
 | 10–11 | `PowerState` | W | **0 = OFF, 1 = ON** |
 | 12–13 | `Mode` | W | **0 = AUTO, 2 = MAN** (1/ECO not yet observed) |
@@ -227,7 +227,9 @@ screen** after device selection: try to connect, and if it doesn't succeed withi
 
 ### Config fields (BatteryType, Power) — change only while the unit is OFF
 
-`Power` = max A/C power (`0` = 1.2 kW, `1` = 2.0 kW). `BatteryType` = battery chemistry (`1` = lithium).
+`Power` = max A/C power (**`0` = 2.0 kW, `1` = 1.2 kW** — inverted mapping, confirmed live). `BatteryType`
+= battery chemistry (**`0` = Pb/lead-acid, `1` = lithium**, confirmed live). Both are single-bit binary
+selectors read straight from the telemetry write-region (bytes 6-7 and 4-5).
 The **official app forbids changing either while the unit is running** — doing it hot is harmful. So in
 TruMinus these are **configuration settings on the Peripherals screen**, not live panel buttons, and are
 only written when the unit is OFF; while running we always mirror whatever telemetry reports (the

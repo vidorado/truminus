@@ -14,8 +14,8 @@
 //
 // Byte map of the write frame:
 //   0-3   RealTimeClock  u32  seconds since midnight (big-endian, 8 hex chars)
-//   4-5   BatteryType         always 0
-//   6-7   Power               always 1
+//   4-5   BatteryType         chemistry 0=Pb (lead-acid), 1=lithium — config field
+//   6-7   Power               max power 0=2.0 kW, 1=1.2 kW (inverted) — config field
 //   8-9   TempScale           0 = °C
 //   10-11 PowerState          0=OFF 1=ON
 //   12-13 Mode                0=AUTO 2=MAN (1=ECO unconfirmed)
@@ -63,6 +63,10 @@ static const char* NVS_ADDR = "addr";
 // ── Module state ─────────────────────────────────────────────────────────────
 static bool              s_configured  = false;
 static std::string       s_targetAddr;        // uppercase hex, 12 chars, no colons
+// True once a telemetry frame has been read for the current target — i.e. the
+// handshake succeeded and the unit accepts us as a paired client. Reset when the
+// config (re)loads; the pairing assistant watches it to auto-close on success.
+static volatile bool     s_paired      = false;
 
 static SemaphoreHandle_t s_dataMux     = nullptr;
 static SemaphoreHandle_t s_cmdMux      = nullptr;
@@ -165,8 +169,15 @@ static bool parseNotification(const uint8_t* ascii, int len) {
     // we don't explicitly set (BatteryType, Power, TempScale, LED, flaps, …).
     memcpy(s_writeShadow, bytes, sizeof(s_writeShadow));
     s_haveShadow = true;
+    s_paired     = true;   // a reply means the handshake was accepted
 
     OpenAirData d = {};
+    d.batteryType        = (int)readU16BE(bytes, 4);   // field 2  (config)
+    d.power              = (int)readU16BE(bytes, 6);   // field 3  (config)
+    d.uPowerState        = (int)readU16BE(bytes, 10);  // control half — for UI reconcile
+    d.uMode              = (int)readU16BE(bytes, 12);
+    d.uTempTenths        = (int)readU16BE(bytes, 14);
+    d.uBlower            = (int)readU16BE(bytes, 16);
     d.errors             = (int)readU16BE(bytes, 30);  // field 13
     d.batteryValue       = (int)readU16BE(bytes, 32);  // field 14
     // field 15 (ElectroSpeed)   at bytes 34-35 — not stored yet
@@ -182,8 +193,9 @@ static bool parseNotification(const uint8_t* ascii, int len) {
     d.valid   = true;
     d.lastMs  = millis();
 
-    ESP_LOGI(TAG, "telemetry probe1=%.0f probe2=%.0f blower=%d%% comp_rpm=%d err=%d",
-             d.probe1C, d.probe2C, d.blowerSpeedPct, d.compressorSpeedRpm, d.errors);
+    ESP_LOGI(TAG, "telemetry probe1=%.0f probe2=%.0f blower=%d%% comp_rpm=%d err=%d batt=%d pwr=%d",
+             d.probe1C, d.probe2C, d.blowerSpeedPct, d.compressorSpeedRpm, d.errors,
+             d.batteryType, d.power);
 
     xSemaphoreTake(s_dataMux, portMAX_DELAY);
     s_data = d;
@@ -218,6 +230,12 @@ static bool buildWriteFrame(const OpenAirCmd& cmd, char out[61]) {
     writeU16BE(f, 12, (unsigned)cmd.mode);         // [12-13] Mode
     writeU16BE(f, 14, (unsigned)cmd.tempTenths);   // [14-15] Temp (tenths °C)
     writeU16BE(f, 16, (unsigned)cmd.blowerSpeed);  // [16-17] BlowerSpeed
+
+    // Config fields: normally echoed from the shadow (memcpy above). Overwrite
+    // them ONLY when the user changed them on the Peripherals screen (dirty bit),
+    // which the UI allows only while the unit is OFF.
+    if (cmd.configDirty & OA_CFG_BATTERY) writeU16BE(f, 4, (unsigned)cmd.batteryType);
+    if (cmd.configDirty & OA_CFG_POWER)   writeU16BE(f, 6, (unsigned)cmd.power);
 
     for (int i = 0; i < 30; i++) snprintf(out + i * 2, 3, "%02x", f[i]);
     return true;
@@ -373,9 +391,19 @@ void openairBleHandleAd(const NimBLEAdvertisedDevice* dev) {
     if (first) ESP_LOGW(TAG, "advertising seen: %s", dev->getAddress().toString().c_str());
 }
 
+bool openairCmdPending() {
+    if (!s_cmdMux) return false;
+    xSemaphoreTake(s_cmdMux, portMAX_DELAY);
+    bool p = s_hasPendingCmd;
+    xSemaphoreGive(s_cmdMux);
+    return p;
+}
+
 uint32_t openairLastSeenMs() { return s_lastSeenMs; }
 
 bool openairIsConfigured() { return s_configured; }
+
+bool openairPaired() { return s_paired; }
 
 OpenAirData openairGetData() {
     OpenAirData copy = {};
@@ -444,6 +472,7 @@ const char* openairErrorDesc(int errors) {
 }
 
 static void load_config_internal() {
+    s_paired = false;   // fresh config → not yet confirmed paired this session
     std::string raw;
     if (!openairLoadConfig(raw) || raw.empty()) {
         s_configured = false;
@@ -484,6 +513,8 @@ void openairBleReloadConfig() {}
 void openairBleHandleAd(const NimBLEAdvertisedDevice*) {}
 uint32_t openairLastSeenMs()  { return 0; }
 bool openairIsConfigured()    { return false; }
+bool openairPaired()          { return false; }
+bool openairCmdPending()      { return false; }
 OpenAirData openairGetData()  { return {}; }
 void openairSetCmd(const OpenAirCmd&) {}
 bool openairPollOnce()        { return false; }

@@ -16,9 +16,24 @@ struct OpenAirData {
     int      batteryValue;       // BatteryValue field
     int      blowerSpeedPct;     // BlowerSpeedPer [%]
     int      compressorSpeedRpm; // CompressorSpeedRPM
+    int      batteryType;        // BatteryType (bytes 4-5) — chemistry as reported (1=lithium)
+    int      power;              // Power (bytes 6-7) — max power 0=2.0 kW, 1=1.2 kW (inverted)
+    // Unit-reported control half (write-region fields the unit currently runs).
+    // Used to seed/reconcile P4ControlState so the UI mirrors the real unit
+    // (on boot, and when the unit is changed by its own remote or the app).
+    int      uPowerState;        // PowerState (bytes 10-11) 0=OFF 1=ON
+    int      uMode;              // Mode (bytes 12-13) 0=AUTO 1=ECO 2=MAN
+    int      uTempTenths;        // Temp setpoint (bytes 14-15) tenths °C
+    int      uBlower;            // BlowerSpeed (bytes 16-17) 1-6
     bool     valid;
     uint32_t lastMs;
 };
+
+// Dirty-bit flags for OpenAirCmd::configDirty. The config fields (BatteryType,
+// Power) are echoed back from the unit's own telemetry on every command UNLESS
+// their bit is set here — the app forbids changing them while the unit runs, so
+// the Peripherals screen sets these only when the unit is OFF.
+enum { OA_CFG_BATTERY = 1 << 0, OA_CFG_POWER = 1 << 1 };
 
 // Command to apply on the next GATT connection.
 // Set via openairSetCmd(); applied by openairPollOnce().
@@ -33,6 +48,12 @@ struct OpenAirCmd {
     int  scheduledTime;  // timer value (0 = disabled)
     int  flaps1;         // louver 1 mode 0/1
     int  flaps2;         // louver 2 mode 0/1
+
+    // Config fields — written only when their OA_CFG_* bit is set in configDirty
+    // (change only while the unit is OFF); otherwise echoed from telemetry.
+    int  batteryType;    // battery chemistry 0=Pb (lead-acid), 1=lithium
+    int  power;          // max power 0=2.0 kW, 1=1.2 kW (inverted mapping)
+    int  configDirty;    // OA_CFG_BATTERY | OA_CFG_POWER bitmask
 };
 
 // Call once from bootTask alongside the other BLE *Init() calls.
@@ -48,11 +69,18 @@ void     openairBleHandleAd(const NimBLEAdvertisedDevice* dev);
 uint32_t openairLastSeenMs();   // milliseconds timestamp; 0 = never seen
 
 bool        openairIsConfigured();
+// True once telemetry has been read for the current target (handshake accepted).
+// Reset when the config reloads. The pairing assistant polls this to auto-close.
+bool        openairPaired();
 OpenAirData openairGetData();
 
 // Update the pending command (thread-safe).  Called from main.cpp whenever the
 // A/C control state changes so the next poll delivers the latest setpoint.
 void openairSetCmd(const OpenAirCmd& cmd);
+
+// True while a user command is queued/in-flight. Callers that reconcile the UI
+// from telemetry use this to avoid fighting a change the user just made.
+bool openairCmdPending();
 
 // Called every bleSupervisorTask cycle. Holds ONE persistent GATT connection
 // open (the unit powers off when the link drops), reconnecting only after a

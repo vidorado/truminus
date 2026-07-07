@@ -17,6 +17,7 @@
 #include "ws_diff.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_timer.h"
 #include <cmath>
 #include <cstring>
 
@@ -26,6 +27,55 @@ static const char* multiPowerJson(int32_t w, char* buf, size_t n) {
     if (w == MULTI_POWER_NA) return "null";
     snprintf(buf, n, "%d", (int)w);
     return buf;
+}
+
+// Set when the A/C control state was just adopted from unit telemetry (not a
+// user action). broadcastControlChanges still emits the changed fields so the UI
+// mirrors the unit, but must NOT echo a command back (that would re-apply it and
+// make the unit beep). Consumed and cleared on the next broadcast.
+static bool s_acAdoptedFromUnit = false;
+
+// Timestamp (ms) of the last user-originated A/C command. Adoption is suppressed
+// for AC_SETTLE_MS afterwards so it does not revert the user's change back to
+// stale telemetry: a command takes a full connect→write→readback (several
+// seconds), during which the unit still reports the OLD state. The window must
+// outlast that round-trip; when it expires the readback telemetry already
+// matches the UI, so adoption becomes a no-op.
+static uint32_t s_acUserCmdMs   = 0;
+static const uint32_t AC_SETTLE_MS = 12000;
+
+// Reconcile the A/C control state with what the unit actually reports, so the UI
+// mirrors reality at boot and whenever the unit is changed by its own remote or
+// the official app. Skipped while a user command is pending or within the settle
+// window (don't fight a change in flight) and only applied when the reported
+// state differs from the current one (no needless LVGL churn every poll). The
+// config fields (BatteryType/Power) are handled separately on Peripherals.
+static void adoptAcStateFromUnit() {
+    if (!openairCfgIsActive() || openairCmdPending()) return;
+    uint32_t nowMs = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    if (s_acUserCmdMs && (nowMs - s_acUserCmdMs) < AC_SETTLE_MS) return;
+    OpenAirData d = openairGetData();
+    if (!d.valid) return;
+
+    static uint32_t adoptedFrame = 0;
+    if (d.lastMs == adoptedFrame) return;   // this telemetry frame already handled
+    adoptedFrame = d.lastMs;
+
+    int   acMode   = (d.uPowerState == 0) ? 0 : (d.uMode == 1 ? 2 : 1);  // off/eco/cool
+    bool  fanAuto  = (d.uMode == 0);
+    int   fanSpeed = (d.uBlower >= 1 && d.uBlower <= 6) ? d.uBlower : 1;
+    float setp     = d.uTempTenths / 10.0f;
+
+    P4ControlState cur;
+    p4GetControlState(cur);
+    bool diff = acMode != cur.acMode || fanAuto != cur.acFanAuto
+             || fanSpeed != cur.acFanSpeed || fabsf(setp - cur.roomSetpoint) > 0.05f;
+    if (!diff) return;
+
+    p4SetAcMode(acMode);
+    p4SetAcFan(fanAuto, fanSpeed);
+    p4SetRoomSetpoint(setp);
+    s_acAdoptedFromUnit = true;
 }
 
 // Broadcast LCD-originated control changes every 100 ms.  Diffs the current
@@ -75,19 +125,22 @@ static void broadcastControlChanges(const P4ControlState& cs) {
         emit("ac_fan_speed", v);
         acChanged = true;
     }
-    if (!inited || cs.acPower != prev.acPower) {
-        char v[4]; snprintf(v, sizeof(v), "%d", cs.acPower);
-        emit("ac_power", v);
-        acChanged = true;
-    }
     if (!inited || cs.roomSetpoint != prev.roomSetpoint) acChanged = true;
 
     // Push a setpoint to the unit ONLY when the user actually changed an A/C
     // control — never on init (the default control state is not the unit's real
-    // state) and never on an unchanged broadcast. The unit beeps and re-applies
-    // any command it receives, so writing every poll is both wrong and annoying;
-    // telemetry is read passively via notifications.
-    if (acChanged && inited) openairSetCmd(buildOpenAirCmd(cs));
+    // state), never on an unchanged broadcast, and never when the change came
+    // from the unit itself (adopted telemetry — echoing it back would re-apply
+    // the command and beep). The unit re-applies any command it receives, so
+    // writing every poll is both wrong and annoying; telemetry is read passively.
+    bool adopted = s_acAdoptedFromUnit;
+    s_acAdoptedFromUnit = false;
+    if (acChanged && inited && !adopted) {
+        openairSetCmd(buildOpenAirCmd(cs));
+        // Open the settle window so adoption won't revert this change while the
+        // command is still travelling to the unit (connect→write→readback).
+        s_acUserCmdMs = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    }
 
     prev   = cs;
     inited = true;
@@ -332,9 +385,13 @@ static void broadcastOtaStatus() {
 void wsPumpTask(void* /*arg*/) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(100));
+        // Order matters: broadcast first so a user A/C change is turned into a
+        // pending command (and opens the settle window) BEFORE adoption runs —
+        // otherwise adoption would revert the change to stale telemetry.
         P4ControlState cs;
         p4GetControlState(cs);
         broadcastControlChanges(cs);
+        adoptAcStateFromUnit();
         broadcastNetInfoChange();
         broadcastBleData();
         broadcastTankData();

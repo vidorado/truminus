@@ -56,8 +56,7 @@ void wsOnConnected() {
                  "\"/temp\":\"%.1f\","
                  "\"/ac_mode\":\"%d\","
                  "\"/ac_fan_auto\":\"%d\","
-                 "\"/ac_fan_speed\":\"%d\","
-                 "\"/ac_power\":\"%d\""
+                 "\"/ac_fan_speed\":\"%d\""
              "},"
              "\"status\":{},"
              "\"ssid\":\"%s\","
@@ -72,7 +71,6 @@ void wsOnConnected() {
              cs.acMode,
              cs.acFanAuto ? 1 : 0,
              cs.acFanSpeed,
-             cs.acPower,
              ssid,
              ip,
              cs.energyIdx,

@@ -22,7 +22,6 @@ var s_openair     = false;       // CLIMATIZACIÓN panel active when true
 var s_acMode      = 'off';       // 'off' | 'cool' | 'eco'
 var s_acFanAuto   = true;        // cool mode: Auto (Mode AUTO) vs Man (Mode MAN)
 var s_acFanSpeed  = 3;           // cool+Man blower speed 1..6
-var s_acPower     = 1.2;         // A/C max power kW: 1.2 or 2.0
 var s_acConnected = false;       // true when BLE poll returned valid telemetry
 var s_acErrCode   = 0;           // OpenAir Errors value (0 = no fault)
 var s_acErrAcked  = false;       // A/C error modal acknowledged
@@ -605,11 +604,6 @@ function applySetting(id, value) {
         var sp = parseInt(value);
         if (!isNaN(sp)) s_acFanSpeed = sp;
         refreshFan();
-    } else if (id === 'ac_power') {
-        var pi = parseInt(value);
-        s_acPower = (pi === 1) ? 2.0 : 1.2;
-        cls('pwr12', 'btn-sel', s_acPower === 1.2);
-        cls('pwr20', 'btn-sel', s_acPower === 2.0);
     } else if (id === 'lang') {
         applyLanguage(value);
     }
@@ -708,8 +702,6 @@ function refreshHeat() {
     refreshClimate();
     var spOn = s_openair ? (s_heat || s_acMode !== 'off') : s_heat;
     cls('spRow', 'sp-hidden', !spOn);
-    // Power buttons only in cool / eco modes (not heat, not off).
-    cls('spPwr', 'pwr-hidden', !(s_openair && !s_heat && (s_acMode === 'cool' || s_acMode === 'eco')));
     if (!s_openair) {
         cls('hBtnOn',  'btn-sel',  s_heat);
         cls('hBtnOff', 'btn-sel', !s_heat);
@@ -851,7 +843,15 @@ function sendDebounced(id, value) {
 // ── User actions ──────────────────────────────────────────────────────────
 
 function changeTemp(delta) {
-    s_temp = Math.round((s_temp + delta) * 2) / 2;
+    // Whole-degree steps in A/C cool / cool-eco; half-degree steps for Truma
+    // heating. In cooling, snap to whole degrees so a .5 carried over from a
+    // previous heating setpoint is cleared.
+    var cooling = s_openair && !s_heat && (s_acMode === 'cool' || s_acMode === 'eco');
+    if (cooling) {
+        s_temp = Math.round(s_temp) + (delta > 0 ? 1 : -1);
+    } else {
+        s_temp = Math.round((s_temp + delta) * 2) / 2;
+    }
     if (s_temp < 5)  s_temp = 5;
     if (s_temp > 30) s_temp = 30;
     refreshSetpoint();
@@ -925,17 +925,6 @@ function changeAcFanLvl(delta) {
     s_acFanSpeed = Math.min(6, Math.max(1, s_acFanSpeed + delta));
     document.getElementById('acFanLvlVal').textContent = s_acFanSpeed;
     sendDebounced('/ac_fan_speed', String(s_acFanSpeed));
-}
-
-function setPower(kw) {
-    s_acPower = kw;
-    cls('pwr12', 'btn-sel', kw === 1.2);
-    cls('pwr20', 'btn-sel', kw === 2.0);
-    sendDebounced('/ac_power', kw === 2.0 ? '1' : '0');
-}
-function refreshPower() {
-    cls('pwr12', 'btn-sel', s_acPower === 1.2);
-    cls('pwr20', 'btn-sel', s_acPower === 2.0);
 }
 
 // ── Truma error display ───────────────────────────────────────────────────
@@ -1274,7 +1263,6 @@ function applyBatt(d) {
 refreshSetpoint();
 refreshHeat();
 refreshBoiler();
-refreshPower();
 // Show a "Connecting…" veil on first page load so the user doesn't read
 // stale placeholder values.  hideReloadVeil() is called when the snapshot
 // arrives (or reloadVeilTimedOut() fires after 24 s if the WS never connects).

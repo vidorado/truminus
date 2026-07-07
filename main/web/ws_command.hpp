@@ -20,7 +20,6 @@ enum class WsCmdKind {
     AcMode,      // intVal (0=off, 1=cool, 2=eco) — OpenAir A/C
     AcFanAuto,   // boolVal — A/C fan Auto(true)/Man(false)
     AcFanSpeed,  // intVal (1..6) — A/C blower speed in Man
-    AcPower,     // intVal (0=1.2 kW, 1=2.0 kW) — OpenAir max power
     OtaCheck,    // action, no value
     OtaInstall,  // action, no value
     OtaCancel,   // action, no value

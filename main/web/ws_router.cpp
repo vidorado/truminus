@@ -30,7 +30,6 @@ void wsOnCommand(const char* id, const char* value) {
             p4SetAcFan(cs.acFanAuto, cmd.intVal);
             break;
         }
-        case WsCmdKind::AcPower:    if (cmd.valid) p4SetAcPower(cmd.intVal); break;
         case WsCmdKind::OtaCheck:   p4OtaCheckNow(); break;
         case WsCmdKind::OtaInstall: p4OtaInstall(); break;
         case WsCmdKind::OtaCancel:  p4OtaCancel(); break;

@@ -538,33 +538,6 @@ body {
 }
 .btn-step:active { background: var(--on); }
 
-/* ── Power selector (max power for OpenAir A/C, beside the setpoint row) ─ */
-.sp-pwr.pwr-hidden {
-  display: none;
-}
-.sp-pwr {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  justify-content: flex-start;
-  padding-top: 2px;
-  flex: 0 0 auto;
-}
-.btn-pwr {
-  font-size: 0.72em;
-  font-weight: 700;
-  padding: 3px 6px;
-  border: none;
-  border-radius: var(--radius);
-  cursor: pointer;
-  background: var(--off);
-  color: var(--lbl);
-  transition: background .15s;
-  white-space: nowrap;
-  line-height: 1.2;
-}
-.btn-pwr.btn-sel { background: var(--on); color: var(--txt); }
-
 /* ── Fan button rows ─────────────────────────────────────────────────── */
 .btn-row {
   flex: 1;                        /* shares panel height with sibling rows */

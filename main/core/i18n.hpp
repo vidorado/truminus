@@ -160,7 +160,6 @@ enum class TK : uint8_t {
     CLIMATE,           // panel title when A/C configured: "CLIMATIZACIÓN" / "CLIMATE"
     AC_SECTION,        // monitoring section title: "AC OpenAIR Plus Bergstrom"
     SCAN_AC,           // scan overlay title: "Buscar AC OpenAir" / "Scan OpenAir A/C"
-    AC_INFO,           // helper text under the A/C MAC field
     FAN_AUTO,          // A/C fan toggle: "Auto"
     FAN_MAN,           // A/C fan toggle: "Man"
     // ── OpenAir A/C fault titles (status bar) ──────────────────────────────
@@ -174,6 +173,16 @@ enum class TK : uint8_t {
     AC_DESC_STOP,      // critical: unit cannot work until serviced
     AC_DESC_TILT,      // temporary: vehicle over-tilted, auto-recovers
     AC_DESC_FLAP,      // warning: limited operation, visit workshop
+    // ── OpenAir A/C config selectors (Peripherals screen) ──────────────────
+    AC_BATTERY,        // selector label: "Batería" / "Battery"
+    AC_POWER,          // selector label: "Potencia" / "Power"
+    AC_BATT_PB,        // battery option: "Plomo" / "Lead-acid"
+    AC_BATT_LI,        // battery option: "Litio" / "Lithium"
+    AC_CFG_OFF_HINT,   // shown when unit is ON: "Apaga la unidad para cambiar" / "Power off the unit to change"
+    // ── OpenAir pairing assistant ──────────────────────────────────────────
+    PAIR_TITLE,        // assistant screen title: "Emparejamiento" / "Pairing"
+    PAIR_INSTRUCT,     // "Manten pulsado el boton de encendido de la unidad" / "Long-press the unit's power button"
+    PAIR_WAITING,      // spinner subtitle: "Conectando con la unidad…" / "Connecting to the unit…"
     _COUNT
 };
 

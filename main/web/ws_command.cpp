@@ -42,10 +42,6 @@ WsCommand parseWsCommand(const char* id, const char* value) {
         out.kind = WsCmdKind::AcFanSpeed;
         out.intVal = atoi(value);
         out.valid = (out.intVal >= 1 && out.intVal <= 6);
-    } else if (strcmp(k, "ac_power") == 0) {
-        out.kind = WsCmdKind::AcPower;
-        out.intVal = atoi(value);
-        out.valid = (out.intVal == 0 || out.intVal == 1);
     } else if (strcmp(k, "ota_check") == 0) {
         out.kind = WsCmdKind::OtaCheck;
         out.valid = true;

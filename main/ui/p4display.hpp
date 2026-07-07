@@ -131,8 +131,6 @@ void p4SetAcMode(int mode);
 // A/C fan in cool mode: auto=true → Mode AUTO; auto=false → Mode MAN with
 // blower speed 1..6.  Ignored unless the A/C is in cool mode.
 void p4SetAcFan(bool autoMode, int speed);
-// A/C max power selector: 0=1.2 kW, 1=2.0 kW.
-void p4SetAcPower(int idx);
 
 // Topbar cloud icon driver.  Pass a TunnelUiState (cast to uint8_t).  On
 // CONNECTING the colour toggles each call, so the caller's update cadence

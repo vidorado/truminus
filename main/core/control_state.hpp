@@ -19,5 +19,4 @@ struct P4ControlState {
     int   acMode;        // 0=off, 1=cool, 2=eco  (heat = heatingOn)
     bool  acFanAuto;     // cool mode: true=Auto (Mode AUTO), false=Man (Mode MAN)
     int   acFanSpeed;    // cool+Man blower speed, 1..6
-    int   acPower;       // max power: 0=1.2 kW, 1=2.0 kW
 };

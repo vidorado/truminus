@@ -156,7 +156,6 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "CLIMATIZACI\xC3\x93N",                                          // CLIMATE
     "AC OpenAIR Plus Bergstrom",                                     // AC_SECTION
     "Buscar AC OpenAir",                                             // SCAN_AC
-    "BLE \"My OpenAir PLUS\". Opcional. Al vincular por primera vez, manten pulsado el boton de encendido de la unidad para emparejar.", // AC_INFO
     "Auto",                                                          // FAN_AUTO
     "Man",                                                           // FAN_MAN
     "A/C: Error electroventilador",                                  // AC_ERR_EFAN
@@ -168,6 +167,14 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "El aire acondicionado no puede funcionar hasta resolver la aver\xC3\xAD" "a. Acude al servicio t\xC3\xA9" "cnico m\xC3\xA1s cercano.",  // AC_DESC_STOP
     "El veh\xC3\xAD" "culo tiene una inclinaci\xC3\xB3n excesiva. El equipo volver\xC3\xA1 a funcionar al nivelarse.",  // AC_DESC_TILT
     "Problema en la compuerta. El equipo puede seguir funcionando con operaci\xC3\xB3n limitada. Acude al servicio t\xC3\xA9" "cnico.",  // AC_DESC_FLAP
+    "Bater\xC3\xAD" "a",                                                // AC_BATTERY
+    "Potencia",                                                        // AC_POWER
+    "Plomo",                                                           // AC_BATT_PB
+    "Litio",                                                           // AC_BATT_LI
+    "Apaga la unidad para cambiar",                                    // AC_CFG_OFF_HINT
+    "Emparejamiento",                                                  // PAIR_TITLE
+    "Manten pulsado el boton de encendido de la unidad para emparejar", // PAIR_INSTRUCT
+    "Conectando con la unidad\xE2\x80\xA6",                            // PAIR_WAITING
 };
 
 static const char* EN_STRINGS[(int)TK::_COUNT] = {
@@ -319,7 +326,6 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "CLIMATE",                                                       // CLIMATE
     "AC OpenAIR Plus Bergstrom",                                     // AC_SECTION
     "Scan OpenAir A/C",                                              // SCAN_AC
-    "BLE \"My OpenAir PLUS\". Optional. On first pairing, long-press the unit's power button to pair.", // AC_INFO
     "Auto",                                                          // FAN_AUTO
     "Man",                                                           // FAN_MAN
     "A/C: Electric-Fan Error",                                       // AC_ERR_EFAN
@@ -331,6 +337,14 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Your AC unit cannot work until this issue is solved. Please visit your nearest Technical Service Workshop.",  // AC_DESC_STOP
     "Your vehicle has an excessive tilt. The AC unit returns to normal operation when the vehicle is level.",      // AC_DESC_TILT
     "Problem with the flap. The AC unit can keep working with limited operation. Please visit your Technical Service.",  // AC_DESC_FLAP
+    "Battery",                                                         // AC_BATTERY
+    "Power",                                                           // AC_POWER
+    "Lead-acid",                                                       // AC_BATT_PB
+    "Lithium",                                                         // AC_BATT_LI
+    "Power off the unit to change",                                    // AC_CFG_OFF_HINT
+    "Pairing",                                                         // PAIR_TITLE
+    "Long-press the unit's power button to pair",                     // PAIR_INSTRUCT
+    "Connecting to the unit\xE2\x80\xA6",                             // PAIR_WAITING
 };
 
 const char* t(TK key) {

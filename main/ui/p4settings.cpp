@@ -1117,6 +1117,16 @@ struct BleCtx {
     lv_obj_t* ta_multi_mac;
     lv_obj_t* ta_multi_key;
     lv_obj_t* ta_ac_mac;
+    // OpenAir A/C config selectors (battery chemistry + max power). Read from
+    // live telemetry on open, written to the unit on save — never NVS. The unit
+    // forbids changing these while running, so they lock when it is ON.
+    lv_obj_t* btn_batt[2];   // [0]=Pb (raw 0), [1]=Litio (raw 1)
+    lv_obj_t* btn_pwr[2];    // [0]=2.0 kW (raw 0), [1]=1.2 kW (raw 1)
+    lv_obj_t* lbl_ac_lock;   // "power off to change" hint, shown when unit is ON
+    int  acBattSel;          // currently selected battery raw value
+    int  acPwrSel;           // currently selected power raw value
+    int  acCfgDirty;         // OA_CFG_* bits the user changed this session
+    bool acCfgLocked;        // unit is ON (or no telemetry) → selectors disabled
     lv_obj_t* kb;
     lv_obj_t* lbl_status;
     lv_obj_t* prev;
@@ -1256,7 +1266,112 @@ static void ble_scan_ac_cb(lv_event_t*) {
     bleDiscoveryScan(false, ble_scan_done, ctx);
 }
 
+// Re-tint a 2-button selector so the chosen index reads as C_BTN_SEL.
+static void ac_restyle_pair(lv_obj_t* const btn[2], int sel) {
+    for (int i = 0; i < 2; i++)
+        style_btn(btn[i], (i == sel) ? C_BTN_SEL : C_BTN);
+}
+
+static void ac_batt_sel_cb(lv_event_t* e) {
+    if (bl_ctx.acCfgLocked) return;   // unit ON — config change forbidden
+    int v = (int)(intptr_t)lv_obj_get_user_data(lv_event_get_target_obj(e));
+    bl_ctx.acBattSel = v;
+    bl_ctx.acCfgDirty |= OA_CFG_BATTERY;
+    ac_restyle_pair(bl_ctx.btn_batt, v);
+}
+
+static void ac_pwr_sel_cb(lv_event_t* e) {
+    if (bl_ctx.acCfgLocked) return;
+    int v = (int)(intptr_t)lv_obj_get_user_data(lv_event_get_target_obj(e));
+    bl_ctx.acPwrSel = v;
+    bl_ctx.acCfgDirty |= OA_CFG_POWER;
+    ac_restyle_pair(bl_ctx.btn_pwr, v);
+}
+
+// ── OpenAir pairing assistant ─────────────────────────────────────────────────
+// Standalone screen shown after (re)configuring the A/C, and on entering the
+// peripherals screen while it is not yet paired: instruction + spinner + a 30 s
+// countdown. On first pairing the unit only accepts us after the user long-
+// presses its power button ("Bt"); this guides that. Auto-closes (returns to
+// `ret`) the instant telemetry is read (openairPaired()); always cancelable; the
+// countdown loops so it keeps trying until the user cancels or it pairs.
+static lv_obj_t*   s_pair_scr   = nullptr;
+static lv_obj_t*   s_pair_ret   = nullptr;   // screen to return to on close
+static lv_obj_t*   s_pair_count = nullptr;
+static lv_timer_t* s_pair_timer = nullptr;
+static int         s_pair_secs  = 30;
+
+static void pair_close() {
+    if (s_pair_timer) { lv_timer_delete(s_pair_timer); s_pair_timer = nullptr; }
+    lv_obj_t* cur = s_pair_scr;
+    s_pair_scr   = nullptr;
+    s_pair_count = nullptr;
+    if (s_pair_ret) lv_screen_load(s_pair_ret);
+    if (cur) lv_obj_delete(cur);
+}
+
+static void pair_cancel_cb(lv_event_t*) { pair_close(); }
+
+static void pair_tick_cb(lv_timer_t*) {
+    if (!s_pair_scr) return;
+    if (openairPaired()) { pair_close(); return; }   // success → back to peripherals
+    if (--s_pair_secs <= 0) s_pair_secs = 30;         // loop; keep trying
+    if (s_pair_count) {
+        char b[8]; snprintf(b, sizeof(b), "%ds", s_pair_secs);
+        lv_label_set_text(s_pair_count, b);
+    }
+}
+
+static void show_pair_assistant(lv_obj_t* ret) {
+    if (s_pair_scr) return;                 // already up
+    s_pair_ret  = ret;
+    s_pair_secs = 30;
+    const P4Fonts* f = p4GetFonts();
+
+    // Title-bar BACK doubles as cancel, so the screen is cancelable two ways.
+    s_pair_scr = build_title_bar(t(TK::PAIR_TITLE), pair_cancel_cb);
+
+    lv_obj_t* ins = make_label(s_pair_scr, t(TK::PAIR_INSTRUCT), f->f24, C_TEXT);
+    lv_obj_set_width(ins, SCR_W - 160);
+    lv_label_set_long_mode(ins, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(ins, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(ins, LV_ALIGN_TOP_MID, 0, TITLE_H + 40);
+
+    lv_obj_t* sp = lv_spinner_create(s_pair_scr);
+    lv_obj_set_size(sp, 90, 90);
+    lv_obj_align(sp, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_arc_color(sp, C_BTN,     LV_PART_MAIN);
+    lv_obj_set_style_arc_color(sp, C_BTN_ACT, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(sp, 6, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(sp, 6, LV_PART_INDICATOR);
+
+    lv_obj_t* wait = make_label(s_pair_scr, t(TK::PAIR_WAITING), f->f20, C_DIM);
+    lv_obj_align(wait, LV_ALIGN_CENTER, 0, 80);
+
+    s_pair_count = make_label(s_pair_scr, "30s", f->title, C_TEXT);
+    lv_obj_align(s_pair_count, LV_ALIGN_CENTER, 0, 120);
+
+    lv_obj_t* cb = lv_button_create(s_pair_scr);
+    lv_obj_set_size(cb, 260, 56);
+    lv_obj_align(cb, LV_ALIGN_BOTTOM_MID, 0, -24);
+    style_btn(cb);
+    lv_obj_add_event_cb(cb, pair_cancel_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* cl = make_label(cb, t(TK::CANCEL), f->f22, C_TEXT);
+    lv_obj_center(cl);
+
+    s_pair_timer = lv_timer_create(pair_tick_cb, 1000, nullptr);
+    lv_screen_load(s_pair_scr);
+}
+
 static void ble_save_cb(lv_event_t*) {
+    // Capture pre-save pairing state + A/C MAC so we can decide whether to launch
+    // the pairing assistant (only for a new/changed device or one not yet paired,
+    // never merely because battery/power was tweaked on a working unit).
+    bool wasPaired = openairPaired();
+    char oldAcMac[24] = {};
+    nvs_read("openair", "addr", oldAcMac, sizeof(oldAcMac));
+    bool acMacChanged = strcmp(oldAcMac, lv_textarea_get_text(bl_ctx.ta_ac_mac)) != 0;
+
     nvs_write("solar", "addr", lv_textarea_get_text(bl_ctx.ta_solar_mac));
     nvs_write("solar", "key",  lv_textarea_get_text(bl_ctx.ta_solar_key));
     nvs_write("batt",  "addr", lv_textarea_get_text(bl_ctx.ta_batt_mac));
@@ -1267,10 +1382,37 @@ static void ble_save_cb(lv_event_t*) {
     nvs_write("openair",   "addr", lv_textarea_get_text(bl_ctx.ta_ac_mac));
     openairCfgReload();         // refresh the UI switch flag (main.cpp, no per-tick NVS read)
     openairBleReloadConfig();   // reload target MAC in the BLE driver
+
+    // A/C config selectors: push battery/power to the unit only if the user
+    // actually changed one AND the unit is OFF (locked mirrors that). Build the
+    // command from the current control state so PowerState/Mode/Temp/Blower echo
+    // the running unit — only the dirty config byte(s) change.
+    if (openairCfgIsActive() && !bl_ctx.acCfgLocked && bl_ctx.acCfgDirty) {
+        P4ControlState cs;
+        p4GetControlState(cs);
+        OpenAirCmd cmd    = buildOpenAirCmd(cs);
+        cmd.batteryType   = bl_ctx.acBattSel;
+        cmd.power         = bl_ctx.acPwrSel;
+        cmd.configDirty   = bl_ctx.acCfgDirty;
+        openairSetCmd(cmd);
+        bl_ctx.acCfgDirty = 0;
+    }
     victronBleReloadConfig();
     ultimatronBleReloadConfig();
     tankBleReloadConfig();
     multiplusBleReloadConfig();
+
+    // Launch the pairing assistant for a new/changed A/C device, or one that has
+    // not paired yet — it guides the required long-press and auto-returns to the
+    // menu on connect. A plain battery/power tweak on an already-paired unit does
+    // not trigger it.
+    if (openairCfgIsActive() && (acMacChanged || !wasPaired)) {
+        lv_obj_t* ble_scr = bl_ctx.scr;
+        show_pair_assistant(bl_ctx.prev);   // ret = the menu behind peripherals
+        lv_obj_delete(ble_scr);
+        return;
+    }
+
     lv_label_set_text(bl_ctx.lbl_status, t(TK::CFG_SAVED));
     schedule_back(bl_ctx.prev);
 }
@@ -1489,10 +1631,70 @@ static void show_ble(lv_obj_t* from) {
         lv_obj_center(sl);
     }
 
-    lv_obj_t* lbl_acinfo = make_label(bl_ctx.panel, t(TK::AC_INFO), f->f20, C_LABEL);
-    lv_obj_set_pos(lbl_acinfo, COL2_X, 602);
-    lv_obj_set_width(lbl_acinfo, COL2_W);
-    lv_label_set_long_mode(lbl_acinfo, LV_LABEL_LONG_WRAP);
+    // ── A/C config selectors: battery chemistry + max power ──────────────────
+    // Seeded from live telemetry; the unit forbids changing them while running,
+    // so they lock (greyed, unresponsive) whenever it is ON. A hint appears then.
+    {
+        OpenAirData ad = openairGetData();
+        // Locked when we have no telemetry to seed from, or the unit is running.
+        bl_ctx.acCfgLocked = !openairCfgIsActive() || !ad.valid || ad.uPowerState != 0;
+        bl_ctx.acBattSel   = ad.valid ? ad.batteryType : 1;   // default lithium
+        bl_ctx.acPwrSel    = ad.valid ? ad.power       : 0;   // default 2.0 kW
+        bl_ctx.acCfgDirty  = 0;
+
+        const int SEL_Y  = 606;
+        const int BW     = 96;   // button width
+        const int BH     = 48;
+        const int GAP    = 8;
+
+        // Battery row: label + [Plomo|Litio]
+        lv_obj_t* lbl_b = make_label(bl_ctx.panel, t(TK::AC_BATTERY), f->f20, C_LABEL);
+        lv_obj_set_pos(lbl_b, COL2_X, SEL_Y + 12);
+        const int bx = COL2_X + 120;
+        const char* btxt[2] = { t(TK::AC_BATT_PB), t(TK::AC_BATT_LI) };
+        for (int i = 0; i < 2; i++) {
+            lv_obj_t* b = lv_button_create(bl_ctx.panel);
+            lv_obj_set_pos(b, bx + i * (BW + GAP), SEL_Y);
+            lv_obj_set_size(b, BW, BH);
+            style_btn(b, (i == bl_ctx.acBattSel) ? C_BTN_SEL : C_BTN);
+            lv_obj_set_user_data(b, (void*)(intptr_t)i);
+            lv_obj_add_event_cb(b, ac_batt_sel_cb, LV_EVENT_CLICKED, nullptr);
+            lv_obj_t* bl = make_label(b, btxt[i], f->f20, C_TEXT);
+            lv_obj_center(bl);
+            bl_ctx.btn_batt[i] = b;
+        }
+
+        // Power row: label + [2.0|1.2]  (raw 0=2.0 kW, raw 1=1.2 kW — inverted)
+        const int PY = SEL_Y + BH + 16;
+        lv_obj_t* lbl_p = make_label(bl_ctx.panel, t(TK::AC_POWER), f->f20, C_LABEL);
+        lv_obj_set_pos(lbl_p, COL2_X, PY + 12);
+        const char* ptxt[2] = { "2.0", "1.2" };
+        for (int i = 0; i < 2; i++) {
+            lv_obj_t* b = lv_button_create(bl_ctx.panel);
+            lv_obj_set_pos(b, bx + i * (BW + GAP), PY);
+            lv_obj_set_size(b, BW, BH);
+            style_btn(b, (i == bl_ctx.acPwrSel) ? C_BTN_SEL : C_BTN);
+            lv_obj_set_user_data(b, (void*)(intptr_t)i);
+            lv_obj_add_event_cb(b, ac_pwr_sel_cb, LV_EVENT_CLICKED, nullptr);
+            lv_obj_t* pl = make_label(b, ptxt[i], f->f20, C_TEXT);
+            lv_obj_center(pl);
+            bl_ctx.btn_pwr[i] = b;
+        }
+
+        // Lock hint — shown only while the unit is ON (config change forbidden).
+        bl_ctx.lbl_ac_lock = make_label(bl_ctx.panel, t(TK::AC_CFG_OFF_HINT), f->f20, C_DIM);
+        lv_obj_set_pos(bl_ctx.lbl_ac_lock, COL2_X, PY + BH + 8);
+        lv_obj_set_width(bl_ctx.lbl_ac_lock, COL2_W);
+        lv_label_set_long_mode(bl_ctx.lbl_ac_lock, LV_LABEL_LONG_WRAP);
+        if (bl_ctx.acCfgLocked) {
+            for (int i = 0; i < 2; i++) {
+                lv_obj_add_state(bl_ctx.btn_batt[i], LV_STATE_DISABLED);
+                lv_obj_add_state(bl_ctx.btn_pwr[i],  LV_STATE_DISABLED);
+            }
+        } else {
+            lv_obj_add_flag(bl_ctx.lbl_ac_lock, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 
     // ── Status + Save button — fixed children of scr (always visible at bottom) ──
     bl_ctx.lbl_status = make_label(bl_ctx.scr, "", f->f20, C_LABEL);
@@ -1513,6 +1715,13 @@ static void show_ble(lv_obj_t* from) {
     lv_obj_add_event_cb(bl_ctx.kb, ble_kb_hide_cb, LV_EVENT_CANCEL, nullptr);
 
     lv_screen_load(bl_ctx.scr);
+
+    // Auto-launch the pairing assistant when the A/C is configured but not yet
+    // paired: until it pairs, its telemetry is unavailable and the battery/power
+    // selectors stay locked, so guiding the pairing first is the useful action.
+    // Cancel returns here; the assistant auto-closes the moment pairing succeeds.
+    if (openairCfgIsActive() && !openairPaired())
+        show_pair_assistant(bl_ctx.scr);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
