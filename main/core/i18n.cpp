@@ -156,7 +156,7 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "CLIMATIZACI\xC3\x93N",                                          // CLIMATE
     "AC OpenAIR Plus Bergstrom",                                     // AC_SECTION
     "Buscar AC OpenAir",                                             // SCAN_AC
-    "BLE \"My OpenAir PLUS\". Opcional.",                            // AC_INFO
+    "BLE \"My OpenAir PLUS\". Opcional. Al vincular por primera vez, manten pulsado el boton de encendido de la unidad para emparejar.", // AC_INFO
     "Auto",                                                          // FAN_AUTO
     "Man",                                                           // FAN_MAN
     "A/C: Error electroventilador",                                  // AC_ERR_EFAN
@@ -319,7 +319,7 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "CLIMATE",                                                       // CLIMATE
     "AC OpenAIR Plus Bergstrom",                                     // AC_SECTION
     "Scan OpenAir A/C",                                              // SCAN_AC
-    "BLE \"My OpenAir PLUS\". Optional.",                            // AC_INFO
+    "BLE \"My OpenAir PLUS\". Optional. On first pairing, long-press the unit's power button to pair.", // AC_INFO
     "Auto",                                                          // FAN_AUTO
     "Man",                                                           // FAN_MAN
     "A/C: Electric-Fan Error",                                       // AC_ERR_EFAN

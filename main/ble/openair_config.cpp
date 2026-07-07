@@ -18,8 +18,8 @@ bool openairCfgIsActive() { return s_openairConfigured; }
 
 OpenAirCmd buildOpenAirCmd(const P4ControlState& cs) {
     OpenAirCmd cmd = {};
-    cmd.ledBright     = 1;
-    cmd.ledColor      = 1;
+    cmd.ledBright     = 0;   // keep the console LED off by default
+    cmd.ledColor      = 0;
     cmd.scheduledTime = 0;
     cmd.flaps1        = 0;
     cmd.flaps2        = 0;

@@ -60,25 +60,34 @@ static void broadcastControlChanges(const P4ControlState& cs) {
         char v[8]; snprintf(v, sizeof(v), "%.1f", cs.roomSetpoint);
         emit("temp", v);
     }
+    bool acChanged = false;
     if (!inited || cs.acMode != prev.acMode) {
         char v[8]; snprintf(v, sizeof(v), "%d", cs.acMode);
         emit("ac_mode", v);
+        acChanged = true;
     }
     if (!inited || cs.acFanAuto != prev.acFanAuto) {
         emit("ac_fan_auto", cs.acFanAuto ? "1" : "0");
+        acChanged = true;
     }
     if (!inited || cs.acFanSpeed != prev.acFanSpeed) {
         char v[8]; snprintf(v, sizeof(v), "%d", cs.acFanSpeed);
         emit("ac_fan_speed", v);
+        acChanged = true;
     }
     if (!inited || cs.acPower != prev.acPower) {
         char v[4]; snprintf(v, sizeof(v), "%d", cs.acPower);
         emit("ac_power", v);
+        acChanged = true;
     }
+    if (!inited || cs.roomSetpoint != prev.roomSetpoint) acChanged = true;
 
-    // Keep the pending OpenAir command in sync with the latest control state
-    // so the next BLE poll delivers the current setpoint without a separate signal.
-    openairSetCmd(buildOpenAirCmd(cs));
+    // Push a setpoint to the unit ONLY when the user actually changed an A/C
+    // control — never on init (the default control state is not the unit's real
+    // state) and never on an unchanged broadcast. The unit beeps and re-applies
+    // any command it receives, so writing every poll is both wrong and annoying;
+    // telemetry is read passively via notifications.
+    if (acChanged && inited) openairSetCmd(buildOpenAirCmd(cs));
 
     prev   = cs;
     inited = true;

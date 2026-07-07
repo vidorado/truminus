@@ -66,17 +66,20 @@ static std::string       s_targetAddr;        // uppercase hex, 12 chars, no col
 
 static SemaphoreHandle_t s_dataMux     = nullptr;
 static SemaphoreHandle_t s_cmdMux      = nullptr;
-static SemaphoreHandle_t s_notifySem   = nullptr;
 static OpenAirData       s_data        = {};
 static OpenAirCmd        s_pendingCmd  = {};
+// Only write a setpoint frame when the user actually changed something. Writing
+// every poll makes the unit re-apply the command each cycle (beep + LED flash).
+static bool              s_hasPendingCmd = false;
+// Snapshot of the unit's own write-region (the first 30 bytes of the telemetry
+// frame — every writable field: BatteryType, Power, TempScale, LED, flaps, …).
+// Commands are built ON TOP of this so we only ever change the four fields the
+// user controls and never disturb the unit's configuration (e.g. a lithium
+// BatteryType, the LED, or the reserved slot). Invalid until the first read.
+static uint8_t           s_writeShadow[30] = {};
+static bool              s_haveShadow      = false;
 
 static volatile uint32_t s_lastSeenMs  = 0;
-
-// Service-data bytes captured from the peripheral's ADV_IND, used in the
-// handshake write.  Captured once; stays zeroed if the peripheral doesn't
-// include service-data in its passive-scan ADV_IND.
-static uint8_t s_advSvcData[16]        = {};
-static int     s_advSvcDataLen         = 0;
 
 // Full advertised address (incl. type) of the matched peer, captured at scan
 // time.  We connect with THIS rather than NimBLEAddress(mac, 0): the OpenAir
@@ -85,20 +88,29 @@ static int     s_advSvcDataLen         = 0;
 static NimBLEAddress s_advAddr;
 static bool          s_haveAdvAddr     = false;
 
-// Device-id block appended to the service-data in the handshake write.  The
-// official app (writeId/getDeviceIdBytes) appends EXACTLY 8 bytes: a 32-bit
-// id (Java-style String.hashCode of "<androidId>_<brand>_<model>") in
-// little-endian, followed by 4 zero bytes.  The unit only stores it (it can't
-// know a phone's hash beforehand), so the value is free — but the 8-byte
-// length and the trailing zeros must match.  We use a stable 32-bit tag.
-static const uint32_t TRUMINUS_ID32   = 0x4E4D5254u; // "TRMN" as LE u32
+// Device id written in the handshake. A real-unit btsnoop of the app pairing
+// shows writeId is exactly these 8 bytes (no service-data prefix), and the same
+// value appears across separate captures — it is stable, not per-phone. The
+// unit stores it against the paired client; sending the app's id lets us attach
+// as an already-known client, so the unit accepts us without re-entering "Bt".
+static const uint8_t TRUMINUS_ID8[8]  = { 0x01, 0xe8, 0x77, 0x07, 0xed, 0xe0, 0xc8, 0x25 };
 
-// Notification receive buffer — written by the NimBLE host task, read from
-// the supervisor task after the semaphore handshake.
-static uint8_t s_notifyBuf[128]        = {};
-static int     s_notifyLen             = 0;
+// Cyclic-poll cadence: the driver connects, reads telemetry, sends any pending
+// command, and disconnects each cycle. To limit how often the unit shows "Bt",
+// only poll every POLL_INTERVAL_MS in steady state — but poll immediately when
+// the user changed something (a pending command needs low latency).
+static const uint32_t POLL_INTERVAL_MS = 15000;
+static uint32_t          s_lastPollMs   = 0;
+
+// Notification buffer + semaphore: the host callback copies the frame and signals;
+// openairPollOnce() waits on it. Keep the callback tiny (no float-printf/mutex —
+// they overflow the host task's small stack).
+static uint8_t           s_notifyBuf[128] = {};
+static int               s_notifyLen      = 0;
+static SemaphoreHandle_t s_notifySem      = nullptr;
 
 // ── Notification callback ────────────────────────────────────────────────────
+// Telemetry arrives once subscribed. Copy it and signal the waiting poll.
 static void notifyCb(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, bool) {
     if (len > sizeof(s_notifyBuf)) len = sizeof(s_notifyBuf);
     memcpy(s_notifyBuf, data, len);
@@ -149,6 +161,11 @@ static bool parseNotification(const uint8_t* ascii, int len) {
         bytes[i] = (uint8_t)((hi << 4) | lo);
     }
 
+    // Snapshot the unit's write-region so outgoing commands preserve every field
+    // we don't explicitly set (BatteryType, Power, TempScale, LED, flaps, …).
+    memcpy(s_writeShadow, bytes, sizeof(s_writeShadow));
+    s_haveShadow = true;
+
     OpenAirData d = {};
     d.errors             = (int)readU16BE(bytes, 30);  // field 13
     d.batteryValue       = (int)readU16BE(bytes, 32);  // field 14
@@ -174,40 +191,36 @@ static bool parseNotification(const uint8_t* ascii, int len) {
     return true;
 }
 
+static void writeU16BE(uint8_t* b, int off, unsigned v) {
+    b[off]     = (uint8_t)(v >> 8);
+    b[off + 1] = (uint8_t)(v & 0xFF);
+}
+
 // ── Command frame builder ─────────────────────────────────────────────────────
-// Encodes the 30-byte command as 60 ASCII lowercase hex chars (big-endian per
-// field).  RealTimeClock is seconds since boot mod 86400 (SNTP not required).
-static void buildWriteFrame(const OpenAirCmd& cmd, char out[61]) {
+// Builds the 30-byte command by starting from the unit's own last write-region
+// (s_writeShadow) and overwriting ONLY the fields we intend to change — the four
+// user controls plus the freshly-stamped clock. Everything else (BatteryType,
+// Power, TempScale, LedBright/Color, ScheduledTime, Flaps) is echoed back exactly
+// as the unit reported it, so we never reconfigure the appliance. Returns false
+// if no telemetry has been read yet (never send a blind default frame). Output is
+// 60 ASCII lowercase hex chars (the wire value is those code units).
+static bool buildWriteFrame(const OpenAirCmd& cmd, char out[61]) {
+    if (!s_haveShadow) return false;
+
+    uint8_t f[30];
+    memcpy(f, s_writeShadow, sizeof(f));
+
     uint32_t rtc = (uint32_t)((esp_timer_get_time() / 1000000ULL) % 86400UL);
-    snprintf(out, 61,
-        "%08x"  // [0-3]   RealTimeClock (u32)
-        "%04x"  // [4-5]   BatteryType = 0
-        "%04x"  // [6-7]   Power = 1
-        "%04x"  // [8-9]   TempScale = 0 (°C)
-        "%04x"  // [10-11] PowerState
-        "%04x"  // [12-13] Mode
-        "%04x"  // [14-15] Temp (tenths °C)
-        "%04x"  // [16-17] BlowerSpeed
-        "%04x"  // [18-19] LedBright
-        "%04x"  // [20-21] reserved
-        "%04x"  // [22-23] LedColor
-        "%04x"  // [24-25] ScheduledTime
-        "%04x"  // [26-27] Flaps1Mode
-        "%04x", // [28-29] Flaps2Mode
-        (unsigned)rtc,
-        0u,
-        1u,
-        0u,
-        (unsigned)cmd.powerState,
-        (unsigned)cmd.mode,
-        (unsigned)cmd.tempTenths,
-        (unsigned)cmd.blowerSpeed,
-        (unsigned)cmd.ledBright,
-        0u,
-        (unsigned)cmd.ledColor,
-        (unsigned)cmd.scheduledTime,
-        (unsigned)cmd.flaps1,
-        (unsigned)cmd.flaps2);
+    f[0] = (uint8_t)(rtc >> 24); f[1] = (uint8_t)(rtc >> 16);
+    f[2] = (uint8_t)(rtc >> 8);  f[3] = (uint8_t)(rtc & 0xFF);   // [0-3] RealTimeClock
+
+    writeU16BE(f, 10, (unsigned)cmd.powerState);   // [10-11] PowerState
+    writeU16BE(f, 12, (unsigned)cmd.mode);         // [12-13] Mode
+    writeU16BE(f, 14, (unsigned)cmd.tempTenths);   // [14-15] Temp (tenths °C)
+    writeU16BE(f, 16, (unsigned)cmd.blowerSpeed);  // [16-17] BlowerSpeed
+
+    for (int i = 0; i < 30; i++) snprintf(out + i * 2, 3, "%02x", f[i]);
+    return true;
 }
 
 // Disconnect and free a client safely.  deleteClient() will not free a
@@ -223,24 +236,41 @@ static void closeClient(NimBLEClient* client) {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
+// One cyclic poll: connect → discover → Service Changed → handshake → subscribe
+// → read one telemetry frame → (optionally) write a pending command → read back →
+// disconnect. Runs on the supervisor task. A short-lived connection keeps the
+// NimBLE/SDIO footprint small (a persistent link fought the Victron scan and
+// destabilised the C6 link); the cost is the unit briefly showing "Bt" per poll,
+// which the cadence gate below keeps infrequent.
 bool openairPollOnce() {
     if (!s_configured) return false;
 
+    // Cadence gate: poll at most every POLL_INTERVAL_MS, but immediately when a
+    // user command is pending (low-latency response to a button press).
+    bool cmdPending;
+    xSemaphoreTake(s_cmdMux, portMAX_DELAY);
+    cmdPending = s_hasPendingCmd;
+    xSemaphoreGive(s_cmdMux);
+    if (!cmdPending && s_lastPollMs && (millis() - s_lastPollMs) < POLL_INTERVAL_MS)
+        return false;
+    s_lastPollMs = millis();
+
     uint32_t t0 = millis();
-    // Connect with the exact address (and type) we saw advertising; fall back
-    // to the configured MAC as public only if we somehow never captured one.
     NimBLEAddress addr = s_haveAdvAddr ? s_advAddr
                                        : NimBLEAddress(formatMac(s_targetAddr), 0);
 
     NimBLEClient* client = NimBLEDevice::createClient();
     if (!client) {
-        // The NimBLE client pool is full — every slot still holds a client that
-        // has not been freed.  Never dereference: setConnectTimeout() on a null
-        // client is a store-fault panic.  Skip this cycle; a freed slot returns.
+        // Pool exhausted — every slot still holds an unfreed client. Never
+        // dereference null (setConnectTimeout would panic). A freed slot returns.
         ESP_LOGW(TAG, "createClient failed (client pool exhausted)");
         return false;
     }
     client->setConnectTimeout(5000);
+
+    // Telemetry notifications are 124 bytes and cannot fit the 23-byte default
+    // MTU (max notify = MTU-3). The app negotiates a large MTU right after connect.
+    NimBLEDevice::setMTU(247);
 
     ESP_LOGI(TAG, "connecting %s (type=%d)",
              addr.toString().c_str(), (int)addr.getType());
@@ -251,29 +281,17 @@ bool openairPollOnce() {
     }
     if (!connected) {
         ESP_LOGW(TAG, "connect failed (+%ums)", (unsigned)(millis() - t0));
-        closeClient(client);
-        return false;
+        closeClient(client); return false;
     }
-    ESP_LOGI(TAG, "connected (+%ums)", (unsigned)(millis() - t0));
 
-    // Force a full GATT attribute discovery before querying services.
-    // Without this, getService() triggers a per-UUID filtered discovery that
-    // sometimes fails on 128-bit custom UUIDs even when the service is present.
+    // Full GATT discovery first: a per-UUID filtered discovery sometimes fails on
+    // 128-bit custom UUIDs even when the service is present.
     if (!client->discoverAttributes()) {
         ESP_LOGW(TAG, "attribute discovery failed");
         closeClient(client); return false;
     }
-
     NimBLERemoteService* svc = client->getService(SVC_UUID);
-    if (!svc) {
-        // Dump all discovered services so we can diagnose UUID mismatches.
-        ESP_LOGW(TAG, "target service not found; services present:");
-        for (auto* s : client->getServices()) {
-            ESP_LOGW(TAG, "  svc: %s", s->getUUID().toString().c_str());
-        }
-        closeClient(client); return false;
-    }
-
+    if (!svc) { ESP_LOGW(TAG, "target service not found"); closeClient(client); return false; }
     NimBLERemoteCharacteristic* hsChar   = svc->getCharacteristic(HANDSHAKE_UUID);
     NimBLERemoteCharacteristic* dataChar = svc->getCharacteristic(DATA_UUID);
     if (!hsChar || !dataChar) {
@@ -281,54 +299,61 @@ bool openairPollOnce() {
         closeClient(client); return false;
     }
 
-    // Handshake (matches the app's writeId): [captured service-data bytes] +
-    // [4-byte id, little-endian] + [4 zero bytes]  → 8 trailing bytes total.
-    {
-        uint8_t hsBuf[24];
-        int hsLen = 0;
-        if (s_advSvcDataLen > 0 && s_advSvcDataLen <= (int)(sizeof(hsBuf) - 8)) {
-            memcpy(hsBuf, s_advSvcData, (size_t)s_advSvcDataLen);
-            hsLen = s_advSvcDataLen;
-        }
-        hsBuf[hsLen++] = (uint8_t)(TRUMINUS_ID32 & 0xFF);
-        hsBuf[hsLen++] = (uint8_t)((TRUMINUS_ID32 >> 8)  & 0xFF);
-        hsBuf[hsLen++] = (uint8_t)((TRUMINUS_ID32 >> 16) & 0xFF);
-        hsBuf[hsLen++] = (uint8_t)((TRUMINUS_ID32 >> 24) & 0xFF);
-        hsBuf[hsLen++] = 0; hsBuf[hsLen++] = 0; hsBuf[hsLen++] = 0; hsBuf[hsLen++] = 0;
-        hsChar->writeValue(hsBuf, (size_t)hsLen, false);
-        ESP_LOGI(TAG, "handshake written (%d bytes)", hsLen);
+    // Enable Service Changed indications (0x2A05 in GATT service 0x1801) BEFORE
+    // the handshake — the app's btsnoop shows this exact order. Best-effort.
+    if (NimBLERemoteService* gatt = client->getService("1801")) {
+        if (NimBLERemoteCharacteristic* sc = gatt->getCharacteristic("2A05"))
+            sc->subscribe(false, nullptr, true);   // false = indications (0x0002)
     }
-    // The official app waits ~2 s after the handshake before subscribing.
-    vTaskDelay(pdMS_TO_TICKS(2000));
 
-    // Enable notifications on the data characteristic.
+    // Handshake = the app's writeId: exactly 8 raw id bytes, Write *Request*
+    // (response=true, the char is Write-only). On first pairing the unit does not
+    // answer until the user long-presses ON/OFF ("Bt"); NimBLE's ATT timeout
+    // covers the wait. Once paired, the WriteRsp is immediate.
+    if (!hsChar->writeValue(TRUMINUS_ID8, sizeof(TRUMINUS_ID8), true)) {
+        ESP_LOGW(TAG, "handshake write failed");
+        closeClient(client); return false;
+    }
+
+    // Subscribe; drain any stale signal, then wait for the first telemetry frame.
+    while (xSemaphoreTake(s_notifySem, 0) == pdTRUE) {}
     if (!dataChar->subscribe(true, notifyCb)) {
         ESP_LOGW(TAG, "subscribe failed");
         closeClient(client); return false;
     }
-
-    // Snapshot the latest pending command under its mutex.
-    OpenAirCmd cmd = {};
-    xSemaphoreTake(s_cmdMux, portMAX_DELAY);
-    cmd = s_pendingCmd;
-    xSemaphoreGive(s_cmdMux);
-
-    // Build the 60-char ASCII-hex command frame and write it.
-    // The wire value IS the ASCII code units ("0000..."), not raw binary.
-    char frame[61] = {};
-    buildWriteFrame(cmd, frame);
-    dataChar->writeValue((const uint8_t*)frame, 60, false);
-    ESP_LOGI(TAG, "cmd: ps=%d mode=%d temp=%.1f°C fan=%d",
-             cmd.powerState, cmd.mode, cmd.tempTenths / 10.0f, cmd.blowerSpeed);
-
-    // Wait for the device to push back a telemetry notification.
-    while (xSemaphoreTake(s_notifySem, 0) == pdTRUE) {}   // drain stale
     bool got = (xSemaphoreTake(s_notifySem, pdMS_TO_TICKS(5000)) == pdTRUE);
     if (got) parseNotification(s_notifyBuf, s_notifyLen);
-    else     ESP_LOGW(TAG, "no notification within 5 s");
+    else     ESP_LOGW(TAG, "no telemetry within 5 s");
+
+    // Send a pending command if the user changed something, built ON TOP of the
+    // unit's own last state (BatteryType/Power/LED preserved). Only after a read.
+    OpenAirCmd cmd = {};
+    bool hasCmd = false;
+    xSemaphoreTake(s_cmdMux, portMAX_DELAY);
+    cmd = s_pendingCmd;
+    hasCmd = s_hasPendingCmd;
+    s_hasPendingCmd = false;
+    xSemaphoreGive(s_cmdMux);
+
+    if (hasCmd) {
+        char frame[61] = {};
+        if (buildWriteFrame(cmd, frame)) {
+            dataChar->writeValue((const uint8_t*)frame, 60, false);
+            ESP_LOGI(TAG, "cmd: ps=%d mode=%d temp=%.1f°C fan=%d",
+                     cmd.powerState, cmd.mode, cmd.tempTenths / 10.0f, cmd.blowerSpeed);
+            // Read back one frame so telemetry reflects the change immediately.
+            if (xSemaphoreTake(s_notifySem, pdMS_TO_TICKS(3000)) == pdTRUE)
+                parseNotification(s_notifyBuf, s_notifyLen);
+        } else {
+            // No telemetry yet — keep the command pending rather than blind-write.
+            xSemaphoreTake(s_cmdMux, portMAX_DELAY);
+            s_pendingCmd = cmd; s_hasPendingCmd = true;
+            xSemaphoreGive(s_cmdMux);
+        }
+    }
 
     closeClient(client);
-    ESP_LOGI(TAG, "poll %s (+%ums)", got ? "ok" : "no-notify", (unsigned)(millis() - t0));
+    ESP_LOGI(TAG, "poll %s (+%ums)", got ? "ok" : "no-telemetry", (unsigned)(millis() - t0));
     return got;
 }
 
@@ -341,21 +366,11 @@ void openairBleHandleAd(const NimBLEAdvertisedDevice* dev) {
         if (c != ':') devAddr += (char)toupper((unsigned char)c);
     if (devAddr != s_targetAddr) return;
 
+    bool first = (s_lastSeenMs == 0);
     s_lastSeenMs = millis();
     s_advAddr    = dev->getAddress();   // keep the real type for the connect
     s_haveAdvAddr = true;
-
-    // Capture service-data bytes once for use in the handshake write.
-    if (s_advSvcDataLen == 0 && dev->haveServiceData()) {
-        std::string sd = dev->getServiceData();
-        int len = (int)sd.size();
-        if (len > (int)sizeof(s_advSvcData)) len = (int)sizeof(s_advSvcData);
-        if (len > 0) {
-            memcpy(s_advSvcData, sd.data(), (size_t)len);
-            s_advSvcDataLen = len;
-            ESP_LOGI(TAG, "captured %d service-data bytes from adv", len);
-        }
-    }
+    if (first) ESP_LOGW(TAG, "advertising seen: %s", dev->getAddress().toString().c_str());
 }
 
 uint32_t openairLastSeenMs() { return s_lastSeenMs; }
@@ -376,6 +391,7 @@ void openairSetCmd(const OpenAirCmd& cmd) {
     if (s_cmdMux) {
         xSemaphoreTake(s_cmdMux, portMAX_DELAY);
         s_pendingCmd = cmd;
+        s_hasPendingCmd = true;   // send it on the next poll, then stop re-sending
         xSemaphoreGive(s_cmdMux);
     }
 }

@@ -446,9 +446,10 @@ static void bleSupervisorTask(void* /*arg*/) {
             }
         }
 
-        // OpenAir PLUS A/C — poll every cycle when the device is in range.
-        // Commands need low latency (user taps a button; A/C should respond
-        // within one cycle = ~5-15 s depending on scan + connect time).
+        // OpenAir PLUS A/C — cyclic poll (connect, read telemetry, push any
+        // pending command, disconnect). openairPollOnce() gates its own cadence
+        // (every 15 s, or immediately when a command is pending). Only attempt it
+        // when the unit was advertising recently, to avoid a blind connect timeout.
         if (openairIsConfigured()) {
             uint32_t seen = openairLastSeenMs();
             if (seen && (millis() - seen) < 30000) {

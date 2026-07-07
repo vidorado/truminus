@@ -54,8 +54,9 @@ OpenAirData openairGetData();
 // A/C control state changes so the next poll delivers the latest setpoint.
 void openairSetCmd(const OpenAirCmd& cmd);
 
-// Called from bleSupervisorTask: connect to the A/C, write the pending
-// command, collect one telemetry notification, disconnect.
+// Called every bleSupervisorTask cycle. Holds ONE persistent GATT connection
+// open (the unit powers off when the link drops), reconnecting only after a
+// drop; telemetry arrives via notifications, commands go out on change.
 bool openairPollOnce();
 
 bool openairLoadConfig(std::string& addr);

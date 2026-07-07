@@ -42,7 +42,7 @@ the usbipd attach and any background job — Blutter's build is incremental, jus
   | Role | UUID | How identified |
   |------|------|----------------|
   | **Service** | `e43ff2c2-8602-48f6-82d0-72cd56fb06f2` | `services.firstWhere((s) => s.uuid == …)` |
-  | **Handshake characteristic** | `9d667ea8-9c95-4dd0-b952-92031c4f5375` | WRITE. `discoverServices` calls `writeId()` here once: writes the advertised service-data bytes + a 4-byte device-id hash (`SharedData.getDeviceIdBytes`, a `_hash32` of `androidId_model…`). **Not** used for commands. |
+  | **Handshake characteristic** | `9d667ea8-9c95-4dd0-b952-92031c4f5375` | WRITE. `discoverServices` calls `writeId()` here once, *before* subscribing: writes an **8-byte device id** (real-unit capture, see Handshake below). **Not** used for commands. |
   | **Data characteristic** (telemetry **and** commands) | `4a01b4dd-350d-4afc-9a9f-27164f2b6b56` | NOTIFY + READ + **WRITE**, bidirectional. The app `setNotifyValue(true)` + `onValueReceived()` for telemetry, **and** caches this UUID as the write target (`field_4b`, debug `"CARAC DE ESC?"`); `writeMessage()` writes every command here. |
   | CCCD | `00002902-0000-1000-8000-00805f9b34fb` | standard, enables notifications |
 
@@ -112,13 +112,13 @@ layout (through `Flaps2Mode`).
 | Bytes | Field | W/R | Confirmed values / scaling |
 |-------|-------|-----|----------------------------|
 | 0–3   | `RealTimeClock` (u32) | W | seconds since midnight, from the **phone** clock (e.g. 56075 = 15:34:35) |
-| 4–5   | `BatteryType` | W | 0 |
-| 6–7   | `Power` | W | constant **1** (power available/enabled) |
+| 4–5   | `BatteryType` | W | constant **1** (in the real-unit capture; app never exposes it) |
+| 6–7   | `Power` | W | constant **0** (real-unit capture — command frames send 0, not 1) |
 | 8–9   | `TempScale` | W | 0 (°C) |
 | 10–11 | `PowerState` | W | **0 = OFF, 1 = ON** |
 | 12–13 | `Mode` | W | **0 = AUTO, 2 = MAN** (1/ECO not yet observed) |
 | 14–15 | `Temp` | W | **tenths of °C** — 210 = 21.0 °C, step 10 = 1.0 °C (gauge min 16.0) |
-| 16–17 | `BlowerSpeed` | W | fan level, observed 1 and 3 |
+| 16–17 | `BlowerSpeed` | W | fan level, observed 1–4 |
 | 18–19 | `LedBright` | W | 0/1 |
 | 20–21 | *(reserved)* | — | always 0; **not** surfaced by the app, but occupies a slot in both frames |
 | 22–23 | `LedColor` | W | colour index, observed 1, 3, 10 |
@@ -151,29 +151,88 @@ disassembly pass, most "unknowns" were resolved from the app — only one truly 
 2. `BlowerSpeed`/`LedColor`/`Flaps`/`TempScale` full ranges — only matter for *displaying* every
    option the unit offers; irrelevant for our firmware, which only ever **sends** valid values
    chosen in our own UI (blower 1–6, etc.). Not blocking.
-3. Real-world telemetry **scaling** — the **one genuine unit-only unknown**, and for a specific
-   reason: **the app never displays the probe temperatures**. `Sonda1C`/`Sonda2C` are referenced
-   *only* inside `Mensaje.dart` (parsed, never shown), so there is no raw→°C conversion in the
-   code to copy. `BatteryValue`/RPM scaling is likewise not surfaced. The firmware exposes the raw
-   `int16` values; the divisor (likely ×10 like the write-side `Temp`, but unconfirmed) needs a
-   `btsnoop` capture correlated with a known probe reading.
+3. Real-world telemetry **scaling** — mostly resolved by the real-unit capture, one probe unit
+   still open:
+   - **`BatteryValue` = millivolts (÷1000 = volts).** CONFIRMED: the capture reads 13373–13534,
+     i.e. **13.4–13.5 V** on a 12 V system.
+   - `CompressorSpeedRPM` reads plausible raw RPM (0 / 2100 / 2800), no scaling.
+   - `BlowerSpeedPer`/`ElectroSpeedPer` are already **percent** (0–54 observed).
+   - **Probe temperatures still open.** The app never displays `Sonda1C`/`Sonda2C` (parsed in
+     `Mensaje.dart`, never shown), so there is no raw→°C conversion to copy, and the capture's
+     `Sonda*` values (`Sonda1C` 752–764, `Sonda2C` 376–650) don't map cleanly to °C at ÷10 nor do
+     the paired `F`/`C` fields agree as a unit conversion. Needs a capture correlated with a known
+     probe reading. The firmware exposes the raw `int16` for now.
 4. ~~`Errors` → `MiError` mapping~~ — **DECODED** (see catalog below). The raw "no fault" sentinel
    stays the only ambiguity (firmware treats `0` as no-fault, the safe default).
 
-### Handshake (`writeId`) — CONFIRMED (exact bytes)
+### Connect + handshake — CONFIRMED end-to-end against the real unit
 
-`bluetooth_service.dart::writeId` writes to the handshake char (`9d667ea8`) the value
-`serviceData ++ getDeviceIdBytes()`, after a 500 ms delay, *before* subscribing:
+A `btsnoop_hci.log` of the app pairing with a real OpenAir unit (Pixel 8, Android 16) plus a
+**working TruMinus firmware connection** settle the whole flow. The exact winning ATT sequence:
 
-- `serviceData` = the bytes the unit advertised under its service data (`field_57`).
-- `getDeviceIdBytes()` (`SharedData.dart`) = **exactly 8 bytes**: a 32-bit id **little-endian**
-  followed by **4 zero bytes** (`ByteData(8)`, `setUint32(0, …)`, rest left 0).
-- The 32-bit id = `_hash32("<androidId>_<brand>_<model>")`, where `_hash32` is the classic Java
-  `String.hashCode`: `h = 0; for b in utf8(s): h = (h*31 + b) & 0xFFFFFFFF`.
+```
+MTU exchange           (app requests 517, unit grants 256)
+WriteReq  h=0x0009 = 0002   enable INDICATIONS on Service Changed (0x2A05, GATT svc 0x1801)
+WriteReq  h=0x0013 = <8-byte id>     the handshake (writeId)
+  … unit does NOT answer until the user long-presses the unit's ON/OFF button …
+WriteRsp                    arrives only after the human confirms (seconds later)
+WriteReq  h=0x0011 = 0001   enable NOTIFICATIONS on the data char (0x4a01b4dd)
+Notify    h=0x0010 = <124-char telemetry>   flows from here on, unsolicited
+```
 
-The unit only **stores** this id (it can't know a phone's hash in advance), so the *value* is
-free — but the **8-byte length and the trailing 4 zeros must match**. The firmware appends a
-stable 32-bit tag (LE) + 4 zeros to the captured service-data, matching the frame the app sends.
+Three things the firmware MUST do, each confirmed necessary by the capture:
+
+1. **Enable Service Changed indications (`0x2A05` CCCD = `0x0002`) BEFORE the handshake.** The app
+   always does this first; skipping it was one reason our early attempts were rejected.
+2. **Handshake = exactly 8 raw id bytes, Write *Request* (response=true).** No service-data prefix.
+   The char is Write-only (`props 0x08`). A write-*without*-response is dropped. The captured id
+   `01 e8 77 07 ed e0 c8 25` is **identical across two independent captures** (different units), so
+   it is effectively a **constant**, not a per-phone hash — the firmware hardcodes it as
+   `TRUMINUS_ID8`. (The decompiled `getDeviceIdBytes` = `_hash32("androidId_brand_model")` LE + 4
+   zeros; the constant observed value means `androidId` resolves to a fixed default here.)
+3. **Wait for the WriteRsp with a long timeout (≥30 s).** The unit does **not** answer the handshake
+   until the user **long-presses the ON/OFF button** on the console (it shows `Bt`) — this is the
+   human pairing confirmation. NimBLE's default ATT timeout (~30 s) covers it. Enable data-char
+   notifications immediately after the WriteRsp.
+
+**Pairing UX:** first pairing needs the long-press (`Bt`) while the firmware is mid-handshake — the
+board keeps the connection open waiting for the WriteRsp. Once the unit has stored our
+`TRUMINUS_ID8`, later reconnects are accepted without the long-press (known client). A **hard power
+cycle of the unit** helps it re-enter the pairing/`Bt` state cleanly. Surface a **pairing-assistant
+screen** after device selection: try to connect, and if it doesn't succeed within a few seconds show
+"long-press the unit's ON/OFF button", keep retrying, and allow cancel.
+
+> ⚠️ **Use a short-lived cyclic poll, NOT a persistent connection.** `openairPollOnce()` connects,
+> reads one telemetry frame, sends any pending command, reads back, and disconnects — every
+> `POLL_INTERVAL_MS` (15 s) in steady state, or immediately when a command is pending. A persistent
+> GATT link was tried and abandoned: holding a connection open while the supervisor runs its
+> continuous Victron scan destabilised the **shared ESP32-C6 radio/SDIO link** and reliably crashed
+> the P4 (`assert failed: sdio_rx_get_buffer sdio_drv.c:953` at ~6.6 s, boot-loop). The base firmware
+> is stable; the persistent-link changes introduced the crash, so the cyclic model is the safe design.
+> (The idea that the unit powers off when the link drops was an unverified hunch — the cyclic poll
+> works; the only visible cost is the unit briefly showing "Bt" per poll, kept infrequent by the gate.)
+
+> ⚠️ **Do NOT write a setpoint frame every poll.** The unit re-applies any command it receives
+> (audible **beep** + LED flash). Telemetry notifications arrive on their own once subscribed, so
+> only write the 60-char command frame when the user actually changed something (`s_hasPendingCmd`).
+
+> ⚠️ **Build commands ON TOP of the unit's own last state — never from defaults.** A command frame
+> carries ALL 13 writable fields, so any field you don't copy from the unit reconfigures it. Hardcoding
+> `BatteryType=0`/`Power=1` was wrong (the real unit runs `BatteryType=1` lithium, `Power=0`) and
+> visibly disturbed operation (fan stutter, config drift). The firmware snapshots the first 30 bytes of
+> each telemetry frame (`s_writeShadow`) and overwrites ONLY the four user controls
+> (PowerState/Mode/Temp/BlowerSpeed) + the clock; everything else (BatteryType, Power, TempScale,
+> LED, ScheduledTime, Flaps) is echoed back byte-for-byte. Never send a command before the first
+> telemetry read (`s_haveShadow`).
+
+### Config fields (BatteryType, Power) — change only while the unit is OFF
+
+`Power` = max A/C power (`0` = 1.2 kW, `1` = 2.0 kW). `BatteryType` = battery chemistry (`1` = lithium).
+The **official app forbids changing either while the unit is running** — doing it hot is harmful. So in
+TruMinus these are **configuration settings on the Peripherals screen**, not live panel buttons, and are
+only written when the unit is OFF; while running we always mirror whatever telemetry reports (the
+`s_writeShadow` echo already guarantees this). Applies to both the web UI and the LCD (drop the old
+`1.2`/`2.0` power buttons from the CLIMATIZACIÓN panel).
 
 ### `Errors` → `MiError` catalog — CONFIRMED (decoded from `error.dart::listaErrores`)
 
@@ -230,9 +289,12 @@ but only as an observer/scanner — this needs an active GATT client connection)
 
 1. Scan, match advertised name `My OpenAir PLUS`, connect.
 2. Discover service `e43ff2c2-…`; cache handshake char `9d667ea8-…` and data char `4a01b4dd-…`.
-3. Handshake (matches the app's `writeId`): write the device-id (`SharedData.getDeviceIdBytes()`
-   style: advertised service-data bytes + a 4-byte `_hash32` of an id string) to **`9d667ea8`**,
-   then wait ~2 s. The app does this *before* it subscribes.
+3. Handshake (matches the app's `writeId`): write a **stable 8-byte id** to **`9d667ea8`** (raw
+   bytes, no service-data prefix, no trailing zeros — see Handshake above), then wait ~2 s. The
+   app does this *before* it subscribes. **First-connect pairing:** the unit only stores a new id
+   in pairing mode, entered by a **long-press on its power button** — instruct the user to do this
+   when they first select the device in our settings UI, then watch the board monitor to confirm
+   the handshake + first telemetry frame land.
 4. Subscribe to `4a01b4dd` (write CCCD `0x2902` = `0x0001`); decode each 124-char notification per
    the byte table and surface `Temp`/`Mode`/`Errors`/probes to the LCD + web UI.
 5. To command: build the 30-byte write frame (`RealTimeClock` = current time-of-day seconds, then
