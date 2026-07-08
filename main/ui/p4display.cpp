@@ -554,6 +554,10 @@ static bool s_linOk = false;
 // Cached OpenAir A/C "confirmed by BLE" flag (see P4DisplayData::acConnected);
 // gates the topbar snowflake brightness in refresh_flame_icon().
 static bool s_acConnected = false;
+// Cached "compressor running" flag (A/C telemetry CompressorSpeedRPM > 0). When
+// set, the topbar snowflake blinks — analogous to the flame while the Truma
+// burner is firing. Driven with the shared 500 ms icon-blink timer phase.
+static bool s_acCompressorOn = false;
 
 // Btnmatrix maps filled from i18n strings each time build_main_screen() runs.
 // Stored as module-level arrays so LVGL's pointer reference stays valid.
@@ -1382,8 +1386,13 @@ static void refresh_flame_icon()
     if (cooling) {
         lv_label_set_text(ui.icon_flame, FA_SNOWFLAKE);
         lv_obj_set_style_text_color(ui.icon_flame, lv_color_hex(0x44aaff), 0);
-        lv_obj_set_style_text_opa(ui.icon_flame,
-            s_acConnected ? LV_OPA_COVER : LV_OPA_30, 0);
+        // Dim until BLE confirms the A/C; solid when cooling is confirmed idle;
+        // blink while the compressor is actually running (mirrors the flame on
+        // burner demand). The 500 ms icon-blink timer repaints this.
+        lv_opa_t opa = !s_acConnected      ? LV_OPA_30
+                     : s_acCompressorOn    ? (s_iconBlink ? LV_OPA_COVER : LV_OPA_20)
+                                           : LV_OPA_COVER;
+        lv_obj_set_style_text_opa(ui.icon_flame, opa, 0);
     } else {
         lv_label_set_text(ui.icon_flame, FA_FIRE);
         lv_obj_set_style_text_color(ui.icon_flame, C_AMBER, 0);
@@ -2237,6 +2246,8 @@ static void icon_blink_timer_cb(lv_timer_t*)
                 : (s_tunnel_state == 3) ? IST_FAILED
                                         : IST_DISABLED;
     for (int i = 0; i < 4; i++) repaint_icon(i);
+    // Advance the snowflake blink (compressor running) on the same phase.
+    refresh_flame_icon();
 }
 
 void p4DisplayRebuild()
@@ -2335,13 +2346,17 @@ void p4DisplayUpdate(const P4DisplayData& d)
     // expires without connecting.  derive_icon_state() owns that mapping.
     {
         uint32_t now = lv_tick_get();
-        static uint32_t s_wifiDown = 0, s_linDown = 0, s_bleDown = 0;
+        static uint32_t s_wifiDown = 0, s_linDown = 0;
         set_icon_state(0, derive_icon_state(d.wifiOk, d.wifiAttempting, s_wifiDown, now));
         set_icon_state(1, derive_icon_state(d.linOk,  d.linAttempting,  s_linDown,  now));
-        // BLE: configured (bleState >= 1) is the precondition for "attempting".
-        set_icon_state(2, derive_icon_state(d.bleState >= 2,
-                                            d.bleAttempting && d.bleState >= 1,
-                                            s_bleDown, now));
+        // BLE peripherals are intermittent (cyclic poll: each reconnects every
+        // ~15 s), so — mirroring the web — blink while configured but no device
+        // has reported yet, go solid once any has, dim when none is configured.
+        // No FAILED/slash state: a not-yet-connected peripheral is normal, not a
+        // failure, and a permanent strike would be misleading.
+        set_icon_state(2, (d.bleState >= 2) ? IST_CONNECTED
+                        : (d.bleState >= 1) ? IST_CONNECTING
+                                            : IST_DISABLED);
     }
 
     // Tint (water) and flame (heat) topbar indicators: bright only when LIN
@@ -2353,6 +2368,7 @@ void p4DisplayUpdate(const P4DisplayData& d)
         (d.linOk && d.boilerMode != 0) ? LV_OPA_COVER : LV_OPA_30, 0);
     s_linOk = d.linOk;
     s_acConnected = d.acConnected;
+    s_acCompressorOn = d.acCompressorOn;
     refresh_flame_icon();
 
     // Boiler thermometer.  The scale tops out at the selected boiler target
@@ -2451,15 +2467,14 @@ void p4DisplayUpdate(const P4DisplayData& d)
         };
         if (d.multi.valid) {
             lv_label_set_text(ui.lbl_inv_state, translate_multi_state(d.multi.deviceState));
-            // MULTI_POWER_NA = inverter off / not reporting → show "--" instead
-            // of a bogus number, and treat the port as idle below.
+            // MULTI_POWER_NA = the inverter is connected but this port is at
+            // rest / not reporting → a real reading of 0 W, and idle flow below.
+            // "--" is reserved for the not-connected case (the else branch).
             bool mainsNa = (d.multi.acInW  == MULTI_POWER_NA);
             bool loadNa  = (d.multi.acOutW == MULTI_POWER_NA);
-            if (mainsNa) snprintf(tb, sizeof(tb), "--");
-            else         snprintf(tb, sizeof(tb), "%s W", group_int(g, sizeof(g), (int)d.multi.acInW));
+            snprintf(tb, sizeof(tb), "%s W", group_int(g, sizeof(g), mainsNa ? 0 : (int)d.multi.acInW));
             lv_label_set_text(ui.lbl_inv_mains_w, tb);
-            if (loadNa) snprintf(tb, sizeof(tb), "--");
-            else        snprintf(tb, sizeof(tb), "%s W", group_int(g, sizeof(g), (int)d.multi.acOutW));
+            snprintf(tb, sizeof(tb), "%s W", group_int(g, sizeof(g), loadNa ? 0 : (int)d.multi.acOutW));
             lv_label_set_text(ui.lbl_inv_load_w, tb);
             int battW = (int)lroundf((std::isnan(d.multi.battV) ? 0.0f : d.multi.battV)
                                      * d.multi.battA);

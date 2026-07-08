@@ -241,6 +241,7 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
 
     d.openairConfigured = openairCfgIsActive();
     d.acConnected       = oad.valid;
+    d.acCompressorOn    = oad.valid && oad.compressorSpeedRpm > 0;
 
     // Dummy overrides (in dummy_flags.h)
 #ifdef ENABLE_BOILER_DUMMY

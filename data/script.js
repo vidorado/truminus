@@ -23,6 +23,7 @@ var s_acMode      = 'off';       // 'off' | 'cool' | 'eco'
 var s_acFanAuto   = true;        // cool mode: Auto (Mode AUTO) vs Man (Mode MAN)
 var s_acFanSpeed  = 3;           // cool+Man blower speed 1..6
 var s_acConnected = false;       // true when BLE poll returned valid telemetry
+var s_acCompRpm   = 0;           // A/C compressor speed (RPM); >0 → snowflake blinks
 var s_acErrCode   = 0;           // OpenAir Errors value (0 = no fault)
 var s_acErrAcked  = false;       // A/C error modal acknowledged
 var s_waterDemand = false;
@@ -783,13 +784,16 @@ function refreshIndicators() {
     var acSelected = s_openair && !s_heat &&
                      (s_acMode === 'cool' || s_acMode === 'eco');
     var coolOn      = acSelected && s_acConnected;   // confirmed by BLE poll
+    var compOn      = coolOn && s_acCompRpm > 0;      // compressor running
     var heatOn      = linOk && s_heat;
     var heatDemand  = heatOn && s_roomTemp !== null && (s_roomTemp < s_temp - 0.3);
     var fireIcon = document.querySelector('#ind-fire i');
     if (fireIcon) fireIcon.textContent = acSelected ? '' : '';
+    // Solid blue snowflake once cooling is confirmed; blinks while the
+    // compressor runs — the cooling analogue of the flame on burner demand.
     cls('ind-fire', 'ind-cool',   acSelected);
-    cls('ind-fire', 'ind-on',     coolOn || (heatOn && !heatDemand));
-    cls('ind-fire', 'ind-active', !acSelected && heatDemand);
+    cls('ind-fire', 'ind-on',     (coolOn && !compOn) || (heatOn && !heatDemand));
+    cls('ind-fire', 'ind-active', compOn || (!acSelected && heatDemand));
 
     // Water temperature bar (matches CYD display)
     var wTempVal = document.getElementById('water_temp_val');
@@ -1139,8 +1143,10 @@ function applyMulti(d) {
         return;
     }
     if (st) st.textContent = t(MULTI_STATES[d.state] || 'inv_st_off');
-    // ac_in_w / ac_out_w arrive as null when the inverter is off / not
-    // reporting (VE.Bus no-data sentinel) — show "--" and keep the flow idle.
+    // ac_in_w / ac_out_w arrive as null when the inverter is connected but a
+    // port is at rest / not reporting (VE.Bus no-data sentinel) — that is a real
+    // reading of 0 W, and keeps the flow idle. '--' is reserved for the
+    // not-connected case (the !d.valid branch above).
     var inNa  = (d.ac_in_w  === null || d.ac_in_w  === undefined);
     var outNa = (d.ac_out_w === null || d.ac_out_w === undefined);
     var inW  = parseInt(d.ac_in_w)  || 0;
@@ -1148,8 +1154,8 @@ function applyMulti(d) {
     var battV = parseFloat(d.batt_v) || 0;
     var battA = parseFloat(d.batt_a) || 0;
     var battW = Math.round(battV * battA);
-    if (rm) rm.textContent = inNa  ? '--' : fmtW(inW);
-    if (rl) rl.textContent = outNa ? '--' : fmtW(outW);
+    if (rm) rm.textContent = fmtW(inW);
+    if (rl) rl.textContent = fmtW(outW);
     if (rb) rb.textContent = fmtW(battW);
     if (fm) {
         var fmOn = !inNa && Math.abs(inW) > 5;
@@ -1197,6 +1203,7 @@ function applyMulti(d) {
 
 function applyAc(d) {
     s_acConnected = !!d.valid;
+    s_acCompRpm   = parseInt(d.comp_rpm) || 0;
     var code = parseInt(d.errors) || 0;
     if (code !== s_acErrCode) {
         s_acErrCode = code;

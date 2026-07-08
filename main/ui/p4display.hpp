@@ -99,6 +99,10 @@ struct P4DisplayData {
     // glyph follows the selected mode, but stays dim until the unit responds.
     bool acConnected;
 
+    // OpenAir A/C compressor running (telemetry CompressorSpeedRPM > 0).  Makes
+    // the topbar snowflake blink, analogous to the flame while the burner fires.
+    bool acCompressorOn;
+
     // Peripherals
     P4SolarData solar;
     P4BattData  batt;
