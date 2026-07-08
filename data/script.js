@@ -578,10 +578,6 @@ function updateAbout(d) {
 
 // ── Settings received from device ─────────────────────────────────────────
 function applySetting(id, value) {
-    // Ignore an echo for a field the user just changed (optimistic-UI lock): the
-    // unit still reports the old value until the command reaches it, and applying
-    // it here would visibly revert the user's action.
-    if (_settingLock[id] && Date.now() < _settingLock[id]) return;
     if (id === 'temp') {
         s_temp = parseFloat(value) || 20;
         refreshSetpoint();
@@ -839,14 +835,7 @@ function refreshIndicators() {
 
 // ── Debounced send (300 ms per topic) ─────────────────────────────────────
 var _sendTimers = {};
-// Optimistic-UI lock: after the user changes a control, incoming `setting` echoes
-// for that field are ignored until this timestamp, so stale telemetry (the unit
-// still reports the OLD value until the debounced command reaches it, ~seconds)
-// cannot revert what the user just set. Keyed by field id without the leading '/'.
-var _settingLock = {};
-var SETTING_LOCK_MS = 5000;
 function sendDebounced(id, value) {
-    _settingLock[id.replace(/^\//, '')] = Date.now() + SETTING_LOCK_MS;
     clearTimeout(_sendTimers[id]);
     _sendTimers[id] = setTimeout(function () { send(id, value); }, 300);
 }

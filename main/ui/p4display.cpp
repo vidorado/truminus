@@ -1902,13 +1902,25 @@ void p4GetControlState(P4ControlState& out)
     out.acFanSpeed   = st.acFanSpeed;
 }
 
-// Remote setters (called from the WS dispatcher).  Take the LVGL lock so the
-// st mutation + widget refresh happen atomically with the LVGL refresh task.
-// A short timeout keeps a stuck UI from blocking the WS task; on timeout we
-// silently drop the write (the next remote update will retry).
+// Remote setters (called from the WS/LIN/main tasks — never the LVGL task).
+// They take the LVGL lock so the st mutation + widget refresh happen atomically
+// with the LVGL refresh task. The lock must be RETRIED rather than dropped on a
+// single timeout: dropping a web-originated control change while LVGL is
+// mid-render leaves the LCD (and the firmware state) behind the web UI, which
+// the user already updated optimistically — a persistent LCD↔web desync until
+// the next change to that field. Retrying across a few short windows applies the
+// update even under contention, without an unbounded block (deadlock-safe since
+// these callers are never the LVGL task).
+static bool lvglLockForSet()
+{
+    for (int i = 0; i < 10; i++) if (lvglLock(50)) return true;
+    ESP_LOGW(TAG, "lvglLockForSet: LVGL busy 500 ms, control update dropped");
+    return false;
+}
+
 void p4SetHeating(bool on)
 {
-    if (!lvglLock(50)) return;
+    if (!lvglLockForSet()) return;
     st.heatingOn = on;
     // Mirror the on-screen rule: turning heat off clears active heat-fan
     // modes; turning it on defaults to eco if currently in level mode.
@@ -1922,7 +1934,7 @@ void p4SetFanMode(int mode)
 {
     if (mode < 0)  mode = 0;
     if (mode > 12) mode = 12;
-    if (!lvglLock(50)) return;
+    if (!lvglLockForSet()) return;
     st.fanMode = mode;
     refresh_controls();
     lvglUnlock();
@@ -1932,7 +1944,7 @@ void p4SetBoilerMode(int mode)
 {
     if (mode < 0) mode = 0;
     if (mode > 3) mode = 3;
-    if (!lvglLock(50)) return;
+    if (!lvglLockForSet()) return;
     st.boilerMode = mode;
     refresh_controls();
     lvglUnlock();
@@ -1942,7 +1954,7 @@ void p4SetEnergyIdx(int idx)
 {
     if (idx < 0) idx = 0;
     if (idx > 4) idx = 4;
-    if (!lvglLock(50)) return;
+    if (!lvglLockForSet()) return;
     st.energyIdx = idx;
     refresh_controls();
     lvglUnlock();
@@ -1952,7 +1964,7 @@ void p4SetRoomSetpoint(float celsius)
 {
     if (celsius < 5.0f)  celsius = 5.0f;
     if (celsius > 30.0f) celsius = 30.0f;
-    if (!lvglLock(50)) return;
+    if (!lvglLockForSet()) return;
     st.roomSetpoint = celsius;
     refresh_controls();
     lvglUnlock();
@@ -1962,7 +1974,7 @@ void p4SetAcMode(int mode)
 {
     if (mode < 0) mode = 0;
     if (mode > 2) mode = 2;
-    if (!lvglLock(50)) return;
+    if (!lvglLockForSet()) return;
     st.acMode = mode;
     // Selecting a cooling mode clears Truma heat; "heat" arrives via p4SetHeating.
     if (mode != 0) { st.heatingOn = false; apply_heat_fan_rule(); }
@@ -1974,7 +1986,7 @@ void p4SetAcFan(bool autoMode, int speed)
 {
     if (speed < 1) speed = 1;
     if (speed > 6) speed = 6;
-    if (!lvglLock(50)) return;
+    if (!lvglLockForSet()) return;
     st.acFanAuto  = autoMode;
     st.acFanSpeed = speed;
     refresh_controls();
