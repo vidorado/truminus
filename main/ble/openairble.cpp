@@ -286,6 +286,12 @@ bool openairPollOnce() {
     }
     client->setConnectTimeout(5000);
 
+    // NOTE: do NOT force a fast connection interval here. A 7.5–15 ms interval
+    // speeds the GATT setup but hammers the radio the ESP32-C6 shares with WiFi,
+    // starving the WSS cloud tunnel (the cloud icon blinks / drops). Keep the
+    // stack default; command latency is reduced instead by scheduling (A/C polled
+    // first, scan aborted on demand) which does not increase radio airtime.
+
     // Telemetry notifications are 124 bytes and cannot fit the 23-byte default
     // MTU (max notify = MTU-3). The app negotiates a large MTU right after connect.
     NimBLEDevice::setMTU(247);
@@ -333,18 +339,14 @@ bool openairPollOnce() {
         closeClient(client); return false;
     }
 
-    // Subscribe; drain any stale signal, then wait for the first telemetry frame.
+    // Subscribe; drain any stale signal before we start waiting on notifications.
     while (xSemaphoreTake(s_notifySem, 0) == pdTRUE) {}
     if (!dataChar->subscribe(true, notifyCb)) {
         ESP_LOGW(TAG, "subscribe failed");
         closeClient(client); return false;
     }
-    bool got = (xSemaphoreTake(s_notifySem, pdMS_TO_TICKS(5000)) == pdTRUE);
-    if (got) parseNotification(s_notifyBuf, s_notifyLen);
-    else     ESP_LOGW(TAG, "no telemetry within 5 s");
 
-    // Send a pending command if the user changed something, built ON TOP of the
-    // unit's own last state (BatteryType/Power/LED preserved). Only after a read.
+    // Grab any pending command up front so we can write it as early as possible.
     OpenAirCmd cmd = {};
     bool hasCmd = false;
     xSemaphoreTake(s_cmdMux, portMAX_DELAY);
@@ -353,17 +355,41 @@ bool openairPollOnce() {
     s_hasPendingCmd = false;
     xSemaphoreGive(s_cmdMux);
 
+    // Fast path: with a command AND a retained shadow (from any prior poll), write
+    // immediately — no need to wait for a fresh telemetry read first, since the
+    // shadow already carries every field we preserve. This removes the read-wait
+    // from the command latency; the read below then captures the post-write state.
+    bool wrote = false;
+    if (hasCmd && s_haveShadow) {
+        char frame[61] = {};
+        if (buildWriteFrame(cmd, frame)) {
+            dataChar->writeValue((const uint8_t*)frame, 60, false);
+            ESP_LOGI(TAG, "cmd: ps=%d mode=%d temp=%.1f°C fan=%d",
+                     cmd.powerState, cmd.mode, cmd.tempTenths / 10.0f, cmd.blowerSpeed);
+            wrote  = true;
+            hasCmd = false;
+        }
+    }
+
+    // Read one telemetry frame: the post-write echo when we just wrote (short
+    // wait), otherwise the current state — a longer wait only when we still need
+    // a first read to seed the shadow for future fast-path commands.
+    bool got = (xSemaphoreTake(s_notifySem, pdMS_TO_TICKS(wrote ? 3000 : 5000)) == pdTRUE);
+    if (got) parseNotification(s_notifyBuf, s_notifyLen);
+    else if (!wrote) ESP_LOGW(TAG, "no telemetry within 5 s");
+
+    // Slow path: a command was pending but there was no shadow yet (first pairing).
+    // Now that we've read one frame we can build on it; write and read the echo.
     if (hasCmd) {
         char frame[61] = {};
         if (buildWriteFrame(cmd, frame)) {
             dataChar->writeValue((const uint8_t*)frame, 60, false);
             ESP_LOGI(TAG, "cmd: ps=%d mode=%d temp=%.1f°C fan=%d",
                      cmd.powerState, cmd.mode, cmd.tempTenths / 10.0f, cmd.blowerSpeed);
-            // Read back one frame so telemetry reflects the change immediately.
             if (xSemaphoreTake(s_notifySem, pdMS_TO_TICKS(3000)) == pdTRUE)
                 parseNotification(s_notifyBuf, s_notifyLen);
         } else {
-            // No telemetry yet — keep the command pending rather than blind-write.
+            // Still no telemetry ever — keep the command pending, don't blind-write.
             xSemaphoreTake(s_cmdMux, portMAX_DELAY);
             s_pendingCmd = cmd; s_hasPendingCmd = true;
             xSemaphoreGive(s_cmdMux);
@@ -513,8 +539,6 @@ void openairBleReloadConfig() {}
 void openairBleHandleAd(const NimBLEAdvertisedDevice*) {}
 uint32_t openairLastSeenMs()  { return 0; }
 bool openairIsConfigured()    { return false; }
-bool openairPaired()          { return false; }
-bool openairCmdPending()      { return false; }
 OpenAirData openairGetData()  { return {}; }
 void openairSetCmd(const OpenAirCmd&) {}
 bool openairPollOnce()        { return false; }

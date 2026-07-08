@@ -396,7 +396,13 @@ static void bleSupervisorTask(void* /*arg*/) {
             continue;
         }
 
-        constexpr uint32_t SCAN_MS = 5000;
+        // Shorten the scan window when an A/C command is waiting: a pending
+        // command otherwise sits behind a full 5 s Victron scan before the loop
+        // reaches openairPollOnce(). A brief scan still catches the A/C's frequent
+        // advertisements and keeps the cyclic poll (no persistent connection).
+        constexpr uint32_t SCAN_FULL_MS = 5000;
+        uint32_t SCAN_MS = (openairIsConfigured() && openairCmdPending()) ? 800
+                                                                          : SCAN_FULL_MS;
         if ((s_configured || tankIsConfigured() || multiplusIsConfigured() || openairIsConfigured()) && s_bleScan) {
             s_bleScan->clearResults();
             s_scanAdvCount = 0;   // diagnostic: reset per-window advert counter
@@ -409,6 +415,16 @@ static void bleSupervisorTask(void* /*arg*/) {
             if (ok) {
                 uint32_t waited = 0;
                 while (s_bleScan->isScanning() && waited < SCAN_MS + 1000) {
+                    // Cut the scan short (checked every 100 ms) to reach the A/C
+                    // poll sooner in the two cases that matter for responsiveness:
+                    // a command is queued, or the A/C was just seen but has not
+                    // been read yet (first telemetry at boot — connect on sight
+                    // instead of waiting out the full window).
+                    if (openairIsConfigured()) {
+                        uint32_t s = openairLastSeenMs();
+                        bool justSeen = s && (millis() - s) < 2000;
+                        if (openairCmdPending() || (!openairPaired() && justSeen)) break;
+                    }
                     vTaskDelay(pdMS_TO_TICKS(100));
                     waited += 100;
                 }
@@ -433,7 +449,31 @@ static void bleSupervisorTask(void* /*arg*/) {
             vTaskDelay(pdMS_TO_TICKS(SCAN_MS));
         }
 
-        if (ultimatronIsConfigured() && (cycleCount % ULTIMATRON_EVERY_N) == 0) {
+        // OpenAir PLUS A/C — HIGHEST-priority peripheral: polled first, before the
+        // Ultimatron BMS, so its telemetry appears quickly at boot and a queued
+        // command is applied without waiting behind the BMS's multi-second GATT
+        // connect. Cyclic poll (connect, read telemetry, push any pending command,
+        // disconnect); openairPollOnce() gates its own cadence (every 15 s, or
+        // immediately when a command is pending). Only attempt it when the unit
+        // was advertising recently, to avoid a blind connect timeout.
+        if (openairIsConfigured()) {
+            uint32_t seen = openairLastSeenMs();
+            if (seen && (millis() - seen) < 30000) {
+                openairPollOnce();
+            } else {
+                LOG_BLE_PL("[ble-sup] skip openair poll — not seen recently");
+            }
+        }
+
+        // Ultimatron BMS — accessory, polled after the A/C. Yields to the A/C:
+        // skipped while an A/C command is pending, and while the A/C is reachable
+        // (seen recently) but has not completed its first read yet, so the BMS's
+        // multi-second GATT connect never delays A/C telemetry or a command.
+        uint32_t oaSeen  = openairLastSeenMs();
+        bool oaReachable = openairIsConfigured() && oaSeen && (millis() - oaSeen) < 30000;
+        bool oaPriority  = oaReachable && (openairCmdPending() || !openairPaired());
+        if (ultimatronIsConfigured() && (cycleCount % ULTIMATRON_EVERY_N) == 0
+            && !oaPriority) {
             // Only attempt the GATT connect if the BMS was actually seen
             // advertising in the last ~15 s.  A blind connect to a BMS that is
             // asleep / out of range burns 3×5 s of connect timeout (~16 s) on
@@ -443,19 +483,6 @@ static void bleSupervisorTask(void* /*arg*/) {
                 ultimatronPollOnce();
             } else {
                 LOG_BLE_PL("[ble-sup] skip ult poll — not advertising recently");
-            }
-        }
-
-        // OpenAir PLUS A/C — cyclic poll (connect, read telemetry, push any
-        // pending command, disconnect). openairPollOnce() gates its own cadence
-        // (every 15 s, or immediately when a command is pending). Only attempt it
-        // when the unit was advertising recently, to avoid a blind connect timeout.
-        if (openairIsConfigured()) {
-            uint32_t seen = openairLastSeenMs();
-            if (seen && (millis() - seen) < 30000) {
-                openairPollOnce();
-            } else {
-                LOG_BLE_PL("[ble-sup] skip openair poll — not seen recently");
             }
         }
 

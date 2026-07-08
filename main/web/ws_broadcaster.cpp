@@ -44,6 +44,12 @@ static bool s_acAdoptedFromUnit = false;
 static uint32_t s_acUserCmdMs   = 0;
 static const uint32_t AC_SETTLE_MS = 12000;
 
+// The A/C control state is seeded from the unit's telemetry exactly once (so the
+// UI mirrors the unit at boot). Set true after seeding — and also the moment the
+// user issues any A/C command, so a late seed (e.g. the unit was off at boot and
+// only became readable later) can never clobber a value the user already chose.
+static bool s_acSeeded = false;
+
 // Reconcile the A/C control state with what the unit actually reports, so the UI
 // mirrors reality at boot and whenever the unit is changed by its own remote or
 // the official app. Skipped while a user command is pending or within the settle
@@ -68,13 +74,42 @@ static void adoptAcStateFromUnit() {
 
     P4ControlState cur;
     p4GetControlState(cur);
-    bool diff = acMode != cur.acMode || fanAuto != cur.acFanAuto
-             || fanSpeed != cur.acFanSpeed || fabsf(setp - cur.roomSetpoint) > 0.05f;
-    if (!diff) return;
 
-    p4SetAcMode(acMode);
-    p4SetAcFan(fanAuto, fanSpeed);
-    p4SetRoomSetpoint(setp);
+    // Seed the FULL A/C control state once, from the first telemetry read, so the
+    // UI mirrors the unit at boot. The setpoint is only trustworthy while the unit
+    // is ON (an OFF unit reports 0), so seed it only then; power/mode/fan always.
+    if (!s_acSeeded) {
+        s_acSeeded = true;
+        p4SetAcMode(acMode);
+        p4SetAcFan(fanAuto, fanSpeed);
+        if (d.uPowerState != 0) p4SetRoomSetpoint(setp);
+        s_acAdoptedFromUnit = true;
+        return;
+    }
+
+    // Steady state: reconcile ONLY the power on/off state. The setpoint, cool/eco
+    // sub-mode and fan level are user-owned, and the unit's telemetry for them
+    // lags its real value by many seconds (the reported setpoint stays stale long
+    // after a change). Continuously adopting them fought and reverted user input
+    // (and echoed spurious commands back). On/off is discrete and worth mirroring
+    // — e.g. the unit shutting itself off — but the SAME lag hits it too.
+    bool unitCooling = (d.uPowerState != 0);
+    bool uiCooling   = (cur.acMode != 0);
+
+    // Confirmation gate: the unit's telemetry lags its real state by several
+    // seconds after any change, including the post-write echo of our own command
+    // (turn cool ON → the next few frames may still report OFF). A single frame
+    // that disagrees with the UI is therefore NOT trusted: require the same on/off
+    // disagreement on two consecutive distinct telemetry frames before adopting
+    // it. A genuine remote/app change persists and confirms on the next poll; a
+    // stale in-flight frame is superseded before it can revert the user's action.
+    static int s_offReconcile = -1;   // -1 = idle; else the candidate unitCooling
+    if (unitCooling == uiCooling) { s_offReconcile = -1; return; }
+    if (s_offReconcile != (int)unitCooling) { s_offReconcile = (int)unitCooling; return; }
+    s_offReconcile = -1;
+
+    p4SetAcMode(unitCooling ? acMode : 0);
+    if (unitCooling) p4SetAcFan(fanAuto, fanSpeed);
     s_acAdoptedFromUnit = true;
 }
 
@@ -140,6 +175,9 @@ static void broadcastControlChanges(const P4ControlState& cs) {
         // Open the settle window so adoption won't revert this change while the
         // command is still travelling to the unit (connect→write→readback).
         s_acUserCmdMs = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        // The user has taken control: a not-yet-run boot seed must not later
+        // overwrite this value with stale telemetry.
+        s_acSeeded = true;
     }
 
     prev   = cs;
