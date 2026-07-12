@@ -253,6 +253,12 @@ suspect is the **Ultimatron GATT connect** — defer/suspend BLE similarly.
 
 ## CI / release builds (one build per release)
 
+**`gh` resolves to the wrong repo by default.** A `gh` command with no `--repo`
+picks the upstream (`olivluca/TruMinus`, the fork parent) and 404s on our
+Actions/releases. **Always pass `--repo vidorado/truminus`** — e.g.
+`gh run list --repo vidorado/truminus --workflow=release.yml`,
+`gh run watch <id> --repo vidorado/truminus`, `gh release ... --repo vidorado/truminus`.
+
 `.github/workflows/release.yml` builds on every `X.Y.Z` tag and is the **only**
 auto-running build. `ci.yml` is **`workflow_dispatch`-only**: it used to run on
 every push to master purely to warm the default-branch ccache, but the
