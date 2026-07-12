@@ -87,10 +87,13 @@ static constexpr int FAIL_RETRY_LIMIT = 3;   // # of consecutive disconnects →
 // no-PONG abort can never run; seen in the field as "Could not lock ws-client"
 // + a tunnel that stays down until reboot).  If we sit disconnected this long
 // with the tunnel enabled and WiFi up, tear the whole client down and rebuild
-// it from scratch.  A healthy client reconnects within seconds, so 2 min of
+// it from scratch.  A healthy client reconnects within seconds, so 45 s of
 // continuous disconnect means either a wedged client (rebuild fixes it) or a
 // down server (rebuild costs one TLS attempt, same as the auto-reconnect).
-static constexpr uint32_t WEDGE_REBUILD_MS = 120000;
+// Kept short so the tunnel returns within ~45 s of WAN connectivity coming
+// back rather than tempting a power cycle; the extra TLS attempts during a
+// long outage are cheap.
+static constexpr uint32_t WEDGE_REBUILD_MS = 45000;
 
 // Second watchdog axis: "connected" but silent.  We ping every 10 s and the
 // component aborts after 30 s without a PONG, and every inbound frame —
@@ -859,6 +862,22 @@ static void pump_task(void*)
     uint32_t disc_since = 0;   // ms tick when we first saw the link down (0 = up)
     for (;;) {
         if (!s_connected) {
+            // Self-heal a stale s_have_ip: the flag is driven purely by
+            // GOT_IP / STA_DISCONNECTED events, so a missed or mis-ordered
+            // event (e.g. a spurious STA_DISCONNECTED arriving after the last
+            // GOT_IP on the C6-hosted WiFi) can leave it false while the STA
+            // is actually online.  With no further GOT_IP to correct it, the
+            // watchdog below would never re-arm and the tunnel would stay down
+            // until reboot.  Reconcile against the real netif — which clears
+            // its IP on a genuine disconnect (LOST_IP), so this cannot mask an
+            // actual outage.
+            if (s_cfg.enabled && !s_have_ip) {
+                esp_netif_t* sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+                esp_netif_ip_info_t ip = {};
+                if (sta && esp_netif_get_ip_info(sta, &ip) == ESP_OK && ip.ip.addr != 0) {
+                    s_have_ip = true;
+                }
+            }
             if (s_cfg.enabled && s_have_ip) {
                 uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
                 if (disc_since == 0) {
