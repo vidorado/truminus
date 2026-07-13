@@ -141,10 +141,16 @@ effect from the *next* release onward.
 
 ## Transfer tuning (download speed)
 
-During the transfer `install_task` frees the radio + DRAM: `wstunnelSuspend()`
-(DRAM for the TLS handshake) **and** `victronBleSuspend()` +
-`ultimatronBleSuspend()` — the C6 shares one radio between WiFi and BLE, so an
-active BLE scan throttles the download. The HTTP client RX buffer is **16 KB**
+During the transfer `install_prep_task` fully tears down NimBLE
+(`bleSupervisorStop()` → frees tens of KB of host RAM) before spawning the
+download — the C6 shares one radio between WiFi and BLE, so an active BLE scan
+throttles the download. **The WSS tunnel is deliberately LEFT UP**, even though
+its httpd per-socket scratch + websocket-client buffers sit in internal DRAM: a
+remote user watches the install **progress bar over that very tunnel**, so
+suspending it blinds them for the whole download. Freeing that DRAM was tried
+(`wstunnelSuspend()` in 1.3.6) and **reverted in 1.3.8** — the progress-bar loss
+isn't worth it, and the SDIO assert it dodged is intermittent (clears on a
+retry). Do not re-add it. `wstunnelSuspend()` remains defined but unused. The HTTP client RX buffer is **16 KB**
 (matches `MBEDTLS_SSL_IN_CONTENT_LEN`, so a full TLS record is read per call;
 the default 1 KB also broke `esp_https_ota_begin` against the long signed CDN
 redirect URL → "HTTP_CLIENT: Out of buffer"). A throughput log
@@ -161,7 +167,8 @@ sdio_drv.c:953/957) instead of degrading. A fully-provisioned board (tunnel +
 BLE) hit this mid-download (begin/get_img_desc had already succeeded) on 1.1.8,
 **even though mbedtls is already moved to PSRAM** (`sdkconfig.defaults` lines
 ~20-41, which previously fixed this same assert during the WSS handshake) and
-the install task already suspends the tunnel + Victron + Ultimatron BLE.
+the install task already tears down NimBLE (Victron + Ultimatron) — but the
+tunnel is deliberately kept up (see Transfer tuning), so its DRAM is still in play.
 Measured: steady free internal DRAM during a real download is **~14 KB**
 (`OTA transfer min free internal DRAM = 14055 B`) — and the *same* image
 downloaded fine on the next try, so the assert is **intermittent**
@@ -289,9 +296,23 @@ validates, `littlefs_sync()` brings the web in line with the release:
   few hundred KB; inflated on-flash by `inflate_to_partition` via ROM `tinfl`),
   `littlefs.ver`. Feature first shipped in **1.2.18**.
 - **Triggers, in order:** (1) the self-test calls `littlefs_sync_async()` right
-  after marking the image valid; (2) `p4OtaStart()` retries on a normal boot if
-  NVS `ota/fs_pending` is set. `fs_sync_task` waits up to 60 s for an IP before
-  fetching (the boot retry can fire while WiFi is still associating).
+  after marking the image valid; (2) `p4OtaStart()` reconciles on **every**
+  normal boot — *unconditionally*, targeting the running tag (a cheap no-op when
+  `/littlefs/fs.ver` already matches); (3) a frequent **LOCAL** reconcile
+  (`fs_reconcile_local`, ~30 s from `check_task`) compares `/littlefs/fs.ver`
+  against the marker GitHub last reported (cached in `s_want_fs_ver` on every
+  fetch) and kicks a full sync **only on a mismatch**, rate-limited to ≥3 min so
+  a failing download can't hammer the shared radio. `fs_sync_task` waits up to
+  60 s for an IP before fetching.
+
+  > **Do NOT gate the boot retry on `fs_pending` alone (the old design, fixed
+  > 1.3.9).** A sync that failed in a way that cleared or never set that flag —
+  > notably a spurious 404 → `ABSENT` → `fs_pending_clear()` — left the web
+  > **permanently** stale despite the mismatch, boot after boot (field: app
+  > 1.3.7, web stuck at 1.3.5). The unconditional boot reconcile + the frequent
+  > local check are the self-healing net: they act on the real web≠app mismatch,
+  > which no lost flag can hide. `fs_pending` still exists but is now just a hint,
+  > not the sole trigger.
 
 **`fetch_fs_ver` MUST distinguish 404 from a transport error** (`FsVerResult`
 tri-state). They demand opposite handling and conflating them was a real field

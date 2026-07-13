@@ -202,6 +202,17 @@ cycle of the unit** helps it re-enter the pairing/`Bt` state cleanly. Surface a 
 screen** after device selection: try to connect, and if it doesn't succeed within a few seconds show
 "long-press the unit's ON/OFF button", keep retrying, and allow cancel.
 
+> ⚠️ **The physical remote and BLE are mutually exclusive — a vendor limitation we CANNOT work
+> around.** Per the OpenAir PLUS manual ([Bergstrom `1003855548_0c.pdf`](https://info-es.bergstrominc.com/WebEspa%C3%B1a/Caravaning/Openair-plus/1003855548_0c.pdf)):
+> *"the operating configuration selected in your smartphone app is NOT reflected on the physical remote
+> control. If you press any button on the physical remote while the unit is operating via the app, it
+> reverts the unit to the physical remote's mode and **disconnects the smartphone app.**"* We are "the
+> app". So a press on the console kicks our BLE off and stops telemetry — nothing in our firmware can
+> prevent it. This is a leading cause of "the A/C is on but we can't see/control it": suspect the remote
+> before suspecting a bug. All we can do is **detect and surface it** (the "A/C offline" alert + struck
+> snowflake) and let the cyclic poll re-attach once the unit is free again — which it does automatically
+> the next time the unit advertises. Do NOT add reconnect logic that fights the remote.
+
 > ⚠️ **Use a short-lived cyclic poll, NOT a persistent connection.** `openairPollOnce()` connects,
 > reads one telemetry frame, sends any pending command, reads back, and disconnects — every
 > `POLL_INTERVAL_MS` (15 s) in steady state, or immediately when a command is pending. A persistent
