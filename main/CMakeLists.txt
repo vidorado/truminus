@@ -41,6 +41,7 @@ idf_component_register(
         "sensors/am2301_codec.cpp"
         "core/faultlog.cpp"
         "core/faultlog_codec.cpp"
+        "core/crashcatch.cpp"
         "ota/c6_ota.cpp"
         "ota/p4_ota.cpp"
         "web/webserver.cpp"
@@ -93,6 +94,8 @@ idf_component_register(
         espressif__esp_hosted
         joltwallet__littlefs
         lwip
+        esp_system
+        riscv
 )
 
 # Build a LittleFS image from <project>/data/ and flash it to the `littlefs`
@@ -114,3 +117,8 @@ if(EXISTS "${C6_FW_BIN}")
 endif()
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE ENABLE_BLE=1)
+
+# Route the IDF panic handler through crashcatch.cpp's __wrap_ shim so it can
+# stash the crash context into RTC memory before the normal panic/reboot runs.
+# panic_handler.c calls esp_panic_handler() by name, so --wrap intercepts it.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_panic_handler")

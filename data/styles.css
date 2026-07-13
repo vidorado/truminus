@@ -787,6 +787,23 @@ body {
   font-size: .92em;
   color: var(--lbl);
 }
+/* Raw crash backtrace dump (About overlay). Monospace + scrollable so the
+   addresses stay copyable without breaking the modal layout. */
+.about-crash {
+  text-align: left;
+  font-family: monospace;
+  font-size: .68em;
+  line-height: 1.35;
+  color: var(--lbl);
+  background: rgba(0, 0, 0, .25);
+  border-radius: 6px;
+  padding: 8px;
+  margin-top: 6px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 
 /* ── Right panel: HOT WATER + SOLAR/BATTERY layout ───────────────────── */
 .panel-right {

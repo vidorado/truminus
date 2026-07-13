@@ -7,6 +7,7 @@
 #include "i18n.hpp"
 #include "p4display.hpp"
 #include "faultlog.hpp"
+#include "crashcatch.hpp"
 #include "flags.h"
 #include "openair_config.hpp"
 #include "boot_sequence.hpp"
@@ -27,6 +28,7 @@ extern "C" void app_main(void)
     // Capture why we last reset (panic/abort/WDT vs controlled/power) before
     // anything else can reboot the chip.
     faultLogInit();
+    crashCatchInit();   // log the RTC-captured backtrace, if any
 
     // Default event loop and netif — required by WiFi.
     ESP_ERROR_CHECK(esp_event_loop_create_default());

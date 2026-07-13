@@ -3,6 +3,7 @@
 #include "p4display.hpp"
 #include "p4_ota.hpp"
 #include "faultlog.hpp"
+#include "crashcatch.hpp"
 #include "victronble.hpp"
 #include "ultimatronble.hpp"
 #include "tankble.hpp"
@@ -197,4 +198,24 @@ void wsOnConnected() {
         snprintf(buf, sizeof(buf), "{\"command\":\"diag\",\"fault\":\"\",\"count\":0,\"fw\":\"\"}");
     }
     wsQueueSend(buf);
+
+    // Crash backtrace captured in RTC by the wrapped panic handler (crashcatch).
+    // On-demand detail for the About overlay — the addresses are resolved offline
+    // with `riscv32-esp-elf-addr2line -e build/truminus.elf <pc/ra/stack…>`.
+    CrashInfo ci;
+    if (crashCatchGet(ci)) {
+        char stk[CrashInfo::STACK_WORDS * 9 + 1];
+        int p = 0;
+        for (int i = 0; i < CrashInfo::STACK_WORDS && p < (int)sizeof(stk) - 9; i++)
+            p += snprintf(stk + p, sizeof(stk) - p, "%08lx ", (unsigned long)ci.stack[i]);
+        char cbuf[600];
+        snprintf(cbuf, sizeof(cbuf),
+                 "{\"command\":\"crash\",\"task\":\"%s\",\"reason\":\"%s\",\"core\":%ld,"
+                 "\"pc\":\"%08lx\",\"ra\":\"%08lx\",\"sp\":\"%08lx\","
+                 "\"mcause\":\"%08lx\",\"mtval\":\"%08lx\",\"stack\":\"%s\"}",
+                 ci.task, ci.reason, (long)ci.core,
+                 (unsigned long)ci.pc, (unsigned long)ci.ra, (unsigned long)ci.sp,
+                 (unsigned long)ci.mcause, (unsigned long)ci.mtval, stk);
+        wsQueueSend(cbuf);
+    }
 }

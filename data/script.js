@@ -222,6 +222,7 @@ ws.onmessage = function (event) {
     if (d.command === 'ota')   { applyOta(d);   return; }
     if (d.command === 'fsupdate') { applyFsUpdate(d); return; }
     if (d.command === 'diag')  { s_diag = d; renderFault(); return; }
+    if (d.command === 'crash') { s_crash = d; renderCrash(); return; }
     if (d.command === 'snapshot') {
         // Full initial-state burst from wsConnected() on the server.
         // One message with every cached setting and status value to
@@ -314,6 +315,7 @@ var s_otaDismissedVer = null; // "Later"-dismissed version (banner stays hidden 
 var s_otaDismissedErr = null; // "OK"-dismissed error string (stays hidden until it changes)
 var s_otaReloadPending = false; // reload the page once the device reboots after an install
 var s_diag = null;           // last {command:diag} frame (uncontrolled-fault record)
+var s_crash = null;          // last {command:crash} frame (RTC backtrace snapshot)
 function applyOta(d) {
     s_ota = d;
     updateAbout(d);
@@ -454,6 +456,30 @@ function renderFault() {
     }
 }
 
+// Show/hide the "View last crash" button in the About overlay. The RTC backtrace
+// (crashcatch) is only present when a panic was captured since the last power-on.
+function renderCrash() {
+    var btn = document.getElementById('about-crash-btn');
+    if (btn) btn.hidden = !s_crash;
+    var pre = document.getElementById('about-crash');
+    if (pre) pre.hidden = true;   // start collapsed; toggleCrash() expands it
+}
+// Toggle the raw backtrace dump. Addresses are resolved offline with
+// riscv32-esp-elf-addr2line against the matching build/truminus.elf.
+function toggleCrash() {
+    var pre = document.getElementById('about-crash');
+    if (!pre || !s_crash) return;
+    if (!pre.hidden) { pre.hidden = true; return; }
+    var c = s_crash;
+    pre.textContent =
+        'task: ' + c.task + '   core: ' + c.core + '\n' +
+        'reason: ' + c.reason + '\n' +
+        'PC : 0x' + c.pc + '   RA : 0x' + c.ra + '\n' +
+        'SP : 0x' + c.sp + '   mcause: 0x' + c.mcause + '   mtval: 0x' + c.mtval + '\n' +
+        'stack:\n' + c.stack;
+    pre.hidden = false;
+}
+
 // Web-asset (LittleFS) sync, pushed by the firmware after an app update. The WS
 // survives the partition rewrite (only static-file serving is briefly down), so
 // we cover the page with the reload veil + a live %, and reload once it's done —
@@ -485,6 +511,7 @@ function openAbout() {
     if (!modal) return;
     updateAbout(s_ota);
     renderFault();
+    renderCrash();
     // Web-assets version: read the marker the firmware bakes into LittleFS so
     // the web image version is visible independently of the firmware version.
     fetchFsVer(function (txt) {

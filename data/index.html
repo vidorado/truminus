@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="TruMinus" />
 <link rel="manifest" href="/icons/site.webmanifest" />
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=94d6300e">
+<link rel="stylesheet" href="styles.css?v=97769b10">
 </head>
 <body>
 
@@ -262,6 +262,9 @@
     <div class="about-ver">Web: <span id="about-fs">--</span></div>
     <div id="about-latest" class="about-latest" hidden></div>
     <div id="about-fault" class="about-fault" hidden></div>
+    <button id="about-crash-btn" class="err-modal-btn" onclick="toggleCrash()"
+            data-i18n="crash_view" hidden>View last crash</button>
+    <pre id="about-crash" class="about-crash" hidden></pre>
     <div id="about-progress" class="about-progress" hidden></div>
     <button id="about-check" class="err-modal-btn" onclick="otaCheck()"
             data-i18n="ota_check">Check for updates</button>
@@ -289,7 +292,7 @@
 
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=adc0aa57"></script>
-<script src="i18n.js?v=41f802fc"></script>
-<script src="script.js?v=17e52419"></script>
+<script src="i18n.js?v=c1257284"></script>
+<script src="script.js?v=e942ccbe"></script>
 </body>
 </html>
