@@ -122,6 +122,14 @@ static uint32_t          s_lastPollMs   = 0;
 // — the UI treats it as disconnected even though the last frame is still cached.
 static const uint32_t AC_STALE_MS = 45000;
 
+// Once the A/C is confirmed unreachable (s_acNeedsPair), stop hammering it: a
+// stuck cool command would otherwise force a connect attempt EVERY supervisor
+// cycle, each one blocking the shared radio for seconds and starving the Victron
+// (SmartSolar) / Ultimatron (battery) reads. Back off to this interval and
+// fast-fail the connect so the periodic retry is cheap; the command is parked
+// and applied once the unit is reachable again.
+static const uint32_t OA_BACKOFF_MS = 60000;
+
 // Notification buffer + semaphore: the host callback copies the frame and signals;
 // openairPollOnce() waits on it. Keep the callback tiny (no float-printf/mutex —
 // they overflow the host task's small stack).
@@ -281,13 +289,19 @@ static void closeClient(NimBLEClient* client) {
 bool openairPollOnce() {
     if (!s_configured) return false;
 
-    // Cadence gate: poll at most every POLL_INTERVAL_MS, but immediately when a
-    // user command is pending (low-latency response to a button press).
+    // Cadence gate: normally poll every POLL_INTERVAL_MS, or immediately when a
+    // user command is pending (low-latency button response). But once the unit
+    // is confirmed unreachable, back off to OA_BACKOFF_MS even with a command
+    // pending — otherwise a cool command we can't deliver hammers the radio every
+    // cycle and starves the other BLE reads. The command stays parked for when
+    // the unit returns.
     bool cmdPending;
     xSemaphoreTake(s_cmdMux, portMAX_DELAY);
     cmdPending = s_hasPendingCmd;
     xSemaphoreGive(s_cmdMux);
-    if (!cmdPending && s_lastPollMs && (millis() - s_lastPollMs) < POLL_INTERVAL_MS)
+    uint32_t interval = s_acNeedsPair ? OA_BACKOFF_MS : POLL_INTERVAL_MS;
+    bool urgent = cmdPending && !s_acNeedsPair;
+    if (!urgent && s_lastPollMs && (millis() - s_lastPollMs) < interval)
         return false;
     s_lastPollMs = millis();
 
@@ -302,7 +316,10 @@ bool openairPollOnce() {
         ESP_LOGW(TAG, "createClient failed (client pool exhausted)");
         return false;
     }
-    client->setConnectTimeout(5000);
+    // Fast-fail while backed off: one short attempt so a periodic retry against
+    // an absent unit doesn't freeze the supervisor (and the Victron/Ultimatron
+    // reads behind it) for the full 3×5 s connect budget.
+    client->setConnectTimeout(s_acNeedsPair ? 3000 : 5000);
 
     // NOTE: do NOT force a fast connection interval here. A 7.5–15 ms interval
     // speeds the GATT setup but hammers the radio the ESP32-C6 shares with WiFi,
@@ -317,9 +334,10 @@ bool openairPollOnce() {
     ESP_LOGI(TAG, "connecting %s (type=%d)",
              addr.toString().c_str(), (int)addr.getType());
     bool connected = false;
-    for (int attempt = 1; attempt <= 3 && !connected; attempt++) {
+    int  maxAttempts = s_acNeedsPair ? 1 : 3;   // single attempt while backed off
+    for (int attempt = 1; attempt <= maxAttempts && !connected; attempt++) {
         connected = client->connect(addr);
-        if (!connected && attempt < 3) vTaskDelay(pdMS_TO_TICKS(500));
+        if (!connected && attempt < maxAttempts) vTaskDelay(pdMS_TO_TICKS(500));
     }
     if (!connected) {
         ESP_LOGW(TAG, "connect failed (+%ums)", (unsigned)(millis() - t0));

@@ -401,8 +401,8 @@ static void bleSupervisorTask(void* /*arg*/) {
         // reaches openairPollOnce(). A brief scan still catches the A/C's frequent
         // advertisements and keeps the cyclic poll (no persistent connection).
         constexpr uint32_t SCAN_FULL_MS = 5000;
-        uint32_t SCAN_MS = (openairIsConfigured() && openairCmdPending()) ? 800
-                                                                          : SCAN_FULL_MS;
+        uint32_t SCAN_MS = (openairIsConfigured() && openairCmdPending() && !openairNeedsPair())
+                               ? 800 : SCAN_FULL_MS;
         if ((s_configured || tankIsConfigured() || multiplusIsConfigured() || openairIsConfigured()) && s_bleScan) {
             s_bleScan->clearResults();
             s_scanAdvCount = 0;   // diagnostic: reset per-window advert counter
@@ -423,7 +423,8 @@ static void bleSupervisorTask(void* /*arg*/) {
                     if (openairIsConfigured()) {
                         uint32_t s = openairLastSeenMs();
                         bool justSeen = s && (millis() - s) < 2000;
-                        if (openairCmdPending() || (!openairPaired() && justSeen)) break;
+                        if (!openairNeedsPair() &&
+                            (openairCmdPending() || (!openairPaired() && justSeen))) break;
                     }
                     vTaskDelay(pdMS_TO_TICKS(100));
                     waited += 100;
@@ -471,7 +472,11 @@ static void bleSupervisorTask(void* /*arg*/) {
         // multi-second GATT connect never delays A/C telemetry or a command.
         uint32_t oaSeen  = openairLastSeenMs();
         bool oaReachable = openairIsConfigured() && oaSeen && (millis() - oaSeen) < 30000;
-        bool oaPriority  = oaReachable && (openairCmdPending() || !openairPaired());
+        // A chronically-unreachable A/C (backed off) must NOT keep priority — it
+        // would starve the BMS/Victron reads. Only prioritise while it's actually
+        // recoverable (not yet in the needs-pair backoff).
+        bool oaPriority  = oaReachable && !openairNeedsPair()
+                        && (openairCmdPending() || !openairPaired());
         if (ultimatronIsConfigured() && (cycleCount % ULTIMATRON_EVERY_N) == 0
             && !oaPriority) {
             // Only attempt the GATT connect if the BMS was actually seen
