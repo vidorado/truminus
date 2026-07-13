@@ -482,6 +482,8 @@ body {
   transition: background .2s;
 }
 .btn-heat.btn-sel { background: var(--on); }
+/* LIN bus down: heat controls can't reach the Truma, so they're disabled. */
+.btn-heat:disabled { opacity: .4; cursor: not-allowed; }
 .btn-off     { background: var(--off); }
 /* Heat ON uses the same active-blue as every other "selected" button on the
    LCD (see C_BTN_ACTIVE in main/p4display.cpp).  The legacy --heat-on green

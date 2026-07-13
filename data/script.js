@@ -635,9 +635,10 @@ function applyStatus(id, value) {
         else if (s_linPrevOk === true) dotConnecting('dot-lin'); // live drop: blink→strike
         else                           dotFailed('dot-lin');     // already down: strike now
         s_linPrevOk = linOk;
-        // Indicators are LIN-gated — re-render so they dim on bus loss
-        // and re-illuminate when the bus comes back.
-        refreshIndicators();
+        // Indicators AND the heat controls are LIN-gated — re-render so they dim
+        // and the heat buttons enable/disable as the bus drops and returns
+        // (refreshHeat() also refreshes the indicators).
+        refreshHeat();
     }
 
     if (id === 'water_heating') {
@@ -697,6 +698,11 @@ function refreshClimate() {
         cls('acEco',  'btn-sel', !s_heat && s_acMode === 'eco');
         cls('acHeat', 'btn-sel',  s_heat);
         cls('acOff',  'btn-sel', !s_heat && s_acMode === 'off');
+        // Heat is delivered by the Truma over LIN; without the bus it can't be
+        // commanded, so disable only that button (cool/eco/off drive the A/C
+        // over BLE and stay live).
+        var ah = document.getElementById('acHeat');
+        if (ah) ah.disabled = linerror;
     }
 }
 
@@ -707,6 +713,12 @@ function refreshHeat() {
     if (!s_openair) {
         cls('hBtnOn',  'btn-sel',  s_heat);
         cls('hBtnOff', 'btn-sel', !s_heat);
+        // The whole Truma heating toggle is meaningless without the LIN bus —
+        // disable On and Off until the bus returns.
+        var on  = document.getElementById('hBtnOn');
+        var off = document.getElementById('hBtnOff');
+        if (on)  on.disabled  = linerror;
+        if (off) off.disabled = linerror;
     }
     refreshFan();
     refreshIndicators();

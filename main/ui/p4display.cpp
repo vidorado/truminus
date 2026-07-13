@@ -1433,6 +1433,12 @@ static void refresh_controls()
         lv_obj_remove_flag(ui.row_ac, LV_OBJ_FLAG_HIDDEN);
         int sel = st.heatingOn ? 2 : (st.acMode == 1) ? 0 : (st.acMode == 2) ? 1 : 3;
         ac_btn_select(sel);
+        // Heat is delivered by the Truma over LIN; without the bus it can't be
+        // commanded, so grey out and lock only that button (cool/eco/off drive
+        // the A/C over BLE and stay live).
+        lv_obj_set_style_opa(ui.btn_ac[2], s_linOk ? LV_OPA_COVER : LV_OPA_50, 0);
+        if (s_linOk) lv_obj_add_flag(ui.btn_ac[2], LV_OBJ_FLAG_CLICKABLE);
+        else         lv_obj_remove_flag(ui.btn_ac[2], LV_OBJ_FLAG_CLICKABLE);
         // Setpoint applies whenever any mode (cool/eco/heat) is active.
         bool active = st.heatingOn || st.acMode != 0;
         if (active) lv_obj_remove_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
@@ -1442,6 +1448,11 @@ static void refresh_controls()
         lv_obj_add_flag(ui.row_ac, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(ui.btnmx_heat, LV_OBJ_FLAG_HIDDEN);
         bm_select(ui.btnmx_heat, st.heatingOn ? 1 : 0, 2);
+        // The whole Truma heating toggle is meaningless without the LIN bus —
+        // grey it out and stop it emitting commands until the bus returns.
+        if (s_linOk) lv_buttonmatrix_clear_button_ctrl_all(ui.btnmx_heat, LV_BUTTONMATRIX_CTRL_DISABLED);
+        else         lv_buttonmatrix_set_button_ctrl_all(ui.btnmx_heat, LV_BUTTONMATRIX_CTRL_DISABLED);
+        lv_obj_set_style_opa(ui.btnmx_heat, s_linOk ? LV_OPA_COVER : LV_OPA_50, 0);
         if (st.heatingOn) lv_obj_remove_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
         else              lv_obj_add_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
     }
@@ -2327,6 +2338,14 @@ void p4DisplayUpdate(const P4DisplayData& d)
     // control; mirror it and rebuild the heat/fan panels when it flips.
     if (d.openairConfigured != st.openairConfigured) {
         st.openairConfigured = d.openairConfigured;
+        refresh_controls();
+    }
+
+    // Heat controls are LIN-gated (disabled when the bus is down). refresh_controls
+    // isn't called every cycle, so re-run it when the bus state flips — updating
+    // s_linOk first, since refresh_controls reads it to grey out the heat buttons.
+    if (d.linOk != s_linOk) {
+        s_linOk = d.linOk;
         refresh_controls();
     }
 
