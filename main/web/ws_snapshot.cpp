@@ -120,10 +120,10 @@ void wsOnConnected() {
     if (openairIsConfigured()) {
         OpenAirData oa = openairGetData();
         snprintf(buf, sizeof(buf),
-                 "{\"command\":\"ac\",\"valid\":%s,"
+                 "{\"command\":\"ac\",\"valid\":%s,\"conn\":%s,"
                  "\"probe1\":%.1f,\"probe2\":%.1f,"
                  "\"blower_pct\":%d,\"comp_rpm\":%d,\"errors\":%d,\"needpair\":%s}",
-                 oa.valid ? "true" : "false",
+                 oa.valid ? "true" : "false", openairConnected() ? "true" : "false",
                  oa.probe1C, oa.probe2C,
                  oa.blowerSpeedPct, oa.compressorSpeedRpm, oa.errors,
                  openairNeedsPair() ? "true" : "false");

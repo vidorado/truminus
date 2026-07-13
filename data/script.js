@@ -825,6 +825,7 @@ function refreshIndicators() {
                      (s_acMode === 'cool' || s_acMode === 'eco');
     var coolOn      = acSelected && s_acConnected;   // confirmed by BLE poll
     var compOn      = coolOn && s_acCompRpm > 0;      // compressor running
+    var acStrike    = acSelected && !s_acConnected;   // cooling wanted but unreachable
     var heatOn      = linOk && s_heat;
     var heatDemand  = heatOn && s_roomTemp !== null && (s_roomTemp < s_temp - 0.3);
     var fireIcon = document.querySelector('#ind-fire i');
@@ -834,6 +835,9 @@ function refreshIndicators() {
     cls('ind-fire', 'ind-cool',   acSelected);
     cls('ind-fire', 'ind-on',     (coolOn && !compOn) || (heatOn && !heatDemand));
     cls('ind-fire', 'ind-active', compOn || (!acSelected && heatDemand));
+    // Struck-through snowflake when cooling is selected but the A/C is
+    // unreachable — never blinking (that means compressor running).
+    cls('ind-fire', 'ind-strike', acStrike);
 
     // Water temperature bar (matches CYD display)
     var wTempVal = document.getElementById('water_temp_val');
@@ -1021,7 +1025,13 @@ var s_alertSig = '';
 function footerAlerts() {
     var list = [];
     if (!wserror && linerror) list.push({ text: t('ws_no_lin'), col: '#ff4444' });
-    if (!wserror && s_openair && s_acNeedsPair) list.push({ text: t('ac_repair'), col: '#ff4444' });
+    // A/C disconnected: only nag when cooling is actually selected. Rejecting
+    // handshake ("Bt") gets the actionable re-pair text; a plain unreachable
+    // unit gets the generic offline line.
+    var acCooling = s_openair && !s_heat && (s_acMode === 'cool' || s_acMode === 'eco');
+    if (!wserror && acCooling && !s_acConnected) {
+        list.push({ text: t(s_acNeedsPair ? 'ac_repair' : 'ac_offline'), col: '#ff4444' });
+    }
     var f = resolveFault();
     if (f) list.push({ text: f.short, col: f.col });
     return list;
@@ -1244,9 +1254,10 @@ function applyMulti(d) {
 
 function applyAc(d) {
     s_acNeedsPair = !!d.needpair;
-    // A dropped pairing counts as disconnected even though the last telemetry
-    // frame is still "valid" — dims the snowflake and keeps controls honest.
-    s_acConnected = !!d.valid && !s_acNeedsPair;
+    // "Connected" tracks LIVE telemetry (firmware-side liveness), not the cached
+    // `valid` frame — so the snowflake strikes through the moment the unit drops
+    // off (remote override, out of range, powered down…).
+    s_acConnected = !!d.conn;
     s_acCompRpm   = parseInt(d.comp_rpm) || 0;
     var code = parseInt(d.errors) || 0;
     if (code !== s_acErrCode) {

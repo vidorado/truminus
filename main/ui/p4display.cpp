@@ -178,6 +178,7 @@ static struct {
     lv_obj_t* icon_ota;    // firmware-update reminder (hidden unless available)
     lv_obj_t* icon_tint;   // water (boiler) status indicator
     lv_obj_t* icon_flame;  // heating status indicator
+    lv_obj_t* slash_flame; // struck over the snowflake when the A/C is unreachable
     lv_obj_t* btn_conf;
 
     // CALEFACCIÓN / CLIMATIZACIÓN panel
@@ -676,6 +677,7 @@ static void build_main_screen()
     ui.slash_wifi  = make_slash(topbar, ui.icon_wifi);
     ui.slash_bt    = make_slash(topbar, ui.icon_bt);
     ui.slash_cloud = make_slash(topbar, ui.icon_cloud);
+    ui.slash_flame = make_slash(topbar, ui.icon_flame);   // struck when A/C unreachable
     for (int i = 0; i < 4; i++) repaint_icon(i);
 
     // Firmware-update reminder icon, in a reserved slot between the cloud
@@ -1383,13 +1385,17 @@ static void build_main_screen()
 static void refresh_flame_icon()
 {
     bool cooling = st.openairConfigured && (st.acMode == 1 || st.acMode == 2);
+    // The snowflake is struck through (like the failed topbar dots) when cooling
+    // is selected but the A/C isn't reachable — NEVER blinking, which is reserved
+    // for a running compressor.
+    bool strike = cooling && !s_acConnected;
     if (cooling) {
         lv_label_set_text(ui.icon_flame, FA_SNOWFLAKE);
         lv_obj_set_style_text_color(ui.icon_flame, lv_color_hex(0x44aaff), 0);
-        // Dim until BLE confirms the A/C; solid when cooling is confirmed idle;
-        // blink while the compressor is actually running (mirrors the flame on
-        // burner demand). The 500 ms icon-blink timer repaints this.
-        lv_opa_t opa = !s_acConnected      ? LV_OPA_30
+        // Solid + slash when unreachable; solid when cooling idle; blink while
+        // the compressor is actually running (mirrors the flame on burner
+        // demand). The 500 ms icon-blink timer repaints this.
+        lv_opa_t opa = !s_acConnected      ? LV_OPA_COVER
                      : s_acCompressorOn    ? (s_iconBlink ? LV_OPA_COVER : LV_OPA_20)
                                            : LV_OPA_COVER;
         lv_obj_set_style_text_opa(ui.icon_flame, opa, 0);
@@ -1398,6 +1404,10 @@ static void refresh_flame_icon()
         lv_obj_set_style_text_color(ui.icon_flame, C_AMBER, 0);
         lv_obj_set_style_text_opa(ui.icon_flame,
             (s_linOk && st.heatingOn) ? LV_OPA_COVER : LV_OPA_30, 0);
+    }
+    if (ui.slash_flame) {
+        if (strike) lv_obj_clear_flag(ui.slash_flame, LV_OBJ_FLAG_HIDDEN);
+        else        lv_obj_add_flag(ui.slash_flame, LV_OBJ_FLAG_HIDDEN);
     }
 }
 

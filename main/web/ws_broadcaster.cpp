@@ -273,32 +273,36 @@ static void broadcastOpenAirData() {
     static OpenAirData prev        = {};
     static bool        inited      = false;
     static bool        prevNeedPair = false;
+    static bool        prevConn     = false;
     if (!openairIsConfigured()) return;
 
     OpenAirData d = openairGetData();
     bool needPair = openairNeedsPair();
+    bool conn     = openairConnected();   // live telemetry, not a stale frame
     bool changed = !inited
                 || d.valid       != prev.valid
                 || d.errors      != prev.errors
                 || d.blowerSpeedPct != prev.blowerSpeedPct
                 || d.compressorSpeedRpm != prev.compressorSpeedRpm
                 || needPair      != prevNeedPair
+                || conn          != prevConn
                 || fabsf(d.probe1C - prev.probe1C) > 0.5f
                 || fabsf(d.probe2C - prev.probe2C) > 0.5f;
     if (!changed) return;
 
-    char buf[208];
+    char buf[224];
     snprintf(buf, sizeof(buf),
-             "{\"command\":\"ac\",\"valid\":%s,"
+             "{\"command\":\"ac\",\"valid\":%s,\"conn\":%s,"
              "\"probe1\":%.1f,\"probe2\":%.1f,"
              "\"blower_pct\":%d,\"comp_rpm\":%d,\"errors\":%d,\"needpair\":%s}",
-             d.valid ? "true" : "false",
+             d.valid ? "true" : "false", conn ? "true" : "false",
              d.probe1C, d.probe2C,
              d.blowerSpeedPct, d.compressorSpeedRpm, d.errors,
              needPair ? "true" : "false");
     wsQueueSend(buf);
     prev         = d;
     prevNeedPair = needPair;
+    prevConn     = conn;
     inited       = true;
 }
 

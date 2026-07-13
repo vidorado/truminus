@@ -108,10 +108,19 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
     // for ad-hoc messages the rest of the time.
     {
         OpenAirData oas = openairGetData();
-        // A dropped pairing takes precedence over a stale telemetry error: the
-        // frame we still hold is old, and the actionable message is the re-pair.
-        bool acRepair = openairCfgIsActive() && openairNeedsPair();
-        const char* acErr = (openairCfgIsActive() && oas.valid && !acRepair)
+        // "A/C disconnected" feedback only nags when the user actually wants
+        // cooling (cool/eco selected) but no live telemetry is arriving — the
+        // command can't be applied and there'd otherwise be no signal at all.
+        P4ControlState acs;
+        p4GetControlState(acs);
+        bool acCooling = openairCfgIsActive() && !acs.heatingOn && acs.acMode != 0;
+        bool acDown    = acCooling && !openairConnected();
+        // Rejecting-handshake ("Bt") gets the actionable re-pair text; a plain
+        // unreachable unit gets the generic offline line. Both outrank a stale
+        // telemetry error (the cached frame is old).
+        bool acRepair  = acDown && openairNeedsPair();
+        bool acOffline = acDown && !openairNeedsPair();
+        const char* acErr = (openairCfgIsActive() && !acDown && oas.valid)
                             ? openairErrorTitle(oas.errors) : nullptr;
         bool noLin = (iter >= 10 && !lin.linOk);
 
@@ -122,14 +131,16 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
         static char buf0[80], buf1[80];
         const char* msgs[2];
         int nmsg = 0;
-        if (noLin)   { snprintf(buf0, sizeof(buf0), "\xEF\x81\xB1 %s", t(TK::STATUS_NO_LIN)); msgs[nmsg++] = buf0; }
-        if (acRepair){ snprintf(buf1, sizeof(buf1), "\xEF\x81\xB1 %s", t(TK::AC_REPAIR));     msgs[nmsg++] = buf1; }
-        else if (acErr) { snprintf(buf1, sizeof(buf1), "\xEF\x81\xB1 %s", acErr);             msgs[nmsg++] = buf1; }
+        if (noLin)      { snprintf(buf0, sizeof(buf0), "\xEF\x81\xB1 %s", t(TK::STATUS_NO_LIN)); msgs[nmsg++] = buf0; }
+        if (acRepair)   { snprintf(buf1, sizeof(buf1), "\xEF\x81\xB1 %s", t(TK::AC_REPAIR));     msgs[nmsg++] = buf1; }
+        else if (acOffline) { snprintf(buf1, sizeof(buf1), "\xEF\x81\xB1 %s", t(TK::AC_OFFLINE)); msgs[nmsg++] = buf1; }
+        else if (acErr) { snprintf(buf1, sizeof(buf1), "\xEF\x81\xB1 %s", acErr);                msgs[nmsg++] = buf1; }
 
         // Signature of the active set: re-render immediately when it changes
         // (a new fault, a cleared fault, LIN up/down) so the user isn't left
         // looking at a stale line for up to 5 s.
-        int sig = (noLin ? 1 : 0) | (acRepair ? 0x10000 : 0) | (acErr ? (oas.errors << 1) : 0);
+        int sig = (noLin ? 1 : 0) | (acRepair ? 0x10000 : 0) | (acOffline ? 0x20000 : 0)
+                | (acErr ? (oas.errors << 1) : 0);
 
         static int      prevSig    = -1;
         static int      cycleIdx   = 0;
@@ -244,10 +255,11 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
                : 0;
 
     d.openairConfigured = openairCfgIsActive();
-    // Dim the panel/snowflake while the pairing is dropped, even though we still
-    // hold a stale telemetry frame (oad.valid stays true).
-    d.acConnected       = oad.valid && !openairNeedsPair();
-    d.acCompressorOn    = oad.valid && oad.compressorSpeedRpm > 0;
+    // "Connected" = live telemetry, not merely a cached frame — so the snowflake
+    // strikes through the moment the unit drops off, even though oad.valid stays
+    // true holding the last frame.
+    d.acConnected       = openairConnected();
+    d.acCompressorOn    = d.acConnected && oad.compressorSpeedRpm > 0;
 
     // Dummy overrides (in dummy_flags.h)
 #ifdef ENABLE_BOILER_DUMMY

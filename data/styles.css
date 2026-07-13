@@ -171,6 +171,23 @@ body {
 #ind-tint.ind-on,
 #ind-tint.ind-active { color: #55aaff; }
 
+/* Struck-through snowflake: cooling selected but the A/C is unreachable.
+   Mirrors the FAILED topbar dots — a white diagonal line backed by a thicker
+   --bg bar so it "cuts" the glyph and reads on the dark bar. Never blinks. */
+.tbadge-ind.ind-strike { opacity: 1; position: relative; }
+#ind-fire.ind-cool.ind-strike { color: #55aaff; }
+.tbadge-ind.ind-strike::before,
+.tbadge-ind.ind-strike::after {
+  content: "";
+  position: absolute;
+  left: 8%; right: 8%; top: 50%;
+  transform: translateY(-50%) rotate(-45deg);
+  transform-origin: center;
+  pointer-events: none;
+}
+.tbadge-ind.ind-strike::before { height: 5px; background: var(--bg); }
+.tbadge-ind.ind-strike::after  { height: 2px; background: #fff; }
+
 .topbar-icons { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
 
 /* Estado WiFi / LIN */

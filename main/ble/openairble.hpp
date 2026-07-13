@@ -73,6 +73,13 @@ bool        openairIsConfigured();
 // Reset when the config reloads. The pairing assistant polls this to auto-close.
 bool        openairPaired();
 
+// True when live telemetry has arrived recently (within AC_STALE_MS) — i.e. the
+// A/C is actually reachable and talking to us right now. Distinct from the
+// data's `valid` flag, which stays true holding the last (possibly stale) frame
+// after the unit drops off. Drives the "A/C disconnected" UI (struck snowflake +
+// bottombar alert).
+bool        openairConnected();
+
 // True when the unit is present but has repeatedly refused our handshake — it
 // dropped our pairing and is waiting for a long-press on its ON/OFF button (it
 // shows "Bt"). Drives the "re-pair" alert on the web + LCD. Cleared by the next

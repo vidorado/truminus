@@ -118,6 +118,10 @@ static const uint8_t TRUMINUS_ID8[8]  = { 0x01, 0xe8, 0x77, 0x07, 0xed, 0xe0, 0x
 static const uint32_t POLL_INTERVAL_MS = 15000;
 static uint32_t          s_lastPollMs   = 0;
 
+// Telemetry older than this (3 missed 15 s polls) means the A/C has dropped off
+// — the UI treats it as disconnected even though the last frame is still cached.
+static const uint32_t AC_STALE_MS = 45000;
+
 // Notification buffer + semaphore: the host callback copies the frame and signals;
 // openairPollOnce() waits on it. Keep the callback tiny (no float-printf/mutex —
 // they overflow the host task's small stack).
@@ -455,6 +459,14 @@ bool openairPaired() { return s_paired; }
 
 bool openairNeedsPair() { return s_acNeedsPair; }
 
+bool openairConnected() {
+    if (!s_dataMux) return false;
+    xSemaphoreTake(s_dataMux, portMAX_DELAY);
+    bool live = s_data.valid && (millis() - s_data.lastMs) < AC_STALE_MS;
+    xSemaphoreGive(s_dataMux);
+    return live;
+}
+
 OpenAirData openairGetData() {
     OpenAirData copy = {};
     if (s_dataMux) {
@@ -569,6 +581,7 @@ OpenAirData openairGetData()  { return {}; }
 void openairSetCmd(const OpenAirCmd&) {}
 bool openairPollOnce()        { return false; }
 bool openairNeedsPair()       { return false; }
+bool openairConnected()       { return false; }
 bool openairLoadConfig(std::string&)         { return false; }
 void openairSaveConfig(const std::string&)   {}
 const char* openairErrorTitle(int)           { return nullptr; }

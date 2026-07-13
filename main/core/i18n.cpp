@@ -176,6 +176,7 @@ static const char* ES_STRINGS[(int)TK::_COUNT] = {
     "Manten pulsado el boton de encendido de la unidad para emparejar", // PAIR_INSTRUCT
     "Conectando con la unidad\xE2\x80\xA6",                            // PAIR_WAITING
     "A/C sin conexi\xC3\xB3n - mant\xC3\xA9n ON/OFF en la unidad",     // AC_REPAIR
+    "A/C sin conexi\xC3\xB3n",                                         // AC_OFFLINE
 };
 
 static const char* EN_STRINGS[(int)TK::_COUNT] = {
@@ -347,6 +348,7 @@ static const char* EN_STRINGS[(int)TK::_COUNT] = {
     "Long-press the unit's power button to pair",                     // PAIR_INSTRUCT
     "Connecting to the unit\xE2\x80\xA6",                             // PAIR_WAITING
     "A/C offline - hold ON/OFF on the unit",                          // AC_REPAIR
+    "A/C offline",                                                    // AC_OFFLINE
 };
 
 const char* t(TK key) {
