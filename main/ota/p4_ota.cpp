@@ -127,6 +127,15 @@ static std::atomic<bool> s_cancel{false};
 // Automatic-check preference + prompt bookkeeping (guarded by s_lock).
 static bool s_autocheck      = true;
 static char s_prompted_ver[32] = "";   // version we've already prompted about
+
+// Web-asset reconcile: the last littlefs.ver the GitHub marker reported for our
+// running version (fetched by littlefs_sync — boot + on demand). A cheap LOCAL
+// check runs often, comparing /littlefs/fs.ver against this cached value; only
+// on a mismatch (a failed/never-run web sync) does it hit the network to pull
+// the new image. Empty until the first successful marker fetch.
+static char     s_want_fs_ver[96]        = "";
+static uint32_t s_last_fs_reconcile_ms   = 0;
+static constexpr uint32_t FS_RECONCILE_MIN_MS = 180000;   // ≥3 min between sync attempts
 // True when the latest release is a minor/major bump over the running image
 // (set by do_check).  Gates the proactive topbar icon + prompt modal so a
 // patch-only release doesn't nag; s_status.available stays true for any newer
@@ -621,6 +630,8 @@ void p4OtaInstall() {
 }
 
 // ── Periodic check task ──────────────────────────────────────────────────
+static void fs_reconcile_local();   // defined after littlefs_sync_async (deps)
+
 static void check_task(void*) {
     // Boot warmup: give WiFi a moment to associate and let the BLE supervisor
     // get a clean scan window first (shared radio — see INITIAL_CHECK_DELAY_MS).
@@ -658,6 +669,9 @@ static void check_task(void*) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             if (s_check_request.load()) break;   // consumed at loop top
             if (s_installing.load()) break;
+            // Cheap LOCAL web reconcile ~every 30 s (no network unless stale):
+            // recovers a failed web sync in seconds instead of waiting 12 h.
+            if (slept % 30000 == 0) fs_reconcile_local();
         }
     }
 }
@@ -1039,6 +1053,10 @@ static void littlefs_sync(const char* tag) {
         resume_ble();
         return;
     }
+    // Marker fetched OK — cache it so the frequent LOCAL reconcile (see
+    // fs_reconcile_local) can compare against it without hitting the network.
+    snprintf(s_want_fs_ver, sizeof(s_want_fs_ver), "%s", want);
+
     if (have_cur && strcmp(cur, want) == 0) {
         ESP_LOGI(TAG, "fs sync: web up to date (%s)", cur);
         fs_pending_clear();
@@ -1129,6 +1147,30 @@ static void littlefs_sync_async(const char* tag) {
     char* dup = strdup(tag);
     if (!dup) return;
     if (xTaskCreate(fs_sync_task, "p4_fs_sync", 6144, dup, 4, nullptr) != pdPASS) free(dup);
+}
+
+// Cheap, LOCAL web-asset reconcile (called ~every 30 s from check_task). Reads
+// /littlefs/fs.ver and compares it against the marker GitHub last reported
+// (s_want_fs_ver). No network in steady state — only when the two differ (a web
+// sync that failed or never ran, or the target isn't known yet) does it kick a
+// full sync, rate-limited so a persistently-failing download can't hammer the
+// radio. This is what makes a stale web recover in seconds instead of ≤12 h.
+static void fs_reconcile_local() {
+    if (s_installing.load() || p4OtaPendingVerify()) return;
+    char cur[96] = "";
+    bool have = littlefs_read_ver(cur, sizeof(cur));
+    // In sync (flash matches the known target) → nothing to do, no network.
+    if (s_want_fs_ver[0] && have && strcmp(cur, s_want_fs_ver) == 0) return;
+    // Stale, unreadable, or target-unknown → (re)sync. littlefs_sync re-fetches
+    // the marker (populating s_want_fs_ver) and pulls the image only if needed.
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    if (s_last_fs_reconcile_ms && (now - s_last_fs_reconcile_ms) < FS_RECONCILE_MIN_MS) return;
+    s_last_fs_reconcile_ms = now;
+    char rtag[32];
+    release_tag_of_running(rtag, sizeof(rtag));
+    ESP_LOGW(TAG, "fs reconcile: local=%s want=%s — syncing",
+             have ? cur : "<none>", s_want_fs_ver[0] ? s_want_fs_ver : "<unknown>");
+    littlefs_sync_async(rtag);
 }
 
 bool p4OtaPendingVerify() {
@@ -1267,18 +1309,20 @@ void p4OtaStart() {
         nvs_close(h);
     }
 
-    // Retry a web-asset sync left pending by a prior failed/interrupted attempt.
-    // Only on a normal boot — a PENDING_VERIFY boot's self-test triggers the
-    // sync after validating, so this avoids double-running it.
+    // Reconcile the web assets with the running app on EVERY normal boot — not
+    // just when a prior sync left fs_pending set. The post-OTA sync (self-test)
+    // can fail in a way that clears or never sets fs_pending (e.g. a spurious
+    // 404 → ABSENT), and gating the retry solely on fs_pending then leaves the
+    // web permanently stale despite the mismatch (app moves on, web doesn't).
+    // littlefs_sync is a cheap no-op when /littlefs/fs.ver already matches the
+    // release marker, so running it unconditionally is safe and self-healing.
+    // Targets the RUNNING version's tag so it always aims at the right web image.
+    // A PENDING_VERIFY boot skips this — its self-test triggers the sync after
+    // validating, avoiding a double run.
     if (!p4OtaPendingVerify()) {
-        nvs_handle_t fh;
-        if (nvs_open("ota", NVS_READONLY, &fh) == ESP_OK) {
-            char ptag[32] = "";
-            size_t pl = sizeof(ptag);
-            if (nvs_get_str(fh, "fs_pending", ptag, &pl) == ESP_OK && ptag[0])
-                littlefs_sync_async(ptag);
-            nvs_close(fh);
-        }
+        char rtag[32];
+        release_tag_of_running(rtag, sizeof(rtag));
+        littlefs_sync_async(rtag);
     }
 
     xTaskCreate(selftest_task, "p4_ota_verify", 4096, nullptr, 6, nullptr);
