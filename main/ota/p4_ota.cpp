@@ -574,6 +574,13 @@ static void install_prep_task(void*) {
 
     bool ble_ok = bleSupervisorStop();   // NimBLEDevice::deinit(false) — frees the host RAM
 
+    // Also drop the WSS tunnel: its httpd per-socket scratch + websocket-client
+    // task/buffers sit in internal DRAM, and the download runs on the edge of the
+    // SDIO RX streaming alloc (assert-prone at ~14 KB free). No explicit resume
+    // needed — every exit from the install task reboots (success, failure OR
+    // panic), and wstunnelInit() brings the tunnel back from NVS on boot.
+    wstunnelSuspend();
+
     ESP_LOGI(TAG, "install prep done (ble_ok=%d): free_int=%u largest=%u (need %u)",
              (int)ble_ok,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
