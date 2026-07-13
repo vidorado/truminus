@@ -1449,6 +1449,13 @@ static void refresh_controls()
         lv_obj_set_style_opa(ui.btn_ac[2], s_linOk ? LV_OPA_COVER : LV_OPA_50, 0);
         if (s_linOk) lv_obj_add_flag(ui.btn_ac[2], LV_OBJ_FLAG_CLICKABLE);
         else         lv_obj_remove_flag(ui.btn_ac[2], LV_OBJ_FLAG_CLICKABLE);
+        // Cool/eco drive the A/C over BLE — disable them when it's unreachable
+        // (off stays live; you can always stop cooling).
+        for (int i = 0; i <= 1; i++) {
+            lv_obj_set_style_opa(ui.btn_ac[i], s_acConnected ? LV_OPA_COVER : LV_OPA_50, 0);
+            if (s_acConnected) lv_obj_add_flag(ui.btn_ac[i], LV_OBJ_FLAG_CLICKABLE);
+            else               lv_obj_remove_flag(ui.btn_ac[i], LV_OBJ_FLAG_CLICKABLE);
+        }
         // Setpoint applies whenever any mode (cool/eco/heat) is active.
         bool active = st.heatingOn || st.acMode != 0;
         if (active) lv_obj_remove_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
@@ -2356,6 +2363,11 @@ void p4DisplayUpdate(const P4DisplayData& d)
     // s_linOk first, since refresh_controls reads it to grey out the heat buttons.
     if (d.linOk != s_linOk) {
         s_linOk = d.linOk;
+        refresh_controls();
+    }
+    // Same for the A/C link: refresh_controls greys out cool/eco when it drops.
+    if (d.acConnected != s_acConnected) {
+        s_acConnected = d.acConnected;
         refresh_controls();
     }
 

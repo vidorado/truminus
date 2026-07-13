@@ -726,10 +726,14 @@ function refreshClimate() {
         cls('acHeat', 'btn-sel',  s_heat);
         cls('acOff',  'btn-sel', !s_heat && s_acMode === 'off');
         // Heat is delivered by the Truma over LIN; without the bus it can't be
-        // commanded, so disable only that button (cool/eco/off drive the A/C
-        // over BLE and stay live).
+        // commanded, so disable that button. Cool/eco go to the A/C over BLE, so
+        // they're disabled when the unit is unreachable. Off stays live (you can
+        // always stop). refreshHeat gates the setpoint row separately.
         var ah = document.getElementById('acHeat');
         if (ah) ah.disabled = linerror;
+        var acU = !s_acConnected;   // A/C unreachable → cool/eco can't be applied
+        var ac  = document.getElementById('acCool'); if (ac) ac.disabled = acU;
+        var ae  = document.getElementById('acEco');  if (ae) ae.disabled = acU;
     }
 }
 
@@ -1265,6 +1269,7 @@ function applyAc(d) {
         if (code !== 0) s_acErrAcked = false;   // new fault → pop the modal again
     }
     refreshIndicators();   // updates the snowflake icon state
+    refreshClimate();      // enable/disable cool/eco as the A/C connects/drops
     updateErrorDisplay();
 }
 
