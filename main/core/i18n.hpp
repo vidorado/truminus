@@ -183,6 +183,7 @@ enum class TK : uint8_t {
     PAIR_TITLE,        // assistant screen title: "Emparejamiento" / "Pairing"
     PAIR_INSTRUCT,     // "Manten pulsado el boton de encendido de la unidad" / "Long-press the unit's power button"
     PAIR_WAITING,      // spinner subtitle: "Conectando con la unidad…" / "Connecting to the unit…"
+    AC_REPAIR,         // rotating status alert when the A/C dropped its pairing (shows "Bt")
     _COUNT
 };
 

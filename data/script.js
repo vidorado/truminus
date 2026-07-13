@@ -23,6 +23,7 @@ var s_acMode      = 'off';       // 'off' | 'cool' | 'eco'
 var s_acFanAuto   = true;        // cool mode: Auto (Mode AUTO) vs Man (Mode MAN)
 var s_acFanSpeed  = 3;           // cool+Man blower speed 1..6
 var s_acConnected = false;       // true when BLE poll returned valid telemetry
+var s_acNeedsPair = false;        // unit dropped pairing (shows "Bt") — prompt re-pair
 var s_acCompRpm   = 0;           // A/C compressor speed (RPM); >0 → snowflake blinks
 var s_acErrCode   = 0;           // OpenAir Errors value (0 = no fault)
 var s_acErrAcked  = false;       // A/C error modal acknowledged
@@ -981,6 +982,7 @@ var s_alertSig = '';
 function footerAlerts() {
     var list = [];
     if (!wserror && linerror) list.push({ text: t('ws_no_lin'), col: '#ff4444' });
+    if (!wserror && s_openair && s_acNeedsPair) list.push({ text: t('ac_repair'), col: '#ff4444' });
     var f = resolveFault();
     if (f) list.push({ text: f.short, col: f.col });
     return list;
@@ -1202,7 +1204,10 @@ function applyMulti(d) {
 }
 
 function applyAc(d) {
-    s_acConnected = !!d.valid;
+    s_acNeedsPair = !!d.needpair;
+    // A dropped pairing counts as disconnected even though the last telemetry
+    // frame is still "valid" — dims the snowflake and keeps controls honest.
+    s_acConnected = !!d.valid && !s_acNeedsPair;
     s_acCompRpm   = parseInt(d.comp_rpm) || 0;
     var code = parseInt(d.errors) || 0;
     if (code !== s_acErrCode) {

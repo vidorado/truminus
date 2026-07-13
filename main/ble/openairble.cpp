@@ -68,6 +68,18 @@ static std::string       s_targetAddr;        // uppercase hex, 12 chars, no col
 // config (re)loads; the pairing assistant watches it to auto-close on success.
 static volatile bool     s_paired      = false;
 
+// Lost-pairing detection. A unit that dropped our pairing still accepts the BLE
+// connection but withholds the handshake reply (it shows "Bt" and waits for a
+// long-press), so we connect but never read telemetry. Count consecutive polls
+// that reach the unit without yielding a frame; after OA_UNPAIR_FAILS, raise
+// s_acNeedsPair so the UI prompts a re-pair instead of silently swallowing
+// commands. A telemetry read clears both. Kept separate from s_paired so the
+// supervisor's pairing-priority (which polls harder) is NOT re-triggered in the
+// field — we only want to inform, not hammer the shared radio.
+static volatile bool     s_acNeedsPair = false;
+static int               s_failStreak  = 0;
+static const int         OA_UNPAIR_FAILS = 3;
+
 static SemaphoreHandle_t s_dataMux     = nullptr;
 static SemaphoreHandle_t s_cmdMux      = nullptr;
 static OpenAirData       s_data        = {};
@@ -170,6 +182,8 @@ static bool parseNotification(const uint8_t* ascii, int len) {
     memcpy(s_writeShadow, bytes, sizeof(s_writeShadow));
     s_haveShadow = true;
     s_paired     = true;   // a reply means the handshake was accepted
+    s_acNeedsPair = false; // the unit is talking to us again
+    s_failStreak  = 0;
 
     OpenAirData d = {};
     d.batteryType        = (int)readU16BE(bytes, 4);   // field 2  (config)
@@ -308,6 +322,14 @@ bool openairPollOnce() {
         closeClient(client); return false;
     }
 
+    // We reached the unit. Tentatively count this poll as a failure; a telemetry
+    // read (parseNotification) clears the streak. If we connect this many times
+    // without ever reading a frame, the unit has dropped our pairing (it accepts
+    // the link but withholds the handshake, showing "Bt") — flag it so the UI can
+    // prompt a re-pair. Only counts post-connect, so an out-of-range unit (connect
+    // fails above) never trips it.
+    if (++s_failStreak >= OA_UNPAIR_FAILS) s_acNeedsPair = true;
+
     // Full GATT discovery first: a per-UUID filtered discovery sometimes fails on
     // 128-bit custom UUIDs even when the service is present.
     if (!client->discoverAttributes()) {
@@ -431,6 +453,8 @@ bool openairIsConfigured() { return s_configured; }
 
 bool openairPaired() { return s_paired; }
 
+bool openairNeedsPair() { return s_acNeedsPair; }
+
 OpenAirData openairGetData() {
     OpenAirData copy = {};
     if (s_dataMux) {
@@ -499,6 +523,8 @@ const char* openairErrorDesc(int errors) {
 
 static void load_config_internal() {
     s_paired = false;   // fresh config → not yet confirmed paired this session
+    s_acNeedsPair = false;
+    s_failStreak  = 0;
     std::string raw;
     if (!openairLoadConfig(raw) || raw.empty()) {
         s_configured = false;
@@ -542,6 +568,7 @@ bool openairIsConfigured()    { return false; }
 OpenAirData openairGetData()  { return {}; }
 void openairSetCmd(const OpenAirCmd&) {}
 bool openairPollOnce()        { return false; }
+bool openairNeedsPair()       { return false; }
 bool openairLoadConfig(std::string&)         { return false; }
 void openairSaveConfig(const std::string&)   {}
 const char* openairErrorTitle(int)           { return nullptr; }

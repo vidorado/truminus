@@ -108,7 +108,10 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
     // for ad-hoc messages the rest of the time.
     {
         OpenAirData oas = openairGetData();
-        const char* acErr = (openairCfgIsActive() && oas.valid)
+        // A dropped pairing takes precedence over a stale telemetry error: the
+        // frame we still hold is old, and the actionable message is the re-pair.
+        bool acRepair = openairCfgIsActive() && openairNeedsPair();
+        const char* acErr = (openairCfgIsActive() && oas.valid && !acRepair)
                             ? openairErrorTitle(oas.errors) : nullptr;
         bool noLin = (iter >= 10 && !lin.linOk);
 
@@ -119,13 +122,14 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
         static char buf0[80], buf1[80];
         const char* msgs[2];
         int nmsg = 0;
-        if (noLin) { snprintf(buf0, sizeof(buf0), "\xEF\x81\xB1 %s", t(TK::STATUS_NO_LIN)); msgs[nmsg++] = buf0; }
-        if (acErr) { snprintf(buf1, sizeof(buf1), "\xEF\x81\xB1 %s", acErr);                msgs[nmsg++] = buf1; }
+        if (noLin)   { snprintf(buf0, sizeof(buf0), "\xEF\x81\xB1 %s", t(TK::STATUS_NO_LIN)); msgs[nmsg++] = buf0; }
+        if (acRepair){ snprintf(buf1, sizeof(buf1), "\xEF\x81\xB1 %s", t(TK::AC_REPAIR));     msgs[nmsg++] = buf1; }
+        else if (acErr) { snprintf(buf1, sizeof(buf1), "\xEF\x81\xB1 %s", acErr);             msgs[nmsg++] = buf1; }
 
         // Signature of the active set: re-render immediately when it changes
         // (a new fault, a cleared fault, LIN up/down) so the user isn't left
         // looking at a stale line for up to 5 s.
-        int sig = (noLin ? 1 : 0) | (acErr ? (oas.errors << 1) : 0);
+        int sig = (noLin ? 1 : 0) | (acRepair ? 0x10000 : 0) | (acErr ? (oas.errors << 1) : 0);
 
         static int      prevSig    = -1;
         static int      cycleIdx   = 0;
@@ -240,7 +244,9 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
                : 0;
 
     d.openairConfigured = openairCfgIsActive();
-    d.acConnected       = oad.valid;
+    // Dim the panel/snowflake while the pairing is dropped, even though we still
+    // hold a stale telemetry frame (oad.valid stays true).
+    d.acConnected       = oad.valid && !openairNeedsPair();
     d.acCompressorOn    = oad.valid && oad.compressorSpeedRpm > 0;
 
     // Dummy overrides (in dummy_flags.h)

@@ -270,31 +270,36 @@ static void broadcastMultiplusData() {
 
 // Broadcast OpenAir PLUS A/C telemetry on change.
 static void broadcastOpenAirData() {
-    static OpenAirData prev   = {};
-    static bool        inited = false;
+    static OpenAirData prev        = {};
+    static bool        inited      = false;
+    static bool        prevNeedPair = false;
     if (!openairIsConfigured()) return;
 
     OpenAirData d = openairGetData();
+    bool needPair = openairNeedsPair();
     bool changed = !inited
                 || d.valid       != prev.valid
                 || d.errors      != prev.errors
                 || d.blowerSpeedPct != prev.blowerSpeedPct
                 || d.compressorSpeedRpm != prev.compressorSpeedRpm
+                || needPair      != prevNeedPair
                 || fabsf(d.probe1C - prev.probe1C) > 0.5f
                 || fabsf(d.probe2C - prev.probe2C) > 0.5f;
     if (!changed) return;
 
-    char buf[192];
+    char buf[208];
     snprintf(buf, sizeof(buf),
              "{\"command\":\"ac\",\"valid\":%s,"
              "\"probe1\":%.1f,\"probe2\":%.1f,"
-             "\"blower_pct\":%d,\"comp_rpm\":%d,\"errors\":%d}",
+             "\"blower_pct\":%d,\"comp_rpm\":%d,\"errors\":%d,\"needpair\":%s}",
              d.valid ? "true" : "false",
              d.probe1C, d.probe2C,
-             d.blowerSpeedPct, d.compressorSpeedRpm, d.errors);
+             d.blowerSpeedPct, d.compressorSpeedRpm, d.errors,
+             needPair ? "true" : "false");
     wsQueueSend(buf);
-    prev   = d;
-    inited = true;
+    prev         = d;
+    prevNeedPair = needPair;
+    inited       = true;
 }
 
 // Broadcast tank-level (BTHome) on change.

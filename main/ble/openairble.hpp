@@ -72,6 +72,12 @@ bool        openairIsConfigured();
 // True once telemetry has been read for the current target (handshake accepted).
 // Reset when the config reloads. The pairing assistant polls this to auto-close.
 bool        openairPaired();
+
+// True when the unit is present but has repeatedly refused our handshake — it
+// dropped our pairing and is waiting for a long-press on its ON/OFF button (it
+// shows "Bt"). Drives the "re-pair" alert on the web + LCD. Cleared by the next
+// telemetry read.
+bool        openairNeedsPair();
 OpenAirData openairGetData();
 
 // Update the pending command (thread-safe).  Called from main.cpp whenever the

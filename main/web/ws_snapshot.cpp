@@ -121,10 +121,11 @@ void wsOnConnected() {
         snprintf(buf, sizeof(buf),
                  "{\"command\":\"ac\",\"valid\":%s,"
                  "\"probe1\":%.1f,\"probe2\":%.1f,"
-                 "\"blower_pct\":%d,\"comp_rpm\":%d,\"errors\":%d}",
+                 "\"blower_pct\":%d,\"comp_rpm\":%d,\"errors\":%d,\"needpair\":%s}",
                  oa.valid ? "true" : "false",
                  oa.probe1C, oa.probe2C,
-                 oa.blowerSpeedPct, oa.compressorSpeedRpm, oa.errors);
+                 oa.blowerSpeedPct, oa.compressorSpeedRpm, oa.errors,
+                 openairNeedsPair() ? "true" : "false");
         wsQueueSend(buf);
     }
 
