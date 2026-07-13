@@ -108,13 +108,14 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
     // for ad-hoc messages the rest of the time.
     {
         OpenAirData oas = openairGetData();
-        // "A/C disconnected" feedback only nags when the user actually wants
-        // cooling (cool/eco selected) but no live telemetry is arriving — the
-        // command can't be applied and there'd otherwise be no signal at all.
+        // "A/C disconnected" feedback: surface it whenever the CLIMATIZACIÓN
+        // panel is up and we're not heating (the A/C is out of play during Truma
+        // heat), regardless of the selected mode. Gating it on cool/eco would
+        // never fire — those buttons are disabled while disconnected, so the user
+        // can't get into that state — leaving the greyed buttons unexplained.
         P4ControlState acs;
         p4GetControlState(acs);
-        bool acCooling = openairCfgIsActive() && !acs.heatingOn && acs.acMode != 0;
-        bool acDown    = acCooling && !openairConnected();
+        bool acDown = openairCfgIsActive() && !acs.heatingOn && !openairConnected();
         // Rejecting-handshake ("Bt") gets the actionable re-pair text; a plain
         // unreachable unit gets the generic offline line. Both outrank a stale
         // telemetry error (the cached frame is old).

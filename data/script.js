@@ -1029,11 +1029,13 @@ var s_alertSig = '';
 function footerAlerts() {
     var list = [];
     if (!wserror && linerror) list.push({ text: t('ws_no_lin'), col: '#ff4444' });
-    // A/C disconnected: only nag when cooling is actually selected. Rejecting
-    // handshake ("Bt") gets the actionable re-pair text; a plain unreachable
-    // unit gets the generic offline line.
-    var acCooling = s_openair && !s_heat && (s_acMode === 'cool' || s_acMode === 'eco');
-    if (!wserror && acCooling && !s_acConnected) {
+    // A/C unreachable: surface it whenever the CLIMATIZACIÓN panel is up and not
+    // heating (the A/C isn't in play during Truma heat) — NOT only when cooling
+    // is selected, since the cool button is disabled while disconnected, so that
+    // state is unreachable and the alert would never fire. Rejecting handshake
+    // ("Bt") gets the actionable re-pair text; a plain unreachable unit gets the
+    // generic offline line.
+    if (!wserror && s_openair && !s_heat && !s_acConnected) {
         list.push({ text: t(s_acNeedsPair ? 'ac_repair' : 'ac_offline'), col: '#ff4444' });
     }
     var f = resolveFault();
