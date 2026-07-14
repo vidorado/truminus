@@ -1265,13 +1265,7 @@ static void selftest_task(void*) {
                      (unsigned long)((now - t0) / 1000), (unsigned)free_int, heap_breach);
         }
         if (free_int < HEAP_FLOOR) {
-            // EXPERIMENT (temporary): log the breach but do NOT roll back, so the
-            // full PENDING_VERIFY heap trajectory past the boot dip is observable
-            // (does it recover to the ~26 KB steady state, or stay depressed?).
-            // Restore the rollback once the boot-dip vs leak question is answered.
-            if (++heap_breach >= HEAP_BREACH_LIMIT)
-                ESP_LOGE(TAG, "[EXPERIMENT] heap floor breached (free_int=%u) — "
-                              "rollback SUPPRESSED, watching recovery", (unsigned)free_int);
+            if (++heap_breach >= HEAP_BREACH_LIMIT) rollback("heap floor breached");
         } else {
             heap_breach = 0;
         }
