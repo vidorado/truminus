@@ -526,6 +526,7 @@ bool openairCmdPending() {
 }
 
 uint32_t openairLastSeenMs() { return s_lastSeenMs; }
+uint32_t openairLastPollMs() { return s_lastPollMs; }
 
 bool openairIsConfigured() { return s_configured; }
 
@@ -650,6 +651,7 @@ void openairBleInit()         {}
 void openairBleReloadConfig() {}
 void openairBleHandleAd(const NimBLEAdvertisedDevice*) {}
 uint32_t openairLastSeenMs()  { return 0; }
+uint32_t openairLastPollMs()  { return 0; }
 bool openairIsConfigured()    { return false; }
 OpenAirData openairGetData()  { return {}; }
 void openairSetCmd(const OpenAirCmd&) {}

@@ -477,8 +477,17 @@ static void bleSupervisorTask(void* /*arg*/) {
         // recoverable (not yet in the needs-pair backoff).
         bool oaPriority  = oaReachable && !openairNeedsPair()
                         && (openairCmdPending() || !openairPaired());
+        // Don't stack the BMS GATT connect right after an OpenAir connect: both
+        // hold connection/discovery buffers in internal DRAM for several seconds,
+        // and back-to-back they keep the heap depressed long enough to trip the
+        // post-OTA self-test's sustained heap-floor check. Skip the BMS this cycle
+        // if OpenAir polled in the last OA_ULT_GAP_MS, so it lands in the gap
+        // between OpenAir's 15 s polls (its buffers freed, heap recovered).
+        constexpr uint32_t OA_ULT_GAP_MS = 8000;
+        bool oaRecent = openairIsConfigured() && openairLastPollMs()
+                     && (millis() - openairLastPollMs()) < OA_ULT_GAP_MS;
         if (ultimatronIsConfigured() && (cycleCount % ULTIMATRON_EVERY_N) == 0
-            && !oaPriority) {
+            && !oaPriority && !oaRecent) {
             // Only attempt the GATT connect if the BMS was actually seen
             // advertising in the last ~15 s.  A blind connect to a BMS that is
             // asleep / out of range burns 3×5 s of connect timeout (~16 s) on

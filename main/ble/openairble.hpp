@@ -80,6 +80,11 @@ void openairBleReloadConfig();
 // Also captures service-data bytes (used in the handshake write).
 void     openairBleHandleAd(const NimBLEAdvertisedDevice* dev);
 uint32_t openairLastSeenMs();   // milliseconds timestamp; 0 = never seen
+// millis() when the last actual poll (past the cadence gate) started; 0 = never.
+// The BLE supervisor uses it to keep the Ultimatron GATT connect from stacking
+// right after an OpenAir connect (their connection buffers would otherwise hold
+// internal DRAM low back-to-back).
+uint32_t openairLastPollMs();
 
 bool        openairIsConfigured();
 // True once telemetry has been read for the current target (handshake accepted).
