@@ -52,6 +52,15 @@ static UltimatronData    s_data     = {};
 
 static volatile bool s_ultSuspended = false;
 
+// Persistent GATT client — kept alive across polls so the discovered attribute
+// table survives (reconnect with deleteAttributes=false → getService() returns
+// the cached service, no ATT round-trips). Full discovery runs only on the first
+// poll or after a cache drop. The link is still cyclic (disconnected between
+// polls); only the object persists, and it lives in PSRAM (NimBLE host heap is
+// external). See openairble.cpp for the same pattern + rationale.
+static NimBLEClient*  s_client       = nullptr;
+static bool           s_gattCached   = false;
+
 // DIAGNOSTIC: last time the BMS MAC was seen in a scan window (0 = never).
 static volatile uint32_t s_lastSeenMs = 0;
 static volatile bool     s_everSeen   = false;
@@ -102,15 +111,23 @@ static void parseResponse(const uint8_t* d, int len) {
 }
 
 // ── Single poll ───────────────────────────────────────────────────────────
-// Disconnect and free a client safely.  deleteClient() will not free a
-// still-connected client, so a delete issued mid-teardown leaks it and
-// eventually exhausts the NimBLE client pool (createClient → null → panic).
-// Wait (bounded) for the async disconnect to finish before freeing.
-static void closeClient(NimBLEClient* client) {
+// Wait (bounded) for an async disconnect to finish. deleteClient() will not
+// free a still-connected client, and a write to a half-open link hangs.
+static void waitDisconnected(NimBLEClient* client) {
     if (!client) return;
     client->disconnect();
     for (int i = 0; i < 20 && client->isConnected(); i++) vTaskDelay(pdMS_TO_TICKS(50));
-    NimBLEDevice::deleteClient(client);
+}
+
+// End a poll but KEEP the client + its cached GATT DB for the next (warm) poll.
+static void parkClient() { waitDisconnected(s_client); }
+
+// Full teardown: disconnect, free the client, invalidate the cache. Used on a
+// GATT-level failure or a config/target change so the next poll rediscovers.
+static void dropClient() {
+    waitDisconnected(s_client);
+    if (s_client) { NimBLEDevice::deleteClient(s_client); s_client = nullptr; }
+    s_gattCached = false;
 }
 
 bool ultimatronPollOnce() {
@@ -120,35 +137,43 @@ bool ultimatronPollOnce() {
     std::string macStr = formatMac(s_targetAddr);
     NimBLEAddress addr(macStr, 0);
 
-    NimBLEClient* client = NimBLEDevice::createClient();
+    if (!s_client) { s_client = NimBLEDevice::createClient(); s_gattCached = false; }
+    NimBLEClient* client = s_client;
     if (!client) {
         LOG_ULT_PL("[ult] createClient failed (client pool exhausted)");
         return false;
     }
     client->setConnectTimeout(5000);
 
+    bool warm = s_gattCached;   // reconnect keeping the cached attribute table?
     bool connected = false;
     for (int attempt = 1; attempt <= 3 && !connected; attempt++) {
-        connected = client->connect(addr);
+        connected = client->connect(addr, /*deleteAttributes=*/ !warm);
         if (!connected && attempt < 3) vTaskDelay(pdMS_TO_TICKS(500));
     }
     if (!connected) {
         LOG_ULT_PF("[ult] connect failed (+%ums)\n", (unsigned)(millis() - t0));
-        closeClient(client);
+        // Reachability miss — keep the client + cache parked for next time.
+        parkClient();
         return false;
     }
 
+    // getService() returns the cached service on a warm reconnect (no ATT); on a
+    // cold poll it does the targeted discovery.
     NimBLERemoteService* svc = client->getService("ff00");
     if (!svc) {
-        closeClient(client); return false;
+        dropClient(); return false;
     }
     NimBLERemoteCharacteristic* notifChar = svc->getCharacteristic("ff01");
     NimBLERemoteCharacteristic* writeChar = svc->getCharacteristic("ff02");
     if (!notifChar || !writeChar) {
-        closeClient(client); return false;
+        dropClient(); return false;
     }
+    s_gattCached = true;   // attributes valid → future reconnects can go warm
+    // The unit clears the CCCD on disconnect, so re-subscribe every connect
+    // (cheap: one CCCD write vs the full discovery).
     if (!notifChar->subscribe(true, notifyCb)) {
-        closeClient(client); return false;
+        dropClient(); return false;
     }
 
     // Optional password authentication
@@ -177,9 +202,10 @@ bool ultimatronPollOnce() {
         got = (xSemaphoreTake(s_rxSem, pdMS_TO_TICKS(2000)) == pdTRUE);
     }
 
-    closeClient(client);
+    parkClient();   // keep the client + cached DB for the next warm poll
     if (got) parseResponse(s_rxBuf, s_rxLen);
-    LOG_ULT_PF("[ult] poll %s (+%ums)\n", got ? "ok" : "failed", (unsigned)(millis() - t0));
+    LOG_ULT_PF("[ult] poll %s (+%ums)%s\n", got ? "ok" : "failed",
+               (unsigned)(millis() - t0), warm ? " [cached]" : "");
     return got;
 }
 
@@ -209,6 +235,9 @@ bool ultimatronIsConfigured() {
 }
 
 static void load_config_internal() {
+    // Target MAC may change — invalidate the cached GATT DB so the next poll
+    // rediscovers. Plain bool; the poll task owns the s_client lifecycle.
+    s_gattCached = false;
     std::string addr, pass;
     if (!ultimatronLoadConfig(addr, pass)) {
         s_configured = false;

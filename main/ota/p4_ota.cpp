@@ -1257,6 +1257,13 @@ static void selftest_task(void*) {
         // signals a real leak.  Require HEAP_BREACH_LIMIT consecutive samples.
         size_t free_int = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
         if (free_int < min_free) min_free = free_int;
+        // Trajectory log: when free internal DRAM is approaching the floor, log
+        // every 2 s sample (not just the 15 s progress line) so a rollback's exact
+        // descent is visible on the serial monitor. Quiet in normal operation.
+        if (free_int < 20 * 1024) {
+            ESP_LOGW(TAG, "self-test heap low: t=%lus free_int=%u breach=%d",
+                     (unsigned long)((now - t0) / 1000), (unsigned)free_int, heap_breach);
+        }
         if (free_int < HEAP_FLOOR) {
             if (++heap_breach >= HEAP_BREACH_LIMIT) rollback("heap floor breached");
         } else {
