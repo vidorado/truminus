@@ -764,6 +764,17 @@ static void release_tag_of_running(char* out, size_t out_len) {
     if (dash) *dash = '\0';
 }
 
+// True only for a clean release image whose version is exactly "X.Y.Z". Any
+// suffix ("-g<sha>", "-dirty") marks a locally-built dev image: it was flashed
+// with its OWN web assets, and release_tag_of_running() would strip the suffix
+// to a tag it is NOT actually running — so a web sync would download that
+// release's web bundle and desync app-vs-web. The web sync is therefore gated
+// to clean release builds only; a dev board keeps whatever web it was flashed
+// with (which is in step with its own app image).
+static bool running_is_release_build() {
+    return strchr(running_version(), '-') == nullptr;
+}
+
 static void broadcast_fsupdate(const char* state, int pct) {
     char buf[96];
     snprintf(buf, sizeof(buf),
@@ -1144,6 +1155,14 @@ static void fs_sync_task(void* arg) {
 // Spawn the web-asset sync off the caller's context (it blocks on network +
 // flash).  Stack stays modest: the heavy inflate buffers live in PSRAM/heap.
 static void littlefs_sync_async(const char* tag) {
+    // Dev/dirty builds carry their own matching web; never pull a release's web
+    // over it (would desync app vs web). Single chokepoint for every sync trigger
+    // (boot reconcile, local reconcile, post-OTA self-test).
+    if (!running_is_release_build()) {
+        ESP_LOGI(TAG, "web sync skipped — dev build %s keeps its flashed web",
+                 running_version());
+        return;
+    }
     char* dup = strdup(tag);
     if (!dup) return;
     if (xTaskCreate(fs_sync_task, "p4_fs_sync", 6144, dup, 4, nullptr) != pdPASS) free(dup);
@@ -1157,6 +1176,7 @@ static void littlefs_sync_async(const char* tag) {
 // radio. This is what makes a stale web recover in seconds instead of ≤12 h.
 static void fs_reconcile_local() {
     if (s_installing.load() || p4OtaPendingVerify()) return;
+    if (!running_is_release_build()) return;   // dev build: keep its flashed web
     char cur[96] = "";
     bool have = littlefs_read_ver(cur, sizeof(cur));
     // In sync (flash matches the known target) → nothing to do, no network.

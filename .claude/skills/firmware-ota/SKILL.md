@@ -295,15 +295,27 @@ validates, `littlefs_sync()` brings the web in line with the release:
   `truminus.bin`, `littlefs.bin.gz` (the 8 MB image is ~95% 0xFF → gzips to a
   few hundred KB; inflated on-flash by `inflate_to_partition` via ROM `tinfl`),
   `littlefs.ver`. Feature first shipped in **1.2.18**.
-- **Triggers, in order:** (1) the self-test calls `littlefs_sync_async()` right
-  after marking the image valid; (2) `p4OtaStart()` reconciles on **every**
-  normal boot — *unconditionally*, targeting the running tag (a cheap no-op when
-  `/littlefs/fs.ver` already matches); (3) a frequent **LOCAL** reconcile
+- **Triggers, in order** (all gated to clean release builds — see the note
+  below): (1) the self-test calls `littlefs_sync_async()` right after marking the
+  image valid; (2) `p4OtaStart()` reconciles on **every** normal boot, targeting
+  the running tag (a cheap no-op when `/littlefs/fs.ver` already matches); (3) a
+  frequent **LOCAL** reconcile
   (`fs_reconcile_local`, ~30 s from `check_task`) compares `/littlefs/fs.ver`
   against the marker GitHub last reported (cached in `s_want_fs_ver` on every
   fetch) and kicks a full sync **only on a mismatch**, rate-limited to ≥3 min so
   a failing download can't hammer the shared radio. `fs_sync_task` waits up to
   60 s for an IP before fetching.
+
+  > **Clean release builds ONLY (fixed after 1.3.10).** Every trigger funnels
+  > through `littlefs_sync_async()`, which bails unless `running_is_release_build()`
+  > — i.e. the running version is exactly `X.Y.Z` with **no** `-g<sha>`/`-dirty`
+  > suffix. A dev/dirty image was flashed with its OWN matching web, but
+  > `release_tag_of_running()` strips the suffix to a tag it is *not* actually
+  > running (`1.3.10-…-dirty` → `1.3.10`), so the sync would download that
+  > release's web bundle over the locally-flashed one and desync app-vs-web. Field
+  > symptom: a dirty-flashed board pulls the latest release's `littlefs` on reboot.
+  > The gate leaves dev boards on their flashed web; clean OTA'd/flashed releases
+  > sync as before.
 
   > **Do NOT gate the boot retry on `fs_pending` alone (the old design, fixed
   > 1.3.9).** A sync that failed in a way that cleared or never set that flag —
