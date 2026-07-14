@@ -247,6 +247,13 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
         if (p4DisplayShowUpdatePrompt(ota_cur, ota_latest))
             p4OtaMarkPrompted();
     }
+    // Once an install starts, clear any dialog left on the main screen (the
+    // "update now?" prompt, an error modal) so it can't float over the progress
+    // UI — regardless of whether the install was triggered from the LCD or web.
+    static bool s_wasInstalling = false;
+    bool installing = p4OtaInstalling();
+    if (installing && !s_wasInstalling) p4DisplayDismissDialogs();
+    s_wasInstalling = installing;
 
     OpenAirData oad = openairGetData();
     d.bleState = (vd.valid || ud.valid || td.valid || mp.valid || oad.valid) ? 2

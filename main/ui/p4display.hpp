@@ -166,6 +166,11 @@ bool p4DisplayShowErrorModal(const char* title, const char* sub,
                              const char* desc, uint32_t color);
 void p4DisplayHideErrorModal();
 
+// Close every transient dialog (update prompt + error modal). Called when a
+// firmware install starts so no stale dialog floats over the progress UI.
+// Thread-safe (acquires the LVGL lock internally).
+void p4DisplayDismissDialogs();
+
 // Returns true exactly once after the user taps the modal's "Aceptar" button
 // (consumed on read), so the caller can mark that fault acknowledged.
 bool p4DisplayErrorModalDismissed();

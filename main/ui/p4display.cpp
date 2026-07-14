@@ -2382,6 +2382,17 @@ bool p4DisplayShowErrorModal(const char* title, const char* sub,
     return true;
 }
 
+// Dismiss every transient dialog (the "update now?" prompt and the error modal)
+// — called when a firmware install starts so the progress UI is never left with
+// a stale dialog floating on top of it.
+void p4DisplayDismissDialogs()
+{
+    if (!lvglLock(50)) return;
+    if (s_ota_prompt) { lv_obj_delete(s_ota_prompt); s_ota_prompt = nullptr; }
+    if (s_err_modal)  { lv_obj_delete(s_err_modal);  s_err_modal  = nullptr; }
+    lvglUnlock();
+}
+
 // LVGL timer (500 ms period): advances the CONNECTING blink phase for all
 // status icons and re-derives the cloud icon from the volatile tunnel state,
 // so the cloud stays responsive regardless of how often main.cpp polls
