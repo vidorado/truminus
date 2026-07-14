@@ -118,6 +118,17 @@ static const uint8_t TRUMINUS_ID8[8]  = { 0x01, 0xe8, 0x77, 0x07, 0xed, 0xe0, 0x
 static const uint32_t POLL_INTERVAL_MS = 15000;
 static uint32_t          s_lastPollMs   = 0;
 
+// Persistent GATT client: kept alive across polls (the LINK is still cyclic —
+// we disconnect after each poll) so the discovered attribute table survives.
+// Reconnecting with deleteAttributes=false lets getService() return the cached
+// service with zero ATT traffic, skipping the full-database discovery whose
+// SDIO burst spikes internal DRAM (and tipped the post-OTA self-test's heap
+// floor). Full discovery runs only on the first poll or after a cache drop.
+// The object holds no radio resource while disconnected; it lives in PSRAM
+// (NimBLE host heap is external), so keeping it costs no internal DRAM.
+static NimBLEClient*     s_client     = nullptr;
+static bool             s_gattCached = false;   // s_client holds a valid discovered DB
+
 // Warm-hold: after a command write, keep the GATT link open this long and send
 // any follow-up command instantly (each tap re-arms the window), so rapid
 // adjustments — e.g. nudging a flap to a position — don't pay a fresh connect
@@ -295,15 +306,27 @@ static bool buildWriteFrame(const OpenAirCmd& cmd, char out[61]) {
     return true;
 }
 
-// Disconnect and free a client safely.  deleteClient() will not free a
-// still-connected client, so a delete issued mid-teardown leaks it and
-// eventually exhausts the NimBLE client pool (createClient → null → panic).
-// Wait (bounded) for the async disconnect to finish before freeing.
-static void closeClient(NimBLEClient* client) {
+// Wait (bounded) for an async disconnect to finish. deleteClient() will not
+// free a still-connected client, and a write to a half-open link hangs.
+static void waitDisconnected(NimBLEClient* client) {
     if (!client) return;
     client->disconnect();
     for (int i = 0; i < 20 && client->isConnected(); i++) vTaskDelay(pdMS_TO_TICKS(50));
-    NimBLEDevice::deleteClient(client);
+}
+
+// End a poll but KEEP the client object + its cached GATT DB for the next poll
+// (the fast path). Only the link is torn down.
+static void parkClient() {
+    waitDisconnected(s_client);
+}
+
+// Fully tear down: disconnect, free the client and invalidate the cache. Used on
+// a GATT-level failure (stale/missing attributes) and on a config/target change,
+// so the next poll rebuilds a clean client and rediscovers.
+static void dropClient() {
+    waitDisconnected(s_client);
+    if (s_client) { NimBLEDevice::deleteClient(s_client); s_client = nullptr; }
+    s_gattCached = false;
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -337,7 +360,11 @@ bool openairPollOnce() {
     NimBLEAddress addr = s_haveAdvAddr ? s_advAddr
                                        : NimBLEAddress(formatMac(s_targetAddr), 0);
 
-    NimBLEClient* client = NimBLEDevice::createClient();
+    // Reuse the persistent client so its discovered GATT DB survives across polls
+    // (see s_client). Create it once; a cold poll (no cache) does full discovery,
+    // a warm one reconnects with deleteAttributes=false and skips it.
+    if (!s_client) { s_client = NimBLEDevice::createClient(); s_gattCached = false; }
+    NimBLEClient* client = s_client;
     if (!client) {
         // Pool exhausted — every slot still holds an unfreed client. Never
         // dereference null (setConnectTimeout would panic). A freed slot returns.
@@ -359,17 +386,21 @@ bool openairPollOnce() {
     // MTU (max notify = MTU-3). The app negotiates a large MTU right after connect.
     NimBLEDevice::setMTU(247);
 
-    ESP_LOGI(TAG, "connecting %s (type=%d)",
-             addr.toString().c_str(), (int)addr.getType());
+    bool warm = s_gattCached;   // reconnect keeping the cached attribute table?
+
+    ESP_LOGI(TAG, "connecting %s (type=%d)%s",
+             addr.toString().c_str(), (int)addr.getType(), warm ? " [cached]" : "");
     bool connected = false;
     int  maxAttempts = s_acNeedsPair ? 1 : 3;   // single attempt while backed off
     for (int attempt = 1; attempt <= maxAttempts && !connected; attempt++) {
-        connected = client->connect(addr);
+        connected = client->connect(addr, /*deleteAttributes=*/ !warm);
         if (!connected && attempt < maxAttempts) vTaskDelay(pdMS_TO_TICKS(500));
     }
     if (!connected) {
         ESP_LOGW(TAG, "connect failed (+%ums)", (unsigned)(millis() - t0));
-        closeClient(client); return false;
+        // A reachability miss doesn't invalidate the cached DB — keep the client
+        // (and the cache) parked for when the unit returns.
+        parkClient(); return false;
     }
 
     // We reached the unit. Tentatively count this poll as a failure; a telemetry
@@ -380,20 +411,23 @@ bool openairPollOnce() {
     // fails above) never trips it.
     if (++s_failStreak >= OA_UNPAIR_FAILS) s_acNeedsPair = true;
 
-    // Full GATT discovery first: a per-UUID filtered discovery sometimes fails on
-    // 128-bit custom UUIDs even when the service is present.
-    if (!client->discoverAttributes()) {
+    // Cold poll only: full GATT discovery (a per-UUID filtered discovery sometimes
+    // fails on 128-bit custom UUIDs even when the service is present). A warm poll
+    // skips this entirely — getService() below returns the cached service.
+    if (!warm && !client->discoverAttributes()) {
         ESP_LOGW(TAG, "attribute discovery failed");
-        closeClient(client); return false;
+        dropClient(); return false;
     }
     NimBLERemoteService* svc = client->getService(SVC_UUID);
-    if (!svc) { ESP_LOGW(TAG, "target service not found"); closeClient(client); return false; }
+    if (!svc) { ESP_LOGW(TAG, "target service not found"); dropClient(); return false; }
     NimBLERemoteCharacteristic* hsChar   = svc->getCharacteristic(HANDSHAKE_UUID);
     NimBLERemoteCharacteristic* dataChar = svc->getCharacteristic(DATA_UUID);
     if (!hsChar || !dataChar) {
         ESP_LOGW(TAG, "characteristics not found");
-        closeClient(client); return false;
+        dropClient(); return false;
     }
+    // Attributes are valid → future reconnects can go warm.
+    s_gattCached = true;
 
     // Enable Service Changed indications (0x2A05 in GATT service 0x1801) BEFORE
     // the handshake — the app's btsnoop shows this exact order. Best-effort.
@@ -408,14 +442,16 @@ bool openairPollOnce() {
     // covers the wait. Once paired, the WriteRsp is immediate.
     if (!hsChar->writeValue(TRUMINUS_ID8, sizeof(TRUMINUS_ID8), true)) {
         ESP_LOGW(TAG, "handshake write failed");
-        closeClient(client); return false;
+        // A write failure on a warm reconnect may mean a stale cached handle —
+        // drop so the next poll rediscovers.
+        dropClient(); return false;
     }
 
     // Subscribe; drain any stale signal before we start waiting on notifications.
     while (xSemaphoreTake(s_notifySem, 0) == pdTRUE) {}
     if (!dataChar->subscribe(true, notifyCb)) {
         ESP_LOGW(TAG, "subscribe failed");
-        closeClient(client); return false;
+        dropClient(); return false;
     }
 
     // Grab any pending command up front so we can write it as early as possible.
@@ -496,8 +532,11 @@ bool openairPollOnce() {
         }
     }
 
-    closeClient(client);
-    ESP_LOGI(TAG, "poll %s (+%ums)", got ? "ok" : "no-telemetry", (unsigned)(millis() - t0));
+    // Keep the client + its cached GATT DB for the next (warm) poll; only the
+    // link is torn down.
+    parkClient();
+    ESP_LOGI(TAG, "poll %s (+%ums)%s", got ? "ok" : "no-telemetry",
+             (unsigned)(millis() - t0), warm ? " [cached]" : "");
     return got;
 }
 
@@ -612,6 +651,11 @@ static void load_config_internal() {
     s_paired = false;   // fresh config → not yet confirmed paired this session
     s_acNeedsPair = false;
     s_failStreak  = 0;
+    // Invalidate the cached GATT DB: the target MAC may have changed, so the next
+    // poll must rediscover (connect with deleteAttributes=true). A plain bool
+    // write — the poll task owns the s_client object's lifecycle, so we never
+    // free it from here (no cross-task use-after-free).
+    s_gattCached = false;
     std::string raw;
     if (!openairLoadConfig(raw) || raw.empty()) {
         s_configured = false;
