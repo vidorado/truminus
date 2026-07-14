@@ -43,3 +43,7 @@ main/slave_fw/*.bin
 # Graphify output — regenerate with `graphify update .`
 # Graphify
 graphify-out
+
+# Python bytecode cache
+scripts/__pycache__/
+__pycache__/
