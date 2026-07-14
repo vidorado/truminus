@@ -25,15 +25,28 @@ struct OpenAirData {
     int      uMode;              // Mode (bytes 12-13) 0=AUTO 1=ECO 2=MAN
     int      uTempTenths;        // Temp setpoint (bytes 14-15) tenths °C
     int      uBlower;            // BlowerSpeed (bytes 16-17) 1-6
+    int      uFlaps1;            // Flaps1Mode (bytes 26-27) 0/1 — for UI seed/reconcile
+    int      uFlaps2;            // Flaps2Mode (bytes 28-29) 0/1
     bool     valid;
     uint32_t lastMs;
 };
+
+// Flaps wire value: which of 0/1 is "swing" vs "fixed" is UNCONFIRMED — the
+// openair-plus skill only ever observed the field taking 0/1, never which value
+// is which.  Assumed here; if the real unit disagrees, flip just these two.
+// TO VERIFY on hardware.
+#define OA_FLAP_SWING 1
+#define OA_FLAP_FIX   0
 
 // Dirty-bit flags for OpenAirCmd::configDirty. The config fields (BatteryType,
 // Power) are echoed back from the unit's own telemetry on every command UNLESS
 // their bit is set here — the app forbids changing them while the unit runs, so
 // the Peripherals screen sets these only when the unit is OFF.
-enum { OA_CFG_BATTERY = 1 << 0, OA_CFG_POWER = 1 << 1 };
+// OA_CFG_FLAP1/2 gate the two louver-mode fields the same way: flaps are echoed
+// from the unit's telemetry unless the user changed a louver, so a command built
+// before the first telemetry read can never reset the louvers to a default.
+enum { OA_CFG_BATTERY = 1 << 0, OA_CFG_POWER = 1 << 1,
+       OA_CFG_FLAP1 = 1 << 2, OA_CFG_FLAP2 = 1 << 3 };
 
 // Command to apply on the next GATT connection.
 // Set via openairSetCmd(); applied by openairPollOnce().

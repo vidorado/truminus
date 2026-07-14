@@ -118,6 +118,27 @@ static const uint8_t TRUMINUS_ID8[8]  = { 0x01, 0xe8, 0x77, 0x07, 0xed, 0xe0, 0x
 static const uint32_t POLL_INTERVAL_MS = 15000;
 static uint32_t          s_lastPollMs   = 0;
 
+// Warm-hold: after a command write, keep the GATT link open this long and send
+// any follow-up command instantly (each tap re-arms the window), so rapid
+// adjustments — e.g. nudging a flap to a position — don't pay a fresh connect
+// each time. The hold runs INSIDE openairPollOnce on the single supervisor task,
+// so the Victron scan is paused for its duration; that is what makes it safe
+// (the abandoned persistent link crashed the shared C6 radio by holding the
+// connection open *while scanning*). Other BLE sensors just pause briefly.
+static const uint32_t OA_CMD_HOLD_MS = 6000;
+// A swing command starts the louver oscillating; the user then waits for it to
+// reach the wanted position and taps "fix" to stop it. Hold the link open longer
+// after a swing so that follow-up "fix" tap still lands on the warm connection.
+static const uint32_t OA_CMD_HOLD_SWING_MS = 15000;
+
+// Hold window for the command just written: longer right after a swing so the
+// user can catch the flap and stop it with an instant "fix".
+static uint32_t cmdHoldMs(const OpenAirCmd& c) {
+    bool swing = ((c.configDirty & OA_CFG_FLAP1) && c.flaps1 == OA_FLAP_SWING) ||
+                 ((c.configDirty & OA_CFG_FLAP2) && c.flaps2 == OA_FLAP_SWING);
+    return swing ? OA_CMD_HOLD_SWING_MS : OA_CMD_HOLD_MS;
+}
+
 // Telemetry older than this (3 missed 15 s polls) means the A/C has dropped off
 // — the UI treats it as disconnected even though the last frame is still cached.
 static const uint32_t AC_STALE_MS = 45000;
@@ -204,6 +225,8 @@ static bool parseNotification(const uint8_t* ascii, int len) {
     d.uMode              = (int)readU16BE(bytes, 12);
     d.uTempTenths        = (int)readU16BE(bytes, 14);
     d.uBlower            = (int)readU16BE(bytes, 16);
+    d.uFlaps1            = (int)readU16BE(bytes, 26);  // field 11 — for UI seed
+    d.uFlaps2            = (int)readU16BE(bytes, 28);  // field 12
     d.errors             = (int)readU16BE(bytes, 30);  // field 13
     d.batteryValue       = (int)readU16BE(bytes, 32);  // field 14
     // field 15 (ElectroSpeed)   at bytes 34-35 — not stored yet
@@ -237,9 +260,11 @@ static void writeU16BE(uint8_t* b, int off, unsigned v) {
 // ── Command frame builder ─────────────────────────────────────────────────────
 // Builds the 30-byte command by starting from the unit's own last write-region
 // (s_writeShadow) and overwriting ONLY the fields we intend to change — the four
-// user controls plus the freshly-stamped clock. Everything else (BatteryType,
-// Power, TempScale, LedBright/Color, ScheduledTime, Flaps) is echoed back exactly
-// as the unit reported it, so we never reconfigure the appliance. Returns false
+// live user controls (PowerState/Mode/Temp/BlowerSpeed) plus the freshly-stamped
+// clock, and the two flaps ONLY when their dirty bit is set (the user changed a
+// louver). Everything else (BatteryType, Power, TempScale, LedBright/Color,
+// ScheduledTime, and untouched flaps) is echoed back exactly as the unit reported
+// it, so we never reconfigure the appliance. Returns false
 // if no telemetry has been read yet (never send a blind default frame). Output is
 // 60 ASCII lowercase hex chars (the wire value is those code units).
 static bool buildWriteFrame(const OpenAirCmd& cmd, char out[61]) {
@@ -262,6 +287,9 @@ static bool buildWriteFrame(const OpenAirCmd& cmd, char out[61]) {
     // which the UI allows only while the unit is OFF.
     if (cmd.configDirty & OA_CFG_BATTERY) writeU16BE(f, 4, (unsigned)cmd.batteryType);
     if (cmd.configDirty & OA_CFG_POWER)   writeU16BE(f, 6, (unsigned)cmd.power);
+    // Flaps: echoed from the shadow unless the user changed that louver.
+    if (cmd.configDirty & OA_CFG_FLAP1)   writeU16BE(f, 26, (unsigned)cmd.flaps1);  // [26-27] Flaps1Mode
+    if (cmd.configDirty & OA_CFG_FLAP2)   writeU16BE(f, 28, (unsigned)cmd.flaps2);  // [28-29] Flaps2Mode
 
     for (int i = 0; i < 30; i++) snprintf(out + i * 2, 3, "%02x", f[i]);
     return true;
@@ -437,6 +465,34 @@ bool openairPollOnce() {
             xSemaphoreTake(s_cmdMux, portMAX_DELAY);
             s_pendingCmd = cmd; s_hasPendingCmd = true;
             xSemaphoreGive(s_cmdMux);
+        }
+    }
+
+    // Warm-hold: once we've written at least one command this session and the
+    // shadow is seeded, keep the link open briefly and flush follow-up commands
+    // instantly (each one re-arms the window). Only entered after a real command
+    // (not a plain telemetry poll) so idle polls still disconnect immediately.
+    if ((wrote || hasCmd) && s_haveShadow) {
+        uint32_t holdUntil = millis() + cmdHoldMs(cmd);
+        while ((int32_t)(holdUntil - millis()) > 0 && client->isConnected()) {
+            OpenAirCmd next = {};
+            bool have = false;
+            xSemaphoreTake(s_cmdMux, portMAX_DELAY);
+            if (s_hasPendingCmd) { next = s_pendingCmd; s_hasPendingCmd = false; have = true; }
+            xSemaphoreGive(s_cmdMux);
+            if (!have) { vTaskDelay(pdMS_TO_TICKS(40)); continue; }
+
+            char frame[61] = {};
+            if (!buildWriteFrame(next, frame)) continue;
+            dataChar->writeValue((const uint8_t*)frame, 60, false);
+            ESP_LOGI(TAG, "cmd (hold): ps=%d mode=%d temp=%.1f°C fan=%d flaps=%d/%d",
+                     next.powerState, next.mode, next.tempTenths / 10.0f,
+                     next.blowerSpeed, next.flaps1, next.flaps2);
+            // Capture the post-write echo so the shadow tracks the unit, then
+            // re-arm the window for the next tap.
+            if (xSemaphoreTake(s_notifySem, pdMS_TO_TICKS(1500)) == pdTRUE)
+                parseNotification(s_notifyBuf, s_notifyLen);
+            holdUntil = millis() + cmdHoldMs(next);
         }
     }
 

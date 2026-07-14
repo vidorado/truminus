@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="TruMinus" />
 <link rel="manifest" href="/icons/site.webmanifest" />
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=e37e95ea">
+<link rel="stylesheet" href="styles.css?v=ae41a967">
 </head>
 <body>
 
@@ -49,6 +49,18 @@
        future controls. ───────────────────────────────────────────────────── -->
 <main class="lcd">
 
+  <!-- OpenAir flap-mode icons (swing / fix), 512-box, shared by the flap grid.
+       Kept in sync with scripts/flap_icons.py, which also bakes the same shapes
+       into main/assets/fonts/font_icons.ttf for the LCD. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="ic-flap-swing" viewBox="0 0 512 512">
+      <path fill="currentColor" d="M51.2,69.8 L453.4,69.8 L453.4,114.5 L51.2,114.5 Z M408.7,69.8 L453.4,69.8 L453.4,442.2 L408.7,442.2 Z M133.6,218.4 L135.9,238.0 L140.1,257.3 L146.1,276.2 L153.8,294.3 L163.2,311.7 L174.2,328.1 L186.7,343.4 L200.6,357.4 L215.7,370.1 L232.0,381.3 L249.3,390.8 L267.4,398.7 L286.2,404.9 L305.4,409.2 L315.8,350.6 L302.0,347.4 L288.6,343.1 L275.7,337.4 L263.3,330.6 L251.7,322.6 L240.9,313.6 L231.0,303.5 L222.0,292.6 L214.2,280.9 L207.4,268.5 L201.9,255.5 L197.7,242.1 L194.7,228.3 L193.1,214.3 Z M162.9,110.8 L215.0,229.9 L110.8,229.9 Z M460.8,390.1 L349.1,337.9 L349.1,442.2 Z"/>
+    </symbol>
+    <symbol id="ic-flap-fix" viewBox="0 0 512 512">
+      <path fill="currentColor" d="M142.4,158.0 L276.9,137.5 L283.4,180.0 L381.8,99.1 L263.7,51.2 L270.2,93.6 L135.7,114.1 Z M106.5,278.2 L296.0,278.2 L296.0,321.1 L405.5,256.0 L296.0,190.9 L296.0,233.8 L106.5,233.8 Z M135.7,397.9 L270.2,418.4 L263.7,460.8 L381.8,412.9 L283.4,332.0 L276.9,374.5 L142.4,354.0 Z"/>
+    </symbol>
+  </svg>
+
   <!-- Row 1: HEATING (301 px) + HOT WATER (350 px) + AGUA L. (149 px) -->
   <div class="row row1">
 
@@ -71,11 +83,24 @@
         <button id="acOff"  class="btn-heat btn-ac" onclick="setAcMode('off')" data-i18n="fan_off">Apag.</button>
       </div>
 
-      <!-- Setpoint row (visible only when heat is on or A/C cool/eco) -->
-      <div id="spRow" class="sp-row sp-hidden">
-        <button class="btn-step" onclick="changeTemp(-0.5)">&#9660;</button>
-        <span id="spVal" class="sp-val">20.0&nbsp;°C</span>
-        <button class="btn-step" onclick="changeTemp(0.5)">&#9650;</button>
+      <!-- Second row: setpoint stepper (left) + flap grid (right).  The flap
+           grid only shows while the A/C is blowing (CLIMATIZACIÓN cool/eco);
+           when hidden the setpoint stepper reclaims the full width. -->
+      <div class="sp-flap-row">
+        <!-- Setpoint row (visible only when heat is on or A/C cool/eco) -->
+        <div id="spRow" class="sp-row sp-hidden">
+          <button class="btn-step" onclick="changeTemp(-0.5)">&#9660;</button>
+          <span id="spVal" class="sp-val">20.0&nbsp;°C</span>
+          <button class="btn-step" onclick="changeTemp(0.5)">&#9650;</button>
+        </div>
+
+        <!-- 2x2 flap grid: top row = flap 1 (swing|fix), bottom = flap 2. -->
+        <div id="flapGrid" class="flap-grid vis-hidden">
+          <button id="flap1Swing" class="btn-flap" onclick="setFlap(1,'swing')" aria-label="Flap 1 swing"><span class="flap-num">1</span><svg class="fi-svg"><use href="#ic-flap-swing"></use></svg></button>
+          <button id="flap1Fix"   class="btn-flap" onclick="setFlap(1,'fix')"   aria-label="Flap 1 fix"><span class="flap-num">1</span><svg class="fi-svg"><use href="#ic-flap-fix"></use></svg></button>
+          <button id="flap2Swing" class="btn-flap" onclick="setFlap(2,'swing')" aria-label="Flap 2 swing"><span class="flap-num">2</span><svg class="fi-svg"><use href="#ic-flap-swing"></use></svg></button>
+          <button id="flap2Fix"   class="btn-flap" onclick="setFlap(2,'fix')"   aria-label="Flap 2 fix"><span class="flap-num">2</span><svg class="fi-svg"><use href="#ic-flap-fix"></use></svg></button>
+        </div>
       </div>
     </section>
 
@@ -293,6 +318,6 @@
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=adc0aa57"></script>
 <script src="i18n.js?v=f9bc735d"></script>
-<script src="script.js?v=52852ee2"></script>
+<script src="script.js?v=b8a47c28"></script>
 </body>
 </html>

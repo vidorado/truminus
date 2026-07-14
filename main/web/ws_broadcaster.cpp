@@ -82,6 +82,7 @@ static void adoptAcStateFromUnit() {
         s_acSeeded = true;
         p4SetAcMode(acMode);
         p4SetAcFan(fanAuto, fanSpeed);
+        p4SetAcFlaps(d.uFlaps1, d.uFlaps2);
         if (d.uPowerState != 0) p4SetRoomSetpoint(setp);
         s_acAdoptedFromUnit = true;
         return;
@@ -160,6 +161,18 @@ static void broadcastControlChanges(const P4ControlState& cs) {
         emit("ac_fan_speed", v);
         acChanged = true;
     }
+    // Flaps: track the genuine (post-init) change so the command below can mark
+    // just that louver dirty — untouched flaps are echoed from the unit's shadow.
+    bool flap1Changed = inited && cs.acFlap1 != prev.acFlap1;
+    bool flap2Changed = inited && cs.acFlap2 != prev.acFlap2;
+    if (!inited || cs.acFlap1 != prev.acFlap1) {
+        emit("ac_flap1", cs.acFlap1 ? "1" : "0");
+        acChanged = true;
+    }
+    if (!inited || cs.acFlap2 != prev.acFlap2) {
+        emit("ac_flap2", cs.acFlap2 ? "1" : "0");
+        acChanged = true;
+    }
     if (!inited || cs.roomSetpoint != prev.roomSetpoint) acChanged = true;
 
     // Push a setpoint to the unit ONLY when the user actually changed an A/C
@@ -171,7 +184,11 @@ static void broadcastControlChanges(const P4ControlState& cs) {
     bool adopted = s_acAdoptedFromUnit;
     s_acAdoptedFromUnit = false;
     if (acChanged && inited && !adopted) {
-        openairSetCmd(buildOpenAirCmd(cs));
+        OpenAirCmd cmd = buildOpenAirCmd(cs);
+        // Only a louver the user actually moved is written; the rest stay echoed.
+        if (flap1Changed) cmd.configDirty |= OA_CFG_FLAP1;
+        if (flap2Changed) cmd.configDirty |= OA_CFG_FLAP2;
+        openairSetCmd(cmd);
         // Open the settle window so adoption won't revert this change while the
         // command is still travelling to the unit (connect→write→readback).
         s_acUserCmdMs = (uint32_t)(esp_timer_get_time() / 1000ULL);

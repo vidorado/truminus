@@ -22,6 +22,8 @@ var s_openair     = false;       // CLIMATIZACIÓN panel active when true
 var s_acMode      = 'off';       // 'off' | 'cool' | 'eco'
 var s_acFanAuto   = true;        // cool mode: Auto (Mode AUTO) vs Man (Mode MAN)
 var s_acFanSpeed  = 3;           // cool+Man blower speed 1..6
+var s_acFlap1     = 0;           // louver 1 mode — raw wire 0/1 (see OA_FLAP_* firmware)
+var s_acFlap2     = 0;           // louver 2 mode — raw wire 0/1
 var s_acConnected = false;       // true when BLE poll returned valid telemetry
 var s_acNeedsPair = false;        // unit dropped pairing (shows "Bt") — prompt re-pair
 var s_acCompRpm   = 0;           // A/C compressor speed (RPM); >0 → snowflake blinks
@@ -633,6 +635,12 @@ function applySetting(id, value) {
         var sp = parseInt(value);
         if (!isNaN(sp)) s_acFanSpeed = sp;
         refreshFan();
+    } else if (id === 'ac_flap1') {
+        s_acFlap1 = parseInt(value) ? 1 : 0;
+        refreshFlaps();
+    } else if (id === 'ac_flap2') {
+        s_acFlap2 = parseInt(value) ? 1 : 0;
+        refreshFlaps();
     } else if (id === 'lang') {
         applyLanguage(value);
     }
@@ -707,7 +715,10 @@ function cls(id, cssClass, on) {
 }
 
 function refreshSetpoint() {
-    document.getElementById('spVal').textContent = s_temp.toFixed(1) + ' °C';
+    // Whole degrees while cooling (matches the whole-degree A/C step); halves for heat.
+    var cooling = s_openair && !s_heat && s_acMode !== 'off';
+    document.getElementById('spVal').textContent =
+        s_temp.toFixed(cooling ? 0 : 1) + '°C';
 }
 
 // Title + mode-row swap for the CALEFACCIÓN ↔ CLIMATIZACIÓN panel.
@@ -741,6 +752,7 @@ function refreshHeat() {
     refreshClimate();
     var spOn = s_openair ? (s_heat || s_acMode !== 'off') : s_heat;
     cls('spRow', 'sp-hidden', !spOn);
+    refreshSetpoint();   // re-apply the cool/heat decimal format on a mode change
     if (!s_openair) {
         cls('hBtnOn',  'btn-sel',  s_heat);
         cls('hBtnOff', 'btn-sel', !s_heat);
@@ -752,6 +764,7 @@ function refreshHeat() {
         if (off) off.disabled = linerror;
     }
     refreshFan();
+    refreshFlaps();
     refreshIndicators();
 }
 
@@ -977,6 +990,29 @@ function changeAcFanLvl(delta) {
     s_acFanSpeed = Math.min(6, Math.max(1, s_acFanSpeed + delta));
     document.getElementById('acFanLvlVal').textContent = s_acFanSpeed;
     sendDebounced('/ac_fan_speed', String(s_acFanSpeed));
+}
+
+// Louver mode. Wire values mirror OA_FLAP_* in the firmware (openairble.hpp):
+// which of 0/1 is swing vs fix is unconfirmed — flip these if the unit disagrees.
+var OA_FLAP_SWING = 1, OA_FLAP_FIX = 0;
+
+function setFlap(flap, mode) {
+    var wire = (mode === 'swing') ? OA_FLAP_SWING : OA_FLAP_FIX;
+    if (flap === 1) s_acFlap1 = wire; else s_acFlap2 = wire;
+    refreshFlaps();
+    sendDebounced('/ac_flap' + flap, String(wire));
+}
+
+// The flap grid is only meaningful while the A/C is blowing (cool/eco, not
+// Truma heat); when hidden the setpoint stepper reclaims the full width.
+function refreshFlaps() {
+    var show = s_openair && !s_heat && s_acMode !== 'off';
+    cls('flapGrid', 'vis-hidden', !show);
+    if (!show) return;
+    cls('flap1Swing', 'btn-sel', s_acFlap1 === OA_FLAP_SWING);
+    cls('flap1Fix',   'btn-sel', s_acFlap1 === OA_FLAP_FIX);
+    cls('flap2Swing', 'btn-sel', s_acFlap2 === OA_FLAP_SWING);
+    cls('flap2Fix',   'btn-sel', s_acFlap2 === OA_FLAP_FIX);
 }
 
 // ── Truma error display ───────────────────────────────────────────────────

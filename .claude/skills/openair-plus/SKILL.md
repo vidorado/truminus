@@ -222,6 +222,17 @@ screen** after device selection: try to connect, and if it doesn't succeed withi
 > is stable; the persistent-link changes introduced the crash, so the cyclic model is the safe design.
 > (The idea that the unit powers off when the link drops was an unverified hunch — the cyclic poll
 > works; the only visible cost is the unit briefly showing "Bt" per poll, kept infrequent by the gate.)
+>
+> **The crash cause was concurrent scan + open link, NOT the open link itself.** So there is one
+> safe way to keep the link warm: the **warm-hold** (`OA_CMD_HOLD_MS`, 6 s) at the end of
+> `openairPollOnce()`. After a command write it keeps the connection open and flushes any follow-up
+> command instantly (each tap re-arms the window), so rapid adjustments — nudging a flap to a
+> position, stepping the setpoint — don't each pay a fresh ~3 s connect. It is safe **because it runs
+> inside the single supervisor task**, so the Victron scan is inherently paused for its duration (the
+> abandoned persistent link crashed precisely because it held the link open *while the loop kept
+> scanning*). Do NOT recreate a warm/persistent link anywhere the scan can run at the same time. Only
+> genuine pending commands are written in the hold (no beep-per-poll); it exits + disconnects after
+> 6 s idle, then the normal cyclic cadence resumes. Cost: other BLE sensors pause for the hold window.
 
 > ⚠️ **Do NOT write a setpoint frame every poll.** The unit re-applies any command it receives
 > (audible **beep** + LED flash). Telemetry notifications arrive on their own once subscribed, so
@@ -231,10 +242,35 @@ screen** after device selection: try to connect, and if it doesn't succeed withi
 > carries ALL 13 writable fields, so any field you don't copy from the unit reconfigures it. Hardcoding
 > `BatteryType=0`/`Power=1` was wrong (the real unit runs `BatteryType=1` lithium, `Power=0`) and
 > visibly disturbed operation (fan stutter, config drift). The firmware snapshots the first 30 bytes of
-> each telemetry frame (`s_writeShadow`) and overwrites ONLY the four user controls
+> each telemetry frame (`s_writeShadow`) and overwrites ONLY the four live user controls
 > (PowerState/Mode/Temp/BlowerSpeed) + the clock; everything else (BatteryType, Power, TempScale,
 > LED, ScheduledTime, Flaps) is echoed back byte-for-byte. Never send a command before the first
 > telemetry read (`s_haveShadow`).
+
+### Flap-mode control — implemented (swing/fix), dirty-gated
+
+The two louvers (`Flaps1Mode`/`Flaps2Mode`, wire bytes 26/28) ARE user-controllable in TruMinus: a
+2×2 button grid in the CLIMATIZACIÓN panel's second row (top row = flap 1, bottom = flap 2; columns =
+swing/fix), on both the LCD and the web. Only shown while the A/C is actually blowing (cool/eco, not
+Truma heat). State lives in `P4ControlState::acFlap1/acFlap2` (raw wire value), seeded from telemetry
+(`uFlaps1/uFlaps2`) for the highlight, routed via WS `/ac_flap1`, `/ac_flap2`.
+
+- **The write is dirty-gated** (`OA_CFG_FLAP1/2`), exactly like BatteryType/Power: `buildWriteFrame`
+  echoes the flaps from the shadow UNLESS the user moved that louver this command. This is deliberate —
+  a command built before the first telemetry read (edge case: user taps during pairing) must not carry a
+  default flap value and reset the louvers. Do NOT switch flaps to "always written".
+- **Which wire value is swing vs fix is UNCONFIRMED** — the reverse-engineered app only ever showed the
+  field taking 0/1, never which is which. TruMinus assumes `OA_FLAP_SWING=1`, `OA_FLAP_FIX=0`
+  (`openairble.hpp`); if the real unit disagrees, flip just those two defines (and `OA_FLAP_*` in
+  `data/script.js`). **TO VERIFY on hardware.**
+- **BLE only toggles swing vs fixed, not a specific angle.** The unit remembers the last louver *position*
+  set by its IR remote in internal memory; that position is never exposed over BLE, so we can only pick the
+  mode. (The IR remote doesn't share the BLE channel, but any press on the physical console still kicks our
+  BLE off — see the physical-remote gotcha above.)
+- **Icons** (swing = oscillating flap between two bars; fix = three right arrows) are reproduced from the
+  app as filled contours in `scripts/flap_icons.py`, shared by both surfaces: baked into
+  `main/assets/fonts/font_icons.ttf` (U+E901/E902, via `gen_icon_font.py`) for the LCD and embedded as
+  inline `<svg>` symbols (`#ic-flap-swing`/`#ic-flap-fix`) in `data/index.html` for the web.
 
 ### Config fields (BatteryType, Power) — change only while the unit is OFF
 

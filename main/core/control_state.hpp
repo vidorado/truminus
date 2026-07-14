@@ -19,4 +19,6 @@ struct P4ControlState {
     int   acMode;        // 0=off, 1=cool, 2=eco  (heat = heatingOn)
     bool  acFanAuto;     // cool mode: true=Auto (Mode AUTO), false=Man (Mode MAN)
     int   acFanSpeed;    // cool+Man blower speed, 1..6
+    int   acFlap1;       // louver 1 mode — raw wire value 0/1 (see OA_FLAP_* in openairble.hpp)
+    int   acFlap2;       // louver 2 mode — raw wire value 0/1
 };

@@ -47,7 +47,7 @@ void wsOnConnected() {
     const char* ssid = (ws.connected && ws.ssid[0]) ? ws.ssid : "";
     const char* ip   = (ws.connected && ws.ip[0])   ? ws.ip   : "";
 
-    char buf[448];
+    char buf[512];
     snprintf(buf, sizeof(buf),
              "{\"command\":\"snapshot\","
              "\"settings\":{"
@@ -57,7 +57,9 @@ void wsOnConnected() {
                  "\"/temp\":\"%.1f\","
                  "\"/ac_mode\":\"%d\","
                  "\"/ac_fan_auto\":\"%d\","
-                 "\"/ac_fan_speed\":\"%d\""
+                 "\"/ac_fan_speed\":\"%d\","
+                 "\"/ac_flap1\":\"%d\","
+                 "\"/ac_flap2\":\"%d\""
              "},"
              "\"status\":{},"
              "\"ssid\":\"%s\","
@@ -72,6 +74,8 @@ void wsOnConnected() {
              cs.acMode,
              cs.acFanAuto ? 1 : 0,
              cs.acFanSpeed,
+             cs.acFlap1,
+             cs.acFlap2,
              ssid,
              ip,
              cs.energyIdx,

@@ -21,8 +21,10 @@ OpenAirCmd buildOpenAirCmd(const P4ControlState& cs) {
     cmd.ledBright     = 0;   // keep the console LED off by default
     cmd.ledColor      = 0;
     cmd.scheduledTime = 0;
-    cmd.flaps1        = 0;
-    cmd.flaps2        = 0;
+    // Louver modes. Carried here for when a louver is dirty (the caller sets the
+    // OA_CFG_FLAP* bit); otherwise buildWriteFrame echoes them from the unit.
+    cmd.flaps1        = cs.acFlap1;
+    cmd.flaps2        = cs.acFlap2;
 
     int tempTenths = (int)roundf(cs.roomSetpoint * 10.0f);
     if (tempTenths < 160) tempTenths = 160;

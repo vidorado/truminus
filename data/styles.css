@@ -309,7 +309,9 @@ body {
   .lcd {
     display: grid;
     grid-template-columns: repeat(10, 1fr);
-    grid-template-rows: minmax(0, 0.8fr) minmax(0, 0.85fr) minmax(0, 0.9fr) minmax(0, 1.05fr);
+    /* Row 1 (HEATING/CLIMATIZACIÓN + FAN) taller so the 2×2 flap grid + setpoint
+       have room and flap 2 clears the panel's bottom separator. */
+    grid-template-rows: minmax(0, 0.95fr) minmax(0, 0.82fr) minmax(0, 0.86fr) minmax(0, 1.0fr);
     padding: 0;
     min-height: 0 !important;
     max-height: none;
@@ -364,6 +366,24 @@ body {
   .btn-step   { flex: 0 0 42px; width: 42px; height: 42px; min-height: 42px; font-size: 0.9em; }
   .sp-row     { gap: 8px; }   /* keep base align-items:stretch so sp-val fills the row height */
   .panel .sp-val { font-size: 1.1em; white-space: nowrap; }
+  /* CLIMATIZACIÓN 2nd row: shrink the setpoint so the flap grid fits the narrow
+     panel — the fixed-width ▼/▲ buttons otherwise push the grid past the edge.
+     `.row` prefixes lift specificity above the later base .btn-step/.sp-row rules. */
+  .row .sp-flap-row { gap: 5px; align-items: stretch; }
+  .row .sp-flap-row > .sp-row { flex: 1 1 0; min-width: 0; gap: 5px; align-items: stretch; }
+  /* Setpoint ▼/▲ keep their 34 px width but stretch to fill the (now taller)
+     second-row height, matching the flap buttons beside them. */
+  .row .sp-flap-row .btn-step { flex: 0 0 34px; width: 34px; height: auto; min-height: 34px; align-self: stretch; }
+  .row .sp-flap-row .sp-val   { font-size: 0.95em; min-width: 0; }
+  .row .flap-grid             { flex: 0 0 38%; }
+  /* Bottom padding so the flap-2 row / fan buttons clear the panel separator. */
+  .row .panel-heat, .row .panel-fan { padding-bottom: 6px; }
+  /* FAN panel: let its control rows share the panel height so the Off|On /
+     Auto|Man toggles and the level steppers fill it, and make the stepper
+     ▼/▲ taller (stretch) and wider than the cramped 42 px default. */
+  .row .panel-fan .btn-row,
+  .row .panel-fan .sp-row     { flex: 1 1 0; }
+  .row .panel-fan .btn-step   { flex: 1 1 0; width: auto; height: auto; min-height: 0; align-self: stretch; max-width: 96px; }
   /* Tanks/batteries back to fixed pixel sizes — they no longer have a
      row height to fill on stacked layouts. */
   .water-temp-bar-wrap { width: 64px; max-width: none; min-width: 0; }
@@ -394,7 +414,8 @@ body {
   .panel-inv .inv-mid  { padding: 14px 29px; }
   .panel-inv .inv-flow { width: 29px; }
   .row .panel-inv { border-bottom: none; flex: 1; }
-  .panel-inv .inv-diagram  { flex: 1; }
+  .panel-inv .inv-diagram  { flex: 1; margin-top: -5px; }
+  .panel-batt .batt-layout { margin-top: -5px; }
   /* OTA banner: wider box and the Update button stacked below the message
      instead of to its right. */
   .ota-banner { flex-direction: column; align-items: center; width: 84vw; max-width: 84vw; gap: 10px; }
@@ -412,11 +433,17 @@ body {
   .footer-logo    { font-size: 20px; }
   .sb-msg         { font-size: 0.9em; }
   .sb-ip          { font-size: 0.85em; }
-  .row1 { grid-template-columns: 33.125% 40.625% 26.25%; }
+  /* CLIMATIZACIÓN takes 15 px (≈1.875% of the 800-px design width) from AGUA
+     CALIENTE so its second row fits the setpoint stepper beside the flap grid;
+     AGUA LIMPIA's right edge is unchanged. */
+  .row1 { grid-template-columns: 35% 38.75% 26.25%; }
   .row2 { grid-template-columns: 20% 16% 23% 41%; }
   .lcd  { height: calc(100vh - var(--bar-h) - var(--foot-h)); height: calc(100svh - var(--bar-h) - var(--foot-h)); min-height: 0; overflow: hidden; }
   .row  { flex: 1 1 0; min-height: 0; overflow: hidden; }
   .row .panel { min-height: 0; overflow: hidden; }
+  /* CLIMATIZACIÓN mode row takes less height than the setpoint+flap row below it.
+     `.row` prefix outranks the later base `.btn-row { flex:1 }`. */
+  .row .ac-mode-row { flex: 0.72; }
   .panel { padding: 8px; gap: 6px; }
   .boiler-grid { gap: 4px; }
   .btn-boiler  { padding: 4px 6px; font-size: 0.95em; }
@@ -517,6 +544,52 @@ body {
 .ac-eco-txt { font-size: 0.55em; font-weight: 700; letter-spacing: 0.08em; line-height: 1; }
 /* Disabled fan toggle (A/C Auto-locked in eco/off): greyed, non-interactive. */
 .row-disabled { opacity: 0.4; pointer-events: none; }
+
+/* ── CLIMATIZACIÓN second row: setpoint stepper + flap grid ────────────── */
+.sp-flap-row {
+  flex: 1;                       /* takes its share of the heat-panel height */
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+/* Setpoint stepper fills whatever width the flap grid leaves; when the grid is
+   display:none (not cooling) it reclaims the full row. */
+.sp-flap-row > .sp-row { flex: 1 1 auto; }
+
+.flap-grid {
+  flex: 0 0 40%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 5px;
+}
+.btn-flap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 0;
+  padding: 2px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--off);
+  color: var(--txt);
+  cursor: pointer;
+  transition: background .2s;
+}
+.btn-flap.btn-sel   { background: var(--on); }
+.btn-flap:disabled  { opacity: .4; cursor: not-allowed; }
+/* Icon inherits the button's text colour via fill="currentColor". */
+.fi-svg { width: 1.55em; height: 1.55em; display: block; flex: 0 0 auto; }
+/* Tiny flap number (1/2) beside the icon. White, nudged right (swing +2px,
+   fix +1px) so the number-to-icon gap reads even across both glyph shapes. */
+.flap-num { font-size: 0.62em; font-weight: 700; color: #fff; line-height: 1; }
+#flap1Swing .flap-num, #flap2Swing .flap-num { margin-left: 2px; }
+#flap1Fix   .flap-num, #flap2Fix   .flap-num { margin-left: 1px; }
+/* Setpoint temperature a touch smaller so it sits comfortably in the narrowed
+   CLIMATIZACIÓN row (overrides the shared .sp-val size; fan levels keep theirs). */
+#spVal { font-size: 1.25em; }
 
 /* ── Setpoint / fan-level row ─────────────────────────────────────────── */
 .sp-row {

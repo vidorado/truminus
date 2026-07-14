@@ -135,6 +135,8 @@ void p4SetAcMode(int mode);
 // A/C fan in cool mode: auto=true → Mode AUTO; auto=false → Mode MAN with
 // blower speed 1..6.  Ignored unless the A/C is in cool mode.
 void p4SetAcFan(bool autoMode, int speed);
+// Louver modes (raw wire value 0/1 each; see OA_FLAP_* in openairble.hpp).
+void p4SetAcFlaps(int flap1, int flap2);
 
 // Topbar cloud icon driver.  Pass a TunnelUiState (cast to uint8_t).  On
 // CONNECTING the colour toggles each call, so the caller's update cadence

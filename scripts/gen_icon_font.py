@@ -28,7 +28,7 @@ except ImportError:
 ROOT       = Path(__file__).parent.parent
 SOLID_SRC  = ROOT / "scripts" / "fonts" / "fa6-free-solid-900.ttf"  # TTF (not OTF) for merge compat
 BRANDS_SRC = ROOT / "scripts" / "fonts" / "fa6-brands-400.ttf"
-DST        = ROOT / "main" / "font_icons.ttf"
+DST        = ROOT / "main" / "assets" / "fonts" / "font_icons.ttf"
 
 # Glyphs from FA6 Free Solid — keep in sync with #define FA_* in p4display.cpp
 # and p4settings.cpp.
@@ -82,7 +82,11 @@ ALL_GLYPHS = {**SOLID_GLYPHS, **BRANDS_GLYPHS}
 # Virtual alias verified separately (not in source fonts, added via cmap patch).
 ALIAS_GLYPHS = {0xF8A2: "enter arrow (aliased from U+F2F6)  LV_SYMBOL_NEW_LINE"}
 # Custom composite glyphs built from existing outlines (not in any source font).
-CUSTOM_GLYPHS = {0xE900: "snowflake+ECO   FA_SNOWLEAF (A/C eco, snowflake + ECO text from font_regular)"}
+CUSTOM_GLYPHS = {
+    0xE900: "snowflake+ECO   FA_SNOWLEAF  (A/C eco, snowflake + ECO text from font_regular)",
+    0xE901: "flap swing      FA_FLAP_SWING (OpenAir flap oscillating — from flap_icons.py)",
+    0xE902: "flap fix        FA_FLAP_FIX   (OpenAir flap fixed / 3 right arrows — flap_icons.py)",
+}
 
 
 def add_snoweco_glyph(dst: Path):
@@ -104,7 +108,7 @@ def add_snoweco_glyph(dst: Path):
     gs   = font.getGlyphSet()
     em   = font["head"].unitsPerEm  # 512 for FA6
 
-    reg_src  = Path(dst).parent.parent / "main" / "font_bold.ttf"
+    reg_src  = Path(dst).parent / "font_bold.ttf"
     reg_font = TTFont(str(reg_src))
     reg_cmap = reg_font.getBestCmap()
     reg_gs   = reg_font.getGlyphSet()
@@ -174,6 +178,47 @@ def add_snoweco_glyph(dst: Path):
     font.save(str(dst))
 
 
+def add_flap_glyphs(dst: Path):
+    """Bake the two OpenAir flap-mode glyphs (U+E901 swing, U+E902 fix).
+
+    Geometry comes from scripts/flap_icons.py as filled contours in a 512-box
+    with a Y-DOWN axis; here we flip Y to the font's Y-UP space and emit each
+    contour as a straight-line polygon (no curves → safe for the TrueType pen).
+    The same contours drive the web inline <svg>, so both surfaces match.
+    """
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    import flap_icons
+
+    font = TTFont(str(dst))
+    glyf = font["glyf"]
+    gs   = font.getGlyphSet()
+    em   = font["head"].unitsPerEm            # 512 for FA6
+    scale = em / flap_icons.BOX               # 1.0 (BOX == em), kept explicit
+
+    order = font.getGlyphOrder()
+    for cp, (name, fn) in flap_icons.ICONS.items():
+        pen = TTGlyphPen(gs)
+        for contour in fn():
+            pts = [(x * scale, em - y * scale) for (x, y) in contour]  # flip Y
+            pen.moveTo(pts[0])
+            for p in pts[1:]:
+                pen.lineTo(p)
+            pen.closePath()
+        glyph = pen.glyph()
+        glyph.recalcBounds(glyf)
+        glyf[name] = glyph
+        font["hmtx"][name] = (em, 0)
+        if name not in order:
+            order.append(name)
+        for sub in font["cmap"].tables:
+            if hasattr(sub, "cmap"):
+                sub.cmap[cp] = name
+
+    font.setGlyphOrder(order)
+    font["maxp"].numGlyphs = len(order)
+    font.save(str(dst))
+
+
 def subset_font(src: Path, codepoints: list, label: str) -> str:
     opts = ss.Options()
     opts.layout_features = []
@@ -216,6 +261,9 @@ def main():
 
     # Build the custom snowflake+ECO glyph (U+E900).
     add_snoweco_glyph(DST)
+
+    # Build the OpenAir flap-mode glyphs (U+E901 swing, U+E902 fix).
+    add_flap_glyphs(DST)
 
     # Verify
     out  = TTFont(str(DST))

@@ -1,5 +1,6 @@
 #include "p4display.hpp"
 #include "multiplusble.hpp"   // MULTI_POWER_NA sentinel
+#include "openairble.hpp"     // OA_FLAP_SWING / OA_FLAP_FIX wire values
 #include "p4settings.hpp"
 #include "p4_ota.hpp"
 #include "i18n.hpp"
@@ -66,6 +67,8 @@ const P4Fonts* p4GetFonts() { return &s_fonts; }
 #define FA_SNOWFLAKE  "\xEF\x8B\x9C"   // U+F2DC (snowflake — A/C cool)
 #define FA_SUN        "\xEF\x86\x85"   // U+F185 (sun — Truma heat in climate panel)
 #define FA_SNOWLEAF   "\xEE\xA4\x80"   // U+E900 (custom snowflake+leaf — A/C eco)
+#define FA_FLAP_SWING "\xEE\xA4\x81"   // U+E901 (custom — flap swing/oscillate)
+#define FA_FLAP_FIX   "\xEE\xA4\x82"   // U+E902 (custom — flap fixed / 3 right arrows)
 
 // ── Layout (800×480 landscape) ────────────────────────────────────────────────
 static constexpr int W         = 800;
@@ -80,13 +83,14 @@ static constexpr int ROW1_H  = 185;
 static constexpr int ROW2_Y  = CONTENT_Y + ROW1_H;       // 240
 static constexpr int ROW2_H  = CONTENT_H - ROW1_H;       // 176
 
-// Row 1: CALEFACCIÓN | AGUA CALIENTE | AGUA LIMPIA.  CALEFACCIÓN was bumped
-// back to 256 (giving the setpoint reading more breathing room) at the
-// expense of AGUA CALIENTE (350 → 330); the latter's button matrix is
-// narrowed by the same 20 px so the boiler drawing stays full-size.
-static constexpr int HEAT_W  = 276;
-static constexpr int WATER_X = 276;
-static constexpr int WATER_W = 300;
+// Row 1: CALEFACCIÓN | AGUA CALIENTE | AGUA LIMPIA.  CALEFACCIÓN takes 15 px
+// from AGUA CALIENTE so the CLIMATIZACIÓN panel's second row can fit the flap
+// grid beside the setpoint stepper; AGUA CALIENTE's button matrix narrows by
+// the same amount so the boiler drawing stays full-size.  WATER_X + WATER_W is
+// held constant (== AGUA_X) so the AGUA CALIENTE right edge doesn't move.
+static constexpr int HEAT_W  = 291;
+static constexpr int WATER_X = 291;
+static constexpr int WATER_W = 285;
 
 // Row 2: VENTILADOR | SOLAR | INVERSOR
 static constexpr int FAN_W   = 203;
@@ -103,6 +107,21 @@ static constexpr int INV_W   = W - INV_X;           // 367
 // ui/truminus_ui.eez-project (EMPTY 1 / SOLAR_1 panel).
 static constexpr int AGUA_X  = 576;
 static constexpr int AGUA_W  = 224;
+
+// CLIMATIZACIÓN second row (setpoint stepper + flap grid).  In CALEFACCIÓN the
+// setpoint spans the panel (SP_FULL_W); in CLIMATIZACIÓN it shrinks to
+// SP_COMPACT_W so the 2x2 flap grid fits on the right.  layout_setpoint_row()
+// switches between the two.
+static constexpr int SP_BTN_W     = 46;
+static constexpr int SP_FULL_W    = HEAT_W - 24;         // full width (Truma heat)
+static constexpr int SP_COMPACT_W = 160;                 // narrowed (A/C climate): flaps take ~40%
+static constexpr int SP_ROW_Y     = 115;
+static constexpr int SP_ROW_H     = 60;
+static constexpr int FLAP_X       = 12 + SP_COMPACT_W + 7;   // right of the compact setpoint
+static constexpr int FLAP_W       = HEAT_W - 12 - FLAP_X;    // fills to the panel edge
+static constexpr int FLAP_GAP     = 6;
+static constexpr int FLAP_BTN_W   = (FLAP_W - FLAP_GAP) / 2;
+static constexpr int FLAP_BTN_H   = (SP_ROW_H - FLAP_GAP) / 2;
 
 // Vertical bar dimensions
 static constexpr int TANK_W        = 64;
@@ -157,6 +176,8 @@ static struct {
     int   acMode       = 0;       // 0=off, 1=cool, 2=eco
     bool  acFanAuto    = true;    // cool mode: Auto (Mode AUTO) vs Man (Mode MAN)
     int   acFanSpeed   = 3;       // cool+Man blower speed, 1..6
+    int   acFlap1      = OA_FLAP_FIX;   // louver 1 mode — raw wire 0/1
+    int   acFlap2      = OA_FLAP_FIX;   // louver 2 mode — raw wire 0/1
 } st;
 
 // ── Widget handles ────────────────────────────────────────────────────────────
@@ -190,6 +211,12 @@ static struct {
     lv_obj_t* row_ac;           // A/C mode row container (flex)
     lv_obj_t* btn_ac[4];        // [cool][eco][heat][off] individual buttons
     lv_obj_t* row_sp;
+
+    // A/C flap-mode grid (CLIMATIZACIÓN only): 2x2 of icon buttons.
+    // btn_flap[flap][mode]: flap 0=Flaps1 (top row) / 1=Flaps2 (bottom row);
+    // mode 0=swing / 1=fix.  Shown only when the OpenAir A/C is configured.
+    lv_obj_t* flap_grid;
+    lv_obj_t* btn_flap[2][2];
 
     // A/C fan sub-controls (cool/eco modes)
     lv_obj_t* btnmx_ac_fan;     // Auto | Man
@@ -356,6 +383,9 @@ static void on_ac_fan_changed(lv_event_t* e);
 static void on_acfan_dn(lv_event_t* e);
 static void on_acfan_up(lv_event_t* e);
 static void on_conf_clicked(lv_event_t* e);
+static void on_flap_clicked(lv_event_t* e);
+static void layout_setpoint_row(bool compact);
+static bool sp_cooling();
 
 // ── Font loader ───────────────────────────────────────────────────────────────
 static void load_fonts()
@@ -756,22 +786,17 @@ static void build_main_screen()
         lv_obj_add_flag(ui.row_ac, LV_OBJ_FLAG_HIDDEN);
     }
 
+    // Setpoint stepper: [▼ 46px] [temp label] [▲ 46px].  Built full-width;
+    // layout_setpoint_row() narrows it in CLIMATIZACIÓN to make room for flaps.
     ui.row_sp = lv_obj_create(p_heat);
     lv_obj_remove_style_all(ui.row_sp);
-    lv_obj_set_pos(ui.row_sp, 12, 115);
-    lv_obj_set_size(ui.row_sp, HEAT_W - 24, 60);
+    lv_obj_set_pos(ui.row_sp, 12, SP_ROW_Y);
+    lv_obj_set_size(ui.row_sp, SP_FULL_W, SP_ROW_H);
     lv_obj_set_style_bg_opa(ui.row_sp, LV_OPA_TRANSP, 0);
     lv_obj_clear_flag(ui.row_sp, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Layout: [▼ 46px] [temp label — centered in its slot] [▲ 46px]
-    static constexpr int SP_BTN_W  = 46;   // ▼/▲ button width
-    static constexpr int ROW_W     = HEAT_W - 24;                    // 252
-    static constexpr int SP_UP_X   = ROW_W - SP_BTN_W;              // 206
-    // Temperature label centred in [SP_BTN_W .. SP_UP_X]
-    static constexpr int LBL_CTR_X = SP_BTN_W + (SP_UP_X - SP_BTN_W) / 2;
-
     ui.btn_sp_dn = lv_button_create(ui.row_sp);
-    lv_obj_set_size(ui.btn_sp_dn, SP_BTN_W, 60);
+    lv_obj_set_size(ui.btn_sp_dn, SP_BTN_W, SP_ROW_H);
     lv_obj_set_pos(ui.btn_sp_dn, 0, 0);
     style_button(ui.btn_sp_dn);
     lv_obj_t* l_dn = lv_label_create(ui.btn_sp_dn);
@@ -782,16 +807,11 @@ static void build_main_screen()
 
     ui.lbl_room_sp = lv_label_create(ui.row_sp);
     lv_label_set_text(ui.lbl_room_sp, "20°C");
-    lv_obj_set_style_text_font(ui.lbl_room_sp, s_font_24, 0);
+    lv_obj_set_style_text_font(ui.lbl_room_sp, s_font_22, 0);
     lv_obj_set_style_text_color(ui.lbl_room_sp, C_TEXT, 0);
-    // Centre the label in the row (its slot spans the full width between the
-    // ▼/▲ buttons, so the offset from the row centre is zero).
-    lv_obj_align(ui.lbl_room_sp, LV_ALIGN_CENTER,
-                 LBL_CTR_X - ROW_W / 2, 0);
 
     ui.btn_sp_up = lv_button_create(ui.row_sp);
-    lv_obj_set_size(ui.btn_sp_up, SP_BTN_W, 60);
-    lv_obj_set_pos(ui.btn_sp_up, SP_UP_X, 0);
+    lv_obj_set_size(ui.btn_sp_up, SP_BTN_W, SP_ROW_H);
     style_button(ui.btn_sp_up);
     lv_obj_t* l_up = lv_label_create(ui.btn_sp_up);
     lv_label_set_text(l_up, FA_CARET_D);
@@ -799,7 +819,47 @@ static void build_main_screen()
     lv_obj_center(l_up);
     lv_obj_add_event_cb(ui.btn_sp_up, on_sp_up, LV_EVENT_CLICKED, NULL);
 
+    layout_setpoint_row(false);           // full width until CLIMATIZACIÓN asks
     lv_obj_add_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
+
+    // ── Flap-mode grid (CLIMATIZACIÓN only) ───────────────────────────────────
+    // 2x2 of icon buttons to the right of the (compacted) setpoint row.
+    // Rows = flaps (0=Flaps1 top, 1=Flaps2 bottom); columns = mode (0=swing,
+    // 1=fix).  Each button is momentary (no LVGL checkable) — refresh_controls()
+    // drives the "selected" highlight from st.acFlap1/2 so it always mirrors the
+    // control state.  The tap handler sets the state and pushes the command.
+    ui.flap_grid = lv_obj_create(p_heat);
+    lv_obj_remove_style_all(ui.flap_grid);
+    lv_obj_set_pos(ui.flap_grid, FLAP_X, SP_ROW_Y);
+    lv_obj_set_size(ui.flap_grid, FLAP_W, SP_ROW_H);
+    lv_obj_set_style_bg_opa(ui.flap_grid, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(ui.flap_grid, LV_OBJ_FLAG_SCROLLABLE);
+    for (int flap = 0; flap < 2; ++flap) {
+        for (int mode = 0; mode < 2; ++mode) {
+            lv_obj_t* b = lv_button_create(ui.flap_grid);
+            lv_obj_set_size(b, FLAP_BTN_W, FLAP_BTN_H);
+            lv_obj_set_pos(b, mode * (FLAP_BTN_W + FLAP_GAP),
+                              flap * (FLAP_BTN_H + FLAP_GAP));
+            style_button(b);
+            lv_obj_set_style_pad_all(b, 0, 0);   // short button: give the glyph the room
+            lv_obj_t* lbl = lv_label_create(b);
+            lv_label_set_text(lbl, mode == 0 ? FA_FLAP_SWING : FA_FLAP_FIX);
+            lv_obj_set_style_text_font(lbl, s_font_icons22, 0);
+            lv_obj_set_style_text_color(lbl, C_TEXT, 0);
+            lv_obj_align(lbl, LV_ALIGN_CENTER, 6, 4);   // shift right to clear the flap number
+            // Tiny flap number (1/2) at the left, beside the icon.
+            lv_obj_t* num = lv_label_create(b);
+            lv_label_set_text(num, flap == 0 ? "1" : "2");
+            lv_obj_set_style_text_font(num, s_font_14, 0);
+            lv_obj_set_style_text_color(num, C_TEXT, 0);
+            lv_obj_align(num, LV_ALIGN_LEFT_MID, 6, 0);
+            // user_data encodes flap<<1 | mode so one handler serves all four.
+            lv_obj_set_user_data(b, (void*)(intptr_t)((flap << 1) | mode));
+            lv_obj_add_event_cb(b, on_flap_clicked, LV_EVENT_CLICKED, NULL);
+            ui.btn_flap[flap][mode] = b;
+        }
+    }
+    lv_obj_add_flag(ui.flap_grid, LV_OBJ_FLAG_HIDDEN);
 
     // ── VENTILADOR panel (col1 row2) ──────────────────────────────────────────
     lv_obj_t* p_fan = make_section(scr, 0, ROW2_Y, FAN_W, ROW2_H);
@@ -905,17 +965,22 @@ static void build_main_screen()
 
     make_label(p_water, t(TK::HOT_WATER), s_font_title, C_DIM, 12, 8);
 
+    // Temp/thermometer column x.  The panel gave 15 px to CLIMATIZACIÓN, so the
+    // right-hand column shifts left by the same amount to stay inside the panel
+    // (the boiler matrix below narrows by 15 px to match, keeping the gap).
+    constexpr int WATER_TEMP_X = 217;
+
     ui.lbl_water_temp = lv_label_create(p_water);
     lv_label_set_text(ui.lbl_water_temp, "--°C");
     lv_obj_set_style_text_font(ui.lbl_water_temp, s_font_22, 0);
     lv_obj_set_style_text_color(ui.lbl_water_temp, C_TEXT, 0);
-    lv_obj_set_pos(ui.lbl_water_temp, 232, 53);   // top aligned with the boiler buttons
+    lv_obj_set_pos(ui.lbl_water_temp, WATER_TEMP_X, 53);   // top aligned with the boiler buttons
     lv_obj_set_width(ui.lbl_water_temp, TANK_W);
     lv_obj_set_style_text_align(ui.lbl_water_temp, LV_TEXT_ALIGN_CENTER, 0);
 
     // Thermometer pill, centred under the temperature label (inside the 64 px
-    // column at x=232).
-    constexpr int WP_X = 232 + (TANK_W - WATER_PILL_W) / 2;
+    // column).
+    constexpr int WP_X = WATER_TEMP_X + (TANK_W - WATER_PILL_W) / 2;
     constexpr int WP_Y = 85;   // below the temp label; bottom (169) matches the buttons
 
     ui.water_track = lv_obj_create(p_water);
@@ -962,7 +1027,7 @@ static void build_main_screen()
 
     ui.btnmx_boiler = lv_buttonmatrix_create(p_water);
     lv_obj_set_pos(ui.btnmx_boiler, 12, 53);
-    lv_obj_set_size(ui.btnmx_boiler, 214, 116);
+    lv_obj_set_size(ui.btnmx_boiler, 199, 116);   // 214 − 15 (panel narrowed for CLIMATIZACIÓN)
     lv_buttonmatrix_set_map(ui.btnmx_boiler, s_boiler_map);
     lv_buttonmatrix_set_button_ctrl_all(ui.btnmx_boiler, LV_BUTTONMATRIX_CTRL_CHECKABLE);
     lv_buttonmatrix_set_one_checked(ui.btnmx_boiler, true);
@@ -1433,7 +1498,8 @@ static void ac_btn_select(int sel)  // sel 0–3: cool/eco/heat/off
 static void refresh_controls()
 {
     char buf[20];
-    snprintf(buf, sizeof(buf), "%.1f°C", st.roomSetpoint);
+    // Whole degrees while cooling (matches the whole-degree A/C step); halves for Truma heat.
+    snprintf(buf, sizeof(buf), sp_cooling() ? "%.0f°C" : "%.1f°C", st.roomSetpoint);
     lv_label_set_text(ui.lbl_room_sp, buf);
 
     // ── Heat-source panel: CALEFACCIÓN (Truma only) vs CLIMATIZACIÓN (A/C) ──
@@ -1456,13 +1522,33 @@ static void refresh_controls()
             if (s_acConnected) lv_obj_add_flag(ui.btn_ac[i], LV_OBJ_FLAG_CLICKABLE);
             else               lv_obj_remove_flag(ui.btn_ac[i], LV_OBJ_FLAG_CLICKABLE);
         }
-        // Setpoint applies whenever any mode (cool/eco/heat) is active.
-        bool active = st.heatingOn || st.acMode != 0;
+        // Setpoint applies whenever any mode (cool/eco/heat) is active.  The flap
+        // grid is only meaningful while the A/C is actually blowing (cool/eco, not
+        // Truma heat); when it's shown the setpoint stepper narrows to make room.
+        bool active  = st.heatingOn || st.acMode != 0;
+        bool cooling = st.acMode != 0 && !st.heatingOn;
         if (active) lv_obj_remove_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
         else        lv_obj_add_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
+        layout_setpoint_row(cooling);
+        if (cooling) {
+            lv_obj_remove_flag(ui.flap_grid, LV_OBJ_FLAG_HIDDEN);
+            int sel1 = (st.acFlap1 == OA_FLAP_SWING) ? 0 : 1;   // column 0=swing
+            int sel2 = (st.acFlap2 == OA_FLAP_SWING) ? 0 : 1;
+            for (int m = 0; m < 2; ++m) {
+                if (m == sel1) lv_obj_add_state(ui.btn_flap[0][m], LV_STATE_CHECKED);
+                else           lv_obj_clear_state(ui.btn_flap[0][m], LV_STATE_CHECKED);
+                if (m == sel2) lv_obj_add_state(ui.btn_flap[1][m], LV_STATE_CHECKED);
+                else           lv_obj_clear_state(ui.btn_flap[1][m], LV_STATE_CHECKED);
+            }
+        } else {
+            lv_obj_add_flag(ui.flap_grid, LV_OBJ_FLAG_HIDDEN);
+        }
     } else {
         lv_label_set_text(ui.lbl_heat_title, t(TK::HEATING));
         lv_obj_add_flag(ui.row_ac, LV_OBJ_FLAG_HIDDEN);
+        // CALEFACCIÓN (Truma) has no flaps: full-width setpoint, grid hidden.
+        layout_setpoint_row(false);
+        lv_obj_add_flag(ui.flap_grid, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(ui.btnmx_heat, LV_OBJ_FLAG_HIDDEN);
         bm_select(ui.btnmx_heat, st.heatingOn ? 1 : 0, 2);
         // The whole Truma heating toggle is meaningless without the LIN bus —
@@ -1698,9 +1784,33 @@ static void on_ac_btn_clicked(lv_event_t* e)
     refresh_controls();
 }
 
+static void on_flap_clicked(lv_event_t* e)
+{
+    lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+    int code = (int)(intptr_t)lv_obj_get_user_data(btn);
+    int flap = code >> 1;          // 0=Flaps1, 1=Flaps2
+    int mode = code & 1;           // 0=swing, 1=fix
+    int wire = (mode == 0) ? OA_FLAP_SWING : OA_FLAP_FIX;
+    if (flap == 0) st.acFlap1 = wire; else st.acFlap2 = wire;
+    // ws_broadcaster diffs st and pushes the OpenAir command; here we only
+    // update state + the on-screen selection highlight.
+    refresh_controls();
+}
+
 static void on_conf_clicked(lv_event_t*)
 {
     p4SettingsShow();
+}
+
+// Resize the setpoint stepper: full-width in CALEFACCIÓN, or narrowed to
+// SP_COMPACT_W in CLIMATIZACIÓN so the flap grid fits beside it.  The ▼/▲
+// buttons stay symmetric so the label re-centres between them at either width.
+static void layout_setpoint_row(bool compact)
+{
+    int w = compact ? SP_COMPACT_W : SP_FULL_W;
+    lv_obj_set_width(ui.row_sp, w);
+    lv_obj_set_pos(ui.btn_sp_up, w - SP_BTN_W, 0);
+    lv_obj_align(ui.lbl_room_sp, LV_ALIGN_CENTER, 0, 0);
 }
 
 // ── Screen timeout ────────────────────────────────────────────────────────────
@@ -1937,6 +2047,8 @@ void p4GetControlState(P4ControlState& out)
     out.acMode       = st.acMode;
     out.acFanAuto    = st.acFanAuto;
     out.acFanSpeed   = st.acFanSpeed;
+    out.acFlap1      = st.acFlap1;
+    out.acFlap2      = st.acFlap2;
 }
 
 // Remote setters (called from the WS/LIN/main tasks — never the LVGL task).
@@ -2026,6 +2138,15 @@ void p4SetAcFan(bool autoMode, int speed)
     if (!lvglLockForSet()) return;
     st.acFanAuto  = autoMode;
     st.acFanSpeed = speed;
+    refresh_controls();
+    lvglUnlock();
+}
+
+void p4SetAcFlaps(int flap1, int flap2)
+{
+    if (!lvglLockForSet()) return;
+    st.acFlap1 = flap1 ? 1 : 0;
+    st.acFlap2 = flap2 ? 1 : 0;
     refresh_controls();
     lvglUnlock();
 }
