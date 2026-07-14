@@ -45,9 +45,10 @@ static bool           s_lfsMounted = false;
 //                   smaller.  MUST stay above the snapshot length — an
 //                   over-length message is DROPPED (see wsQueueSend), and a
 //                   dropped snapshot strands the client's "Connecting…" veil.
-// Storage (LEN*MSG) is kept near-flat vs the previous 48*256 to spare internal
-// DRAM (the OTA self-test heap floor watches this window).
-static constexpr UBaseType_t WS_QUEUE_LEN = 40;
+// Storage (LEN*MSG) is kept below the previous 48*256 to spare internal DRAM
+// (the OTA self-test heap floor watches this window). The connect burst is
+// ~11 frames, so 36 slots leaves ample headroom.
+static constexpr UBaseType_t WS_QUEUE_LEN = 36;
 static constexpr UBaseType_t WS_QUEUE_MSG = 320;
 
 // Cap on simultaneous WebSocket clients.  esp_http_server reserves one task
@@ -497,11 +498,10 @@ esp_err_t startWebServer(WsCommandCb cb, WsConnectedCb conn) {
     wsCfg.ctrl_port        = wsCfg.ctrl_port + 1;   // must differ from cfg.ctrl_port
     wsCfg.max_open_sockets = MAX_OPEN_SOCKETS_WS;
     wsCfg.max_uri_handlers = 2;
-    // The /ws frame handler runs the FULL connect burst on this task: wsOnConnected()
-    // builds the snapshot (buf[512]) + crash-diag (cbuf[600]) + every BLE push, on top
-    // of the recv buffer — ~1.4 KB of stack buffers plus esp_http_server overhead. 4 KB
-    // overflowed ("task httpd" stack-overflow abort); 6 KB gives ~2 KB headroom.
-    wsCfg.stack_size       = 6144;
+    // The /ws frame handler runs the connect burst on this task (wsOnConnected).
+    // Its large format buffers live in PSRAM (see ws_snapshot.cpp), not on this
+    // stack, so 4 KB is enough — putting them on the stack overflowed it.
+    wsCfg.stack_size       = 4096;
     wsCfg.lru_purge_enable = false;  // never evict a connected /ws; cap via wsPostHandshake
     wsCfg.uri_match_fn     = httpd_uri_match_wildcard;
     wsCfg.close_fn         = onHttpdClose;
