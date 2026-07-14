@@ -45,6 +45,8 @@ No `command` field. The `id` includes the leading slash.
 
 **Handshake on connect:** the client sends the literal string `"settings"`; the server responds with all current settings (temp, heating, boiler, fan, energy_idx, outdoor_temp). Truma status fields (room_temp, water_temp, etc.) arrive on the next LIN cycle via `doforcesend`.
 
+> ⚠️ **The `snapshot` JSON must fit `WS_QUEUE_MSG` (webserver.cpp).** Every WS frame is copied through a fixed-size FreeRTOS queue slot; `wsQueueSend()` **drops** an over-length message (it used to silently truncate → invalid JSON). The connect `snapshot` is by far the largest frame (all settings + 32-char SSID + IP), so **adding a setting field to the snapshot can push it over the cap.** A dropped/clipped snapshot never reaches the client's `d.command==='snapshot'` branch, so `hideReloadVeil()` never runs and the web sits on the "Conectando…" veil forever while later broadcasts still update the DOM underneath (the classic symptom). When you add a snapshot field, re-check its worst-case length against `WS_QUEUE_MSG` (currently 320 B; snapshot ~284 B worst case) and bump the cap if needed (keep `WS_QUEUE_LEN*WS_QUEUE_MSG` near-flat to spare internal DRAM — the OTA self-test heap floor watches that window).
+
 **Keepalive:** the client sends `"ping"` every 10 s so the ESP32 doesn't shut the Truma off for inactivity.
 
 ---

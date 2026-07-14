@@ -36,14 +36,19 @@ static WsConnectedCb s_connCb = nullptr;
 static bool           s_lfsMounted = false;
 
 // Cross-task WebSocket broadcast queue.
-//   WS_QUEUE_LEN  — slots.  Initial-state burst is ~30 messages; size 48
+//   WS_QUEUE_LEN  — slots.  Initial-state burst is ~30 messages; size 40
 //                   keeps headroom for LIN/BLE updates piling in while
 //                   wsQueueDrain() is mid-drain.
-//   WS_QUEUE_MSG  — max payload bytes per message.  All current snapshots
-//                   (setpoint changes, frame publishers, snapshot JSON) fit
-//                   well under 256 B; reserve 256 to absorb future growth.
-static constexpr UBaseType_t WS_QUEUE_LEN = 48;
-static constexpr UBaseType_t WS_QUEUE_MSG = 256;
+//   WS_QUEUE_MSG  — max payload bytes per message.  The connect `snapshot`
+//                   JSON is the largest (~284 B worst case: 32-char SSID +
+//                   15-char IP + every setting); everything else is far
+//                   smaller.  MUST stay above the snapshot length — an
+//                   over-length message is DROPPED (see wsQueueSend), and a
+//                   dropped snapshot strands the client's "Connecting…" veil.
+// Storage (LEN*MSG) is kept near-flat vs the previous 48*256 to spare internal
+// DRAM (the OTA self-test heap floor watches this window).
+static constexpr UBaseType_t WS_QUEUE_LEN = 40;
+static constexpr UBaseType_t WS_QUEUE_MSG = 320;
 
 // Cap on simultaneous WebSocket clients.  esp_http_server reserves one task
 // slot per concurrent request; each open WS uses ~6 KB of internal SRAM
@@ -368,7 +373,15 @@ static void onHttpdClose(httpd_handle_t hd, int sockfd) {
 bool wsQueueSend(const char* msg) {
     if (!wsQueue || !msg) return false;
     size_t len = strlen(msg);
-    if (len >= WS_QUEUE_MSG) len = WS_QUEUE_MSG - 1;
+    // DROP rather than truncate: a truncated JSON frame is invalid, and the
+    // client's JSON.parse throws before it can act on it (a clipped `snapshot`
+    // then leaves the "Connecting…" veil up forever). Fail loudly so an
+    // over-length message is caught in development instead of corrupting silently.
+    if (len >= WS_QUEUE_MSG) {
+        ESP_LOGW(TAG, "ws msg too long (%u >= %u), dropped: %.48s",
+                 (unsigned)len, (unsigned)WS_QUEUE_MSG, msg);
+        return false;
+    }
     char buf[WS_QUEUE_MSG];
     memcpy(buf, msg, len);
     buf[len] = '\0';
@@ -484,7 +497,11 @@ esp_err_t startWebServer(WsCommandCb cb, WsConnectedCb conn) {
     wsCfg.ctrl_port        = wsCfg.ctrl_port + 1;   // must differ from cfg.ctrl_port
     wsCfg.max_open_sockets = MAX_OPEN_SOCKETS_WS;
     wsCfg.max_uri_handlers = 2;
-    wsCfg.stack_size       = 4096;   // WS server only handles upgrades; default 4 KB is enough
+    // The /ws frame handler runs the FULL connect burst on this task: wsOnConnected()
+    // builds the snapshot (buf[512]) + crash-diag (cbuf[600]) + every BLE push, on top
+    // of the recv buffer — ~1.4 KB of stack buffers plus esp_http_server overhead. 4 KB
+    // overflowed ("task httpd" stack-overflow abort); 6 KB gives ~2 KB headroom.
+    wsCfg.stack_size       = 6144;
     wsCfg.lru_purge_enable = false;  // never evict a connected /ws; cap via wsPostHandshake
     wsCfg.uri_match_fn     = httpd_uri_match_wildcard;
     wsCfg.close_fn         = onHttpdClose;
