@@ -169,6 +169,12 @@ CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=8
 CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT=16
 CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=8
 CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=12
+# Allocate the NimBLE host heap (msys pools, GATT/ATT state, host structures)
+# from PSRAM instead of internal DRAM: heapdiag showed host init alone costs
+# ~21 KB internal, which is what pushed the post-OTA self-test below the floor.
+# Safe here because the host never DMAs from these buffers — HCI packets reach
+# the C6 through the SDIO transport's own (internal, unchanged) mempool.
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 
 # Web server: enable native WebSocket support in esp_http_server.
 CONFIG_HTTPD_WS_SUPPORT=y
