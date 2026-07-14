@@ -84,8 +84,8 @@ ALIAS_GLYPHS = {0xF8A2: "enter arrow (aliased from U+F2F6)  LV_SYMBOL_NEW_LINE"}
 # Custom composite glyphs built from existing outlines (not in any source font).
 CUSTOM_GLYPHS = {
     0xE900: "snowflake+ECO   FA_SNOWLEAF  (A/C eco, snowflake + ECO text from font_regular)",
-    0xE901: "flap swing      FA_FLAP_SWING (OpenAir flap oscillating — from flap_icons.py)",
-    0xE902: "flap fix        FA_FLAP_FIX   (OpenAir flap fixed / 3 right arrows — flap_icons.py)",
+    0xE901: "flap swing      FA_FLAP_SWING (OpenAir flap oscillating — from ui/swing.svg)",
+    0xE902: "flap fix        FA_FLAP_FIX   (OpenAir flap fixed / 3 right arrows — ui/fix.svg)",
 }
 
 
@@ -181,30 +181,43 @@ def add_snoweco_glyph(dst: Path):
 def add_flap_glyphs(dst: Path):
     """Bake the two OpenAir flap-mode glyphs (U+E901 swing, U+E902 fix).
 
-    Geometry comes from scripts/flap_icons.py as filled contours in a 512-box
-    with a Y-DOWN axis; here we flip Y to the font's Y-UP space and emit each
-    contour as a straight-line polygon (no curves → safe for the TrueType pen).
-    The same contours drive the web inline <svg>, so both surfaces match.
+    Source of truth is the artwork the designer edits in ui/swing.svg /
+    ui/fix.svg (512-box viewBox, Y-DOWN).  The SAME path data is pasted into the
+    web inline <symbol>s, so both surfaces match.  Here we parse each SVG path,
+    convert its cubics to TrueType quadratics (Cu2Qu) and flip Y into the font's
+    Y-UP em space.
     """
+    import re
     from fontTools.pens.ttGlyphPen import TTGlyphPen
-    import flap_icons
+    from fontTools.pens.transformPen import TransformPen
+    from fontTools.pens.cu2quPen import Cu2QuPen
+    from fontTools.svgLib.path import parse_path
+
+    svgs = {
+        0xE901: ("flapswing", ROOT / "ui" / "swing.svg"),
+        0xE902: ("flapfix",   ROOT / "ui" / "fix.svg"),
+    }
 
     font = TTFont(str(dst))
     glyf = font["glyf"]
     gs   = font.getGlyphSet()
     em   = font["head"].unitsPerEm            # 512 for FA6
-    scale = em / flap_icons.BOX               # 1.0 (BOX == em), kept explicit
+    VBOX = 512.0                              # the SVG viewBox side
+    s    = em / VBOX
 
     order = font.getGlyphOrder()
-    for cp, (name, fn) in flap_icons.ICONS.items():
-        pen = TTGlyphPen(gs)
-        for contour in fn():
-            pts = [(x * scale, em - y * scale) for (x, y) in contour]  # flip Y
-            pen.moveTo(pts[0])
-            for p in pts[1:]:
-                pen.lineTo(p)
-            pen.closePath()
-        glyph = pen.glyph()
+    for cp, (name, path) in svgs.items():
+        svg = path.read_text()
+        m = re.search(r'<path[^>]*\bd="([^"]+)"', svg)
+        if not m:
+            sys.exit(f"no <path d=…> in {path}")
+        d = m.group(1)
+        ttpen = TTGlyphPen(gs)
+        # parse_path → flip Y + scale to em → cubics to quadratics → TT pen.
+        cu2qu = Cu2QuPen(ttpen, max_err=2.0, reverse_direction=False)
+        tpen  = TransformPen(cu2qu, (s, 0, 0, -s, 0, em))   # x*s, em - y*s
+        parse_path(d, tpen)
+        glyph = ttpen.glyph()
         glyph.recalcBounds(glyf)
         glyf[name] = glyph
         font["hmtx"][name] = (em, 0)
