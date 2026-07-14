@@ -993,8 +993,8 @@ function changeAcFanLvl(delta) {
 }
 
 // Louver mode. Wire values mirror OA_FLAP_* in the firmware (openairble.hpp):
-// which of 0/1 is swing vs fix is unconfirmed — flip these if the unit disagrees.
-var OA_FLAP_SWING = 1, OA_FLAP_FIX = 0;
+// confirmed on hardware — 0 = swing, 1 = fixed.
+var OA_FLAP_SWING = 0, OA_FLAP_FIX = 1;
 
 function setFlap(flap, mode) {
     var wire = (mode === 'swing') ? OA_FLAP_SWING : OA_FLAP_FIX;

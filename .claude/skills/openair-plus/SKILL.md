@@ -259,10 +259,8 @@ Truma heat). State lives in `P4ControlState::acFlap1/acFlap2` (raw wire value), 
   echoes the flaps from the shadow UNLESS the user moved that louver this command. This is deliberate —
   a command built before the first telemetry read (edge case: user taps during pairing) must not carry a
   default flap value and reset the louvers. Do NOT switch flaps to "always written".
-- **Which wire value is swing vs fix is UNCONFIRMED** — the reverse-engineered app only ever showed the
-  field taking 0/1, never which is which. TruMinus assumes `OA_FLAP_SWING=1`, `OA_FLAP_FIX=0`
-  (`openairble.hpp`); if the real unit disagrees, flip just those two defines (and `OA_FLAP_*` in
-  `data/script.js`). **TO VERIFY on hardware.**
+- **Wire value CONFIRMED on hardware: `0 = swing` (oscillating), `1 = fixed`.** Defined as
+  `OA_FLAP_SWING`/`OA_FLAP_FIX` in `openairble.hpp` (and mirrored in `data/script.js`).
 - **BLE only toggles swing vs fixed, not a specific angle.** The unit remembers the last louver *position*
   set by its IR remote in internal memory; that position is never exposed over BLE, so we can only pick the
   mode. (The IR remote doesn't share the BLE channel, but any press on the physical console still kicks our

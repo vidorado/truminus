@@ -31,12 +31,9 @@ struct OpenAirData {
     uint32_t lastMs;
 };
 
-// Flaps wire value: which of 0/1 is "swing" vs "fixed" is UNCONFIRMED — the
-// openair-plus skill only ever observed the field taking 0/1, never which value
-// is which.  Assumed here; if the real unit disagrees, flip just these two.
-// TO VERIFY on hardware.
-#define OA_FLAP_SWING 1
-#define OA_FLAP_FIX   0
+// Flaps wire value (confirmed on hardware): 0 = swing (oscillating), 1 = fixed.
+#define OA_FLAP_SWING 0
+#define OA_FLAP_FIX   1
 
 // Dirty-bit flags for OpenAirCmd::configDirty. The config fields (BatteryType,
 // Power) are echoed back from the unit's own telemetry on every command UNLESS
