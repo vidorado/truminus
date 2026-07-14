@@ -68,7 +68,12 @@ static constexpr uint32_t INITIAL_CHECK_DELAY_MS = 60 * 1000;  // 60 s
 // heap toward zero), not on healthy operation — a 24 KB floor rolled back a
 // perfectly healthy OTA'd 1.1.4 at free_int=24455.
 static constexpr size_t   HEAP_FLOOR        = 12 * 1024;  // internal DRAM
-static constexpr int      HEAP_BREACH_LIMIT = 5;          // consecutive samples below floor → rollback
+// Consecutive 2 s samples below the floor → rollback. Sized to tolerate the
+// transient dip of the first (cold, full-discovery) OpenAir GATT connect, which
+// now runs only after the boot DRAM has settled (BLE start is deferred until
+// then; see bleSupervisorTask). 8 samples = 16 s; a real leak keeps the heap
+// depressed far longer and still trips within the 60 s self-test.
+static constexpr int      HEAP_BREACH_LIMIT = 8;
 static constexpr uint32_t BEAT_STALL_MS     = 20000;      // task considered dead
 // Validation timing.  Kept just above the hard gates (heap 10 s, task-stall
 // 20 s) so a real failure still has time to trip before we validate — but far

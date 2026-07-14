@@ -117,11 +117,13 @@ static void bootTask(void* /*arg*/) {
 
     // WebSocket reverse tunnel — exposes the local HTTP server through CGNAT
     // via a Plesk-hosted Node.js bridge.  Spawns its own task; respects the
-    // "tunnel/enabled" NVS flag.  On a freshly-OTA'd image the tunnel's TLS
-    // handshake is deferred (p4OtaPendingVerify) so its internal-DRAM/SRAM
-    // spike doesn't coincide with WiFi/BLE bring-up during the self-test
-    // heap-floor window; the OTA self-test resumes it once the image is valid.
-    wstunnelInit(p4OtaPendingVerify());
+    // "tunnel/enabled" NVS flag.  Connect immediately, even on a PENDING_VERIFY
+    // boot: measurements showed a *connected* tunnel keeps free internal DRAM at
+    // ~25 KB through the whole boot, whereas DEFERRING it (the old 1.4.3
+    // mitigation) is what left the post-OTA self-test cratered at ~7 KB — the
+    // deferral was the cause, not the cure. A validated boot always connected the
+    // tunnel here anyway and never breached the floor.
+    wstunnelInit(false);
     heapDiagMark("wstunnel_init");
 
     // WS pump runs at 100 ms cadence so touch inputs on the LCD reach
