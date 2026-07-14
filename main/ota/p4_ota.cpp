@@ -1289,10 +1289,15 @@ static void selftest_task(void*) {
         }
 
         uint32_t elapsed = now - t0;
-        // Fast path: healthy and the environment came up.
-        if (elapsed >= SELFTEST_FAST_MIN_MS && env_ready()) {
-            ESP_LOGI(TAG, "self-test passed (fast, %lus) — marking image valid",
-                     (unsigned long)(elapsed / 1000));
+        // Fast path: healthy, the environment came up, AND the heap is above the
+        // floor. The heap guard is essential — env_ready can flip true (tunnel
+        // CONNECTED) at the exact moment the TLS handshake has cratered free
+        // internal DRAM, and without it the fast-pass would validate an image
+        // running at a few hundred bytes free. Only a genuinely healthy heap
+        // fast-passes; otherwise wait for the ceiling (or roll back on breach).
+        if (elapsed >= SELFTEST_FAST_MIN_MS && env_ready() && free_int >= HEAP_FLOOR) {
+            ESP_LOGI(TAG, "self-test passed (fast, %lus, free_int=%u) — marking image valid",
+                     (unsigned long)(elapsed / 1000), (unsigned)free_int);
             break;
         }
         // Ceiling: healthy long enough; validate regardless of environment so
