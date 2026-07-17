@@ -405,7 +405,7 @@ static void bleSupervisorTask(void* /*arg*/) {
         // command otherwise sits behind a full 5 s Victron scan before the loop
         // reaches openairPollOnce(). A brief scan still catches the A/C's frequent
         // advertisements and keeps the cyclic poll (no persistent connection).
-        constexpr uint32_t SCAN_FULL_MS = 5000;
+        constexpr uint32_t SCAN_FULL_MS = 2000;
         uint32_t SCAN_MS = (openairIsConfigured() && openairCmdPending() && !openairNeedsPair())
                                ? 800 : SCAN_FULL_MS;
         if ((s_configured || tankIsConfigured() || multiplusIsConfigured() || openairIsConfigured()) && s_bleScan) {
