@@ -213,15 +213,29 @@ screen** after device selection: try to connect, and if it doesn't succeed withi
 > snowflake) and let the cyclic poll re-attach once the unit is free again — which it does automatically
 > the next time the unit advertises. Do NOT add reconnect logic that fights the remote.
 
-> ⚠️ **Use a short-lived cyclic poll, NOT a persistent connection.** `openairPollOnce()` connects,
-> reads one telemetry frame, sends any pending command, reads back, and disconnects — every
-> `POLL_INTERVAL_MS` (15 s) in steady state, or immediately when a command is pending. A persistent
-> GATT link was tried and abandoned: holding a connection open while the supervisor runs its
-> continuous Victron scan destabilised the **shared ESP32-C6 radio/SDIO link** and reliably crashed
-> the P4 (`assert failed: sdio_rx_get_buffer sdio_drv.c:953` at ~6.6 s, boot-loop). The base firmware
-> is stable; the persistent-link changes introduced the crash, so the cyclic model is the safe design.
-> (The idea that the unit powers off when the link drops was an unverified hunch — the cyclic poll
-> works; the only visible cost is the unit briefly showing "Bt" per poll, kept infrequent by the gate.)
+> ⚠️ **Current design: short-lived cyclic poll.** `openairPollOnce()` connects, reads one telemetry
+> frame, sends any pending command, reads back, and disconnects — every `POLL_INTERVAL_MS` (**8 s**)
+> in steady state, or immediately when a command is pending. A persistent GATT link was originally
+> abandoned because holding a connection open while the supervisor runs its continuous Victron scan
+> crashed the P4 (`assert failed: sdio_rx_get_buffer sdio_drv.c:953` at ~6.6 s, boot-loop). That crash
+> was **DMA-capable internal-DRAM exhaustion** (concurrent scan + open link), and it is **fixed as of
+> 1.4.12** by the L2-cache DRAM headroom (see the firmware-ota skill) — a persistent link no longer
+> crashes (bench: 192 s stable).
+>
+> **`POLL_INTERVAL_MS` is bounded by shared-radio contention, NOT by the "Bt" indicator.** The old
+> comment "the unit shows Bt per poll" was WRONG: `Bt` is the **pairing long-press state** (see the
+> handshake section) — a known-client reconnect does not re-enter it, so cyclic polling never blinks
+> it. Reconnect cost is radio airtime + a ~1–3 s connect, not a UX blink.
+>
+> **Persistent link — now viable, pending real-HW validation.** With the crash fixed, a bench retry of
+> a persistent link (relaxed connection interval ~300–400 ms via `updateConnParams`, so it doesn't
+> starve the Victron scan) ran stably with the LCD **clean** — the panel glitches seen earlier were
+> the L2-cache/PSRAM-bus issue (fixed by code-from-flash), **not** the link. The one thing the bench
+> could NOT prove: the combined simulator emulates every peripheral at **one MAC**, so an open A/C link
+> makes its Victron/Ultimatron records vanish (a single-device artifact — the sim now advertises the
+> passives non-connectably to mitigate, but Ultimatron shares the MAC so it can never be a 2nd
+> connection). On real, separate devices this shouldn't happen. So a persistent link is a viable
+> future direction once validated against real separate hardware; until then the cyclic poll ships.
 >
 > **The crash cause was concurrent scan + open link, NOT the open link itself.** So there is one
 > safe way to keep the link warm: the **warm-hold** (`OA_CMD_HOLD_MS`, 6 s) at the end of

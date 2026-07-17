@@ -200,6 +200,53 @@ the transport-mode bootstrap trap above makes this risky). Any download-side
 fix lives in the *running* image, so a stuck board must be **USB-flashed once**
 onto the fixed build first.
 
+## Internal-DRAM ceiling — SOLVED by halving the L2 cache (1.4.12)
+
+**Resolved.** OTA was marginal because of a hard **internal-DRAM ceiling**: the
+post-OTA `PENDING_VERIFY` self-test cratered free internal DRAM (tunnel deferred
+≈ 7 KB, connected ≈ 255 B) below the 12 KB floor, so the rollback net kept
+tripping remote updates on fully-provisioned boards while USB-flashed VALID
+boots were fine. Later it manifested as a hard `sdio_rx_get_buffer` crash (same
+DMA-DRAM exhaustion, crashing before the graceful heap-floor gate caught it) →
+post-validation boot-loop.
+
+**The lever the earlier analysis missed: the L2 cache.** The heap-to-PSRAM
+levers were all thought spent (NimBLE host heap `BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL`
+~21 KB, mbedtls, rodata/instructions, LWIP — all in PSRAM; WiFi RX buffers live
+on the C6, not the P4). But the **P4 L2 cache is carved from the same HP L2MEM**
+as the heap. `CONFIG_CACHE_L2_CACHE_128KB` (was 256) returns **~128 KB of
+internal, DMA-capable SRAM** to the heap — no packet-mode/C6-rebuild needed.
+Measured: steady-state free internal DRAM **~24 KB → ~117 KB**, and the self-test
+**min free_int ~4 KB → ~133 KB** (floor 12 KB). Full provisioned OTA (tunnel +
+BLE) now validates and the SDIO assert no longer fires. Options are 128/256/512
+KB only — no middle ground.
+
+**Coupled fix — code out of PSRAM (same release).** A smaller L2 means more code
+cache misses, each an extra PSRAM read; with `SPIRAM_XIP_FROM_PSRAM` the LCD
+framebuffer DMA (also PSRAM) then starved → **panel glitches**. Fix:
+`# CONFIG_SPIRAM_XIP_FROM_PSRAM is not set` runs .text/.rodata from flash (the
+separate flash MSPI bus), freeing PSRAM bandwidth for the LCD. **DRAM-neutral**
+(code → flash, not internal DRAM), so it preserves the L2 headroom. Verified: no
+glitches, UI still smooth (not CPU-bound), and the OTA **download runs from flash
+without stalls** (the feared risk of code-in-flash during flash writes did not
+materialise). **The two configs ship together** (see `sdkconfig.defaults`).
+
+So OTA is **no longer marginal** on this board and remote updates land cleanly;
+USB flashing is only needed to install the *first* image carrying this fix. The
+SDIO-pools-to-PSRAM / packet-mode route below is now unnecessary and stays parked.
+
+### (Parked, no longer needed) SDIO pools to PSRAM via packet mode
+
+The big remaining internal-only block is the **SDIO DMA mempools (~72 KB)**.
+Moving them to PSRAM (`ESP_HOSTED_MEMPOOL_PREFER_SPIRAM`) needs **packet mode**
+(SDIO TX-from-PSRAM crashes on this P4 in streaming mode), which needs the C6
+slave rebuilt in packet mode + a version bump so `c6OtaNeeded()` migrates it,
+host flipped in the same step (see the mode-mismatch trap above). The L2 fix made
+this unnecessary. For the record: OTA's flash write survives packet mode anyway —
+a download is `[C6 WiFi/TLS] ──SDIO──> [P4 RAM] ──SPI──> [P4 flash]`; the SDIO
+mode only governs the first hop, the `esp_ota_write`/`inflate_to_partition`
+second hop is a P4-local SPI-flash write orthogonal to transport mode.
+
 ## Rollback safety net
 
 `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` (+ the pre-existing
@@ -211,20 +258,21 @@ signals** (IP, tunnel CONNECTED, fresh LIN frame, BLE advert):
 
 - *Heap floor* `HEAP_FLOOR=12 KB` of internal DRAM, **sustained** — only rolls
   back after `HEAP_BREACH_LIMIT=5` consecutive 2 s samples below it, so a
-  transient handshake dip doesn't false-trip. Steady-state free internal DRAM
-  here is ~24 KB, so an earlier 24 KB floor rolled back a *healthy* image; the
-  floor must sit well below normal operation. **`1.2.0` still rolled back on a
-  fully-provisioned board** (tunnel enabled + BLE configured) while passing on a
-  bare test bench: the boot-time *concurrent* DRAM peak — WSS tunnel TLS
+  transient handshake dip doesn't false-trip. **Post-1.4.12** the L2-cache fix
+  lifted steady-state free internal DRAM from ~24 KB to ~117 KB, and the
+  self-test min from ~4 KB to ~133 KB — a comfortable ~120 KB above the floor,
+  so the net no longer rides the edge (the paragraph below is the pre-fix
+  history that explains why the floor sits so low). **`1.2.0` still rolled back
+  on a fully-provisioned board** (tunnel enabled + BLE configured) while passing
+  on a bare test bench: the boot-time *concurrent* DRAM peak — WSS tunnel TLS
   handshake + Ultimatron GATT connect + WiFi bring-up all at once — sat below
-  the floor long enough to trip. The fix wasn't the floor value; it was
-  removing the tunnel from the critical window (see *Boot sequencing* below).
-  `1.2.1` validated cleanly on the real board with **min=22 KB** — i.e. with
-  the tunnel deferred the worst dip sits near the ~24 KB steady-state, ~10 KB
-  above the floor. The self-test logs that **minimum** internal-DRAM watermark
-  (`min=…`) every ~15 s and on pass (`min free_int during self-test was N B,
-  floor 12288 B`) — that number, not a breach, is what tells you the real
-  margin.
+  the floor long enough to trip. Back then the fix wasn't the floor value; it
+  was removing the tunnel from the critical window (see *Boot sequencing*
+  below). `1.2.1` validated with **min=22 KB** (tunnel deferred, ~10 KB above
+  the floor) — the tight margin that the L2 fix later made roomy. The self-test
+  logs that **minimum** internal-DRAM watermark (`min=…`) every ~15 s and on
+  pass (`min free_int during self-test was N B, floor 12288 B`) — that number,
+  not a breach, is what tells you the real margin.
 - *Heartbeats* via `p4OtaBeat()` from the main loop / wsPump / LIN task; a task
   not beating for `BEAT_STALL_MS=20 s` rolls back. (Critical tasks must call
   `p4OtaBeat()` so the self-test can confirm liveness.)

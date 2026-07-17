@@ -125,6 +125,22 @@ The three knobs in `sdkconfig.defaults` (pinned with a comment header):
 | `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` | 16384 → 2048 | lower the threshold so >2 KB allocs land in PSRAM |
 | `CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN`   | kept 16384 | the GitHub release CDN sends full-size TLS records; 4 KB broke self-OTA (mbedtls -0x0087 "Complete headers were not received"). With the alloc steered to PSRAM (rows above) the 16 KB buffer is no longer dead DRAM. |
 
+**The decisive lever (1.4.12): halve the L2 cache.** The knobs above steer *heap*
+to PSRAM but the steady-state internal floor stayed ~24 KB, so a busy board still
+tripped this assert (and the OTA self-test rollback). The P4 **L2 cache is carved
+from the same HP L2MEM as the heap**: `CONFIG_CACHE_L2_CACHE_128KB` (was 256)
+returns **~128 KB of internal, DMA-capable SRAM** — steady-state free internal
+DRAM **~24 KB → ~117 KB**. Sizes are 128/256/512 only (no middle ground). This is
+the lever the "immovable ~25 KB floor" analysis below missed.
+
+**Coupled config — code out of PSRAM.** A smaller L2 = more code cache misses =
+more PSRAM reads; with `SPIRAM_XIP_FROM_PSRAM` those contend with the LCD
+framebuffer DMA (also PSRAM) → **panel glitches**. Fix:
+`# CONFIG_SPIRAM_XIP_FROM_PSRAM is not set` runs `.text`/`.rodata` from flash (the
+separate flash MSPI bus). **DRAM-neutral** (code → flash, not internal DRAM), so
+it keeps the L2 headroom; verified glitch-free, UI smooth, and the OTA download
+runs from flash without stalls. **Ship the two together** (`sdkconfig.defaults`).
+
 **Diagnosing future cases:**
 - Print free internal heap (`heap_caps_get_free_size(MALLOC_CAP_INTERNAL)`)
   in the wstunnel task right before `esp_websocket_client_start()` and
@@ -524,9 +540,11 @@ movable and worth doing is the **bring-up transient** (see levers below).
   Conclusion from the **second 2026-06 audit** (corrects the first): the internal
   hog is the **esp_hosted SDIO DMA pool (~90 KB)** + lwip/TLS working set. The
   big pool *is* movable to PSRAM (`MEMPOOL_PREFER_SPIRAM`) but that destabilises
-  the SDIO transport (see above), so in practice it stays internal. The
-  steady-state floor (~25 KB) is immovable by safe means; the achievable win is
-  on the **bring-up transient**, not steady.
+  the SDIO transport (see above), so in practice it stays internal. This audit
+  concluded the steady-state floor (~25 KB) was "immovable by safe means" — that
+  was **superseded in 1.4.12**: halving the L2 cache (§6) returned ~128 KB of
+  internal SRAM, lifting the floor to ~117 KB. The bring-up-transient wins below
+  still stand, but are no longer the *only* lever.
   **Validated in the field (1.2.15):** the BLE-after-WiFi settle kept the
   post-OTA self-test minimum free internal at ~23.7 KB (vs 6 KB / rollback in
   1.2.13). The 2026-06 follow-up added two more safe transient wins — moving the
