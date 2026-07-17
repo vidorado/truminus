@@ -61,7 +61,16 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_16MB.csv"
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_SPEED_200M=y
-CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+# Run code+rodata from FLASH, not PSRAM. XIP-from-PSRAM (which selects
+# FETCH_INSTRUCTIONS/RODATA/FLASH_LOAD_TO_PSRAM) puts the instruction/rodata
+# fetch traffic on the PSRAM MSPI bus, where it competes with the LCD
+# framebuffer DMA (also in PSRAM). At L2=128 KB the extra cache misses starved
+# the DMA and glitched the panel. Executing from flash moves that traffic to the
+# separate flash MSPI bus, freeing PSRAM bandwidth for the LCD — glitch gone,
+# UI still smooth (the workload is not CPU-bound). DRAM-neutral: code lives in
+# flash, not internal DRAM, so the L2=128 headroom that fixes the OTA self-test
+# is preserved. Keep the two together.
+# CONFIG_SPIRAM_XIP_FROM_PSRAM is not set
 # L2 cache carved from HP L2MEM: 128 KB (not 256) returns ~128 KB of internal,
 # DMA-capable SRAM to the heap. That headroom is what the ESP-Hosted SDIO RX
 # burst allocator (sdio_rx_get_buffer) and the post-OTA self-test heap floor
