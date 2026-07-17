@@ -462,7 +462,13 @@ static void bleSupervisorTask(void* /*arg*/) {
         // disconnect); openairPollOnce() gates its own cadence (every 15 s, or
         // immediately when a command is pending). Only attempt it when the unit
         // was advertising recently, to avoid a blind connect timeout.
-        if (openairIsConfigured()) {
+        // No GATT connect during the OTA self-test (p4OtaPendingVerify): the A/C
+        // connect + service discovery holds several KB of internal DRAM buffers,
+        // and on a fully-provisioned board that is what craters the heap below
+        // the self-test floor. NimBLE + the passive scans still run and stay
+        // covered by the rollback net; the A/C poll resumes (at ~24 KB steady
+        // free) once the image is marked valid.
+        if (openairIsConfigured() && !p4OtaPendingVerify()) {
             uint32_t seen = openairLastSeenMs();
             if (seen && (millis() - seen) < 30000) {
                 openairPollOnce();
