@@ -118,7 +118,7 @@ static const uint8_t TRUMINUS_ID8[8]  = { 0x01, 0xe8, 0x77, 0x07, 0xed, 0xe0, 0x
 // long-press state; a known-client reconnect does not re-enter it, so cyclic
 // polling does not blink it). Poll immediately when the user changed something
 // (a pending command needs low latency).
-static const uint32_t POLL_INTERVAL_MS = 8000;
+static const uint32_t POLL_INTERVAL_MS = 4000;
 static uint32_t          s_lastPollMs   = 0;
 
 // Persistent GATT client: kept alive across polls (the LINK is still cyclic —
