@@ -62,7 +62,13 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_SPEED_200M=y
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
-CONFIG_CACHE_L2_CACHE_256KB=y
+# L2 cache carved from HP L2MEM: 128 KB (not 256) returns ~128 KB of internal,
+# DMA-capable SRAM to the heap. That headroom is what the ESP-Hosted SDIO RX
+# burst allocator (sdio_rx_get_buffer) and the post-OTA self-test heap floor
+# need on a fully-provisioned board (tunnel + BLE). Trade-off: with code XIP'd
+# from PSRAM a smaller L2 means more cache misses; acceptable for this
+# BLE/WiFi/LVGL/LIN workload (not CPU-bound).
+CONFIG_CACHE_L2_CACHE_128KB=y
 CONFIG_CACHE_L2_CACHE_LINE_128B=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=10240
 CONFIG_FREERTOS_HZ=1000
