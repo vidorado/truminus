@@ -110,9 +110,14 @@ void openairSetCmd(const OpenAirCmd& cmd);
 // from telemetry use this to avoid fighting a change the user just made.
 bool openairCmdPending();
 
-// Called every bleSupervisorTask cycle. Holds ONE persistent GATT connection
-// open (the unit powers off when the link drops), reconnecting only after a
-// drop; telemetry arrives via notifications, commands go out on change.
+// Called every bleSupervisorTask cycle, gated to POLL_INTERVAL_MS in steady
+// state (or immediately when a command is pending). Short-lived cyclic poll:
+// connect -> handshake -> read one telemetry frame -> write any pending command
+// -> disconnect. The client object (with its discovered GATT DB) is cached in
+// PSRAM across polls so warm reconnects skip discovery, but the LINK is not held
+// open (a persistent link + concurrent scan crashed the shared C6 radio — the
+// crash is fixed since 1.4.12 but the cyclic model still ships; see the
+// openair-plus skill).
 bool openairPollOnce();
 
 bool openairLoadConfig(std::string& addr);
