@@ -200,6 +200,15 @@ idf.py -p truminus.local app-flash
 ModemManager on Linux grabs `/dev/ttyACM0` on first plug. If flash fails with
 "port is busy": `sudo systemctl stop ModemManager`.
 
+> ⚠️ **On an OTA'd board, `app-flash` writes the partition that is NOT running.**
+> After a self-OTA the device boots from **app1** (`0x410000`); `idf.py app-flash`
+> writes **app0** (`0x10000`) and does **not** touch otadata, so the flashed image
+> **never boots** — the board keeps running the OTA'd image and your changes seem
+> to have no effect (bench symptom: edits/log probes silently absent, cadence
+> unchanged). Use the full **`idf.py flash`** (it writes `ota_data_initial.bin` at
+> `0xe000`, resetting the selection back to app0) when USB-flashing over an OTA'd
+> board. `app-flash` is only safe when the board is already running app0.
+
 **NEVER flash a full-chip merged image to `0x0` on a configured board — it
 ERASES NVS.** `esptool merge-bin -o img.bin 0x2000 … 0x10000 truminus.bin
 0x810000 littlefs.bin` pads every gap with `0xFF`, and **NVS lives at `0x9000`**
