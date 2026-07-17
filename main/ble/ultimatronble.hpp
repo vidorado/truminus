@@ -22,8 +22,11 @@ void ultimatronBleReloadConfig();
 UltimatronData ultimatronGetData();
 bool           ultimatronIsConfigured();
 
-// Internal: called by bleSupervisorTask in victronble.cpp.
-bool ultimatronPollOnce();
+// Internal: called by bleSupervisorTask in victronble.cpp. With blind=true it
+// uses a short connect budget (one 2 s attempt instead of 3×5 s) for the
+// recovery poll of a BMS that has stopped advertising, so a failed attempt only
+// briefly displaces the passive scans.
+bool ultimatronPollOnce(bool blind = false);
 
 // DIAGNOSTIC: fed every advertisement by VictronScanCb so we can tell whether
 // the BMS is actually advertising (and thus whether a connect attempt is even

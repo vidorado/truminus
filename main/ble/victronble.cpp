@@ -4,6 +4,7 @@
 #include "tankble.hpp"
 #include "multiplusble.hpp"
 #include "openairble.hpp"
+#include "p4_ota.hpp"
 #include "wifi_manager.hpp"
 #include "logs.hpp"
 #include "heapdiag.hpp"
@@ -388,6 +389,10 @@ static void bleSupervisorTask(void* /*arg*/) {
     int      failCount  = 0;
     uint32_t cycleCount = 0;
     constexpr uint32_t ULTIMATRON_EVERY_N = 6;
+    // Blind-recovery pacing for a BMS that has stopped advertising (see the
+    // Ultimatron poll block below). 0 = no recovery attempt yet this boot.
+    uint32_t lastUltRecoverMs = 0;
+    constexpr uint32_t ULT_RECOVER_MS = 60000;
 
     for (;;) {
         if (s_bleTeardown) break;
@@ -477,15 +482,31 @@ static void bleSupervisorTask(void* /*arg*/) {
         // recoverable (not yet in the needs-pair backoff).
         bool oaPriority  = oaReachable && !openairNeedsPair()
                         && (openairCmdPending() || !openairPaired());
+        // No GATT connect during the OTA self-test (p4OtaPendingVerify): a
+        // 3×5 s Ultimatron connect stacking with WiFi association buffers is the
+        // sustained internal-DRAM dip that false-rolls-back a healthy image.
+        // NimBLE + the passive scans still run and stay covered by the rollback
+        // net; only the recurring GATT poll is paced out of the ~60 s window,
+        // resuming once the image is marked valid.
         if (ultimatronIsConfigured() && (cycleCount % ULTIMATRON_EVERY_N) == 0
-            && !oaPriority) {
-            // Only attempt the GATT connect if the BMS was actually seen
-            // advertising in the last ~15 s.  A blind connect to a BMS that is
-            // asleep / out of range burns 3×5 s of connect timeout (~16 s) on
-            // the shared radio, starving the passive Victron/Multiplus scans.
+            && !oaPriority && !p4OtaPendingVerify()) {
+            // Preferred path: the BMS advertised in the last ~15 s, so a GATT
+            // connect lands fast. Use the full connect budget (3×5 s) since a
+            // present BMS answers well inside it.
             uint32_t seen = ultimatronLastSeenMs();
             if (seen && (millis() - seen) < 15000) {
                 ultimatronPollOnce();
+            } else if (!ultimatronGetData().valid
+                       && (lastUltRecoverMs == 0
+                           || millis() - lastUltRecoverMs >= ULT_RECOVER_MS)) {
+                // Recovery path: the data has gone stale and the BMS is no
+                // longer advertising (many units stop advertising after their
+                // first connection). Attempt one *short* blind connect (2 s, 1
+                // try — not the 16 s worst case) so a single failed attempt only
+                // briefly displaces the passive scans. Paced by ULT_RECOVER_MS.
+                lastUltRecoverMs = millis();
+                LOG_BLE_PL("[ble-sup] ult stale — short blind recovery poll");
+                ultimatronPollOnce(true);
             } else {
                 LOG_BLE_PL("[ble-sup] skip ult poll — not advertising recently");
             }

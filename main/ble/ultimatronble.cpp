@@ -52,6 +52,12 @@ static UltimatronData    s_data     = {};
 
 static volatile bool s_ultSuspended = false;
 
+// Freshness window: a stored sample older than this is reported as invalid so
+// the LCD/web surface "no connection" instead of a misleading stale reading.
+// Sized at ~4 poll intervals (poll cadence ~30 s) so a few missed polls don't
+// flap the panel, but a BMS that stops responding is flagged within ~2 min.
+static const uint32_t ULT_STALE_MS = 120000;
+
 // DIAGNOSTIC: last time the BMS MAC was seen in a scan window (0 = never).
 static volatile uint32_t s_lastSeenMs = 0;
 static volatile bool     s_everSeen   = false;
@@ -113,7 +119,7 @@ static void closeClient(NimBLEClient* client) {
     NimBLEDevice::deleteClient(client);
 }
 
-bool ultimatronPollOnce() {
+bool ultimatronPollOnce(bool blind) {
     if (!s_configured || s_ultSuspended) return false;
 
     uint32_t t0 = millis();
@@ -125,12 +131,17 @@ bool ultimatronPollOnce() {
         LOG_ULT_PL("[ult] createClient failed (client pool exhausted)");
         return false;
     }
-    client->setConnectTimeout(5000);
+    // Recovery poll of a non-advertising BMS: a single short attempt so a miss
+    // only briefly displaces the passive scans. Preferred poll (seen recently):
+    // full budget, since a present BMS answers well inside it.
+    const uint32_t connTimeout = blind ? 2000 : 5000;
+    const int      maxAttempts = blind ? 1    : 3;
+    client->setConnectTimeout(connTimeout);
 
     bool connected = false;
-    for (int attempt = 1; attempt <= 3 && !connected; attempt++) {
+    for (int attempt = 1; attempt <= maxAttempts && !connected; attempt++) {
         connected = client->connect(addr);
-        if (!connected && attempt < 3) vTaskDelay(pdMS_TO_TICKS(500));
+        if (!connected && attempt < maxAttempts) vTaskDelay(pdMS_TO_TICKS(500));
     }
     if (!connected) {
         LOG_ULT_PF("[ult] connect failed (+%ums)\n", (unsigned)(millis() - t0));
@@ -259,6 +270,11 @@ UltimatronData ultimatronGetData() {
         copy = s_data;
         xSemaphoreGive(s_dataMux);
     }
+    // Expire a stale sample: without a fresh successful poll the reading is no
+    // longer trustworthy, so report it as invalid rather than let consumers
+    // paint an hours-old value as if it were live.
+    if (copy.valid && (millis() - copy.lastMs) >= ULT_STALE_MS)
+        copy.valid = false;
     return copy;
 #endif
 }
@@ -287,7 +303,7 @@ UltimatronData ultimatronGetData() {
 }
 
 bool ultimatronIsConfigured() { return false; }
-bool ultimatronPollOnce()     { return false; }
+bool ultimatronPollOnce(bool) { return false; }
 void ultimatronBleHandleAd(const NimBLEAdvertisedDevice*) {}
 uint32_t ultimatronLastSeenMs() { return 0; }
 void ultimatronBleSuspend()   {}
