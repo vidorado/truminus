@@ -77,10 +77,8 @@ void openairBleReloadConfig();
 // Also captures service-data bytes (used in the handshake write).
 void     openairBleHandleAd(const NimBLEAdvertisedDevice* dev);
 uint32_t openairLastSeenMs();   // milliseconds timestamp; 0 = never seen
-// millis() when the last actual poll (past the cadence gate) started; 0 = never.
-// The BLE supervisor uses it to keep the Ultimatron GATT connect from stacking
-// right after an OpenAir connect (their connection buffers would otherwise hold
-// internal DRAM low back-to-back).
+// millis() of the last connect attempt (the link is persistent, so this only
+// advances on a reconnect, not per poll); 0 = never.
 uint32_t openairLastPollMs();
 
 bool        openairIsConfigured();
@@ -110,14 +108,14 @@ void openairSetCmd(const OpenAirCmd& cmd);
 // from telemetry use this to avoid fighting a change the user just made.
 bool openairCmdPending();
 
-// Called every bleSupervisorTask cycle, gated to POLL_INTERVAL_MS in steady
-// state (or immediately when a command is pending). Short-lived cyclic poll:
-// connect -> handshake -> read one telemetry frame -> write any pending command
-// -> disconnect. The client object (with its discovered GATT DB) is cached in
-// PSRAM across polls so warm reconnects skip discovery, but the LINK is not held
-// open (a persistent link + concurrent scan crashed the shared C6 radio — the
-// crash is fixed since 1.4.12 but the cyclic model still ships; see the
-// openair-plus skill).
+// Called every bleSupervisorTask cycle. Services a PERSISTENT GATT link: once up,
+// the link is held open, telemetry streams in as unsolicited notifications (drained
+// here), and a pending command is written over the open link — all returning
+// immediately so the supervisor's scan runs concurrently. Reconnects only when the
+// link is down and the unit advertised recently (gate + pacing are internal). One
+// held link avoids the connect/disconnect churn that wedged the unit's BLE stack;
+// a relaxed connection interval keeps radio airtime low for the shared C6. See the
+// openair-plus skill.
 bool openairPollOnce();
 
 bool openairLoadConfig(std::string& addr);

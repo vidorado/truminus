@@ -210,43 +210,45 @@ screen** after device selection: try to connect, and if it doesn't succeed withi
 > app". So a press on the console kicks our BLE off and stops telemetry — nothing in our firmware can
 > prevent it. This is a leading cause of "the A/C is on but we can't see/control it": suspect the remote
 > before suspecting a bug. All we can do is **detect and surface it** (the "A/C offline" alert + struck
-> snowflake) and let the cyclic poll re-attach once the unit is free again — which it does automatically
-> the next time the unit advertises. Do NOT add reconnect logic that fights the remote.
+> snowflake) and let the persistent link re-attach once the unit is free again — which it does
+> automatically the next time the unit advertises. Do NOT add reconnect logic that fights the remote.
 
-> ⚠️ **Current design: short-lived cyclic poll.** `openairPollOnce()` connects, reads one telemetry
-> frame, sends any pending command, reads back, and disconnects — every `POLL_INTERVAL_MS` (**8 s**)
-> in steady state, or immediately when a command is pending. A persistent GATT link was originally
-> abandoned because holding a connection open while the supervisor runs its continuous Victron scan
-> crashed the P4 (`assert failed: sdio_rx_get_buffer sdio_drv.c:953` at ~6.6 s, boot-loop). That crash
-> was **DMA-capable internal-DRAM exhaustion** (concurrent scan + open link), and it is **fixed as of
-> 1.4.12** by the L2-cache DRAM headroom (see the firmware-ota skill) — a persistent link no longer
-> crashes (bench: 192 s stable).
+> ⚠️ **Current design: PERSISTENT GATT link.** `openairPollOnce()` (a per-cycle *service* call despite
+> the legacy name) connects **once**, handshakes, subscribes, then **holds the link open**. Telemetry
+> then streams in as unsolicited notifications — `notifyCb` copies each frame, the supervisor drains +
+> parses it every cycle — so there is **no polling**, and freshness comes for free. A pending command
+> is written over the open link (`s_dataChar`); the echo streams back like any other frame. The link is
+> torn down only when it **drops** (unit power-cycle, physical remote, out of range) or the target MAC
+> changes; the driver reconnects when the unit re-advertises (`OA_RECONNECT_MS` pacing, `OA_BACKOFF_MS`
+> once the unit shows `Bt`/withholds the handshake). This is what the vendor app does.
 >
-> **`POLL_INTERVAL_MS` is bounded by shared-radio contention, NOT by the "Bt" indicator.** The old
-> comment "the unit shows Bt per poll" was WRONG: `Bt` is the **pairing long-press state** (see the
-> handshake section) — a known-client reconnect does not re-enter it, so cyclic polling never blinks
-> it. Reconnect cost is radio airtime + a ~1–3 s connect, not a UX blink.
+> **Why we switched from the old cyclic poll.** The cyclic model reconnected every few seconds; over
+> hours that connect/disconnect **churn wedged the unit's own BLE stack** — after ~a day neither the
+> board *nor the phone app* could connect until the A/C was power-cycled. One held link removes the
+> churn entirely (a single connection for the session). It also matches the app and gives continuous,
+> always-fresh telemetry.
 >
-> **Persistent link — now viable, pending real-HW validation.** With the crash fixed, a bench retry of
-> a persistent link (relaxed connection interval ~300–400 ms via `updateConnParams`, so it doesn't
-> starve the Victron scan) ran stably with the LCD **clean** — the panel glitches seen earlier were
-> the L2-cache/PSRAM-bus issue (fixed by code-from-flash), **not** the link. The one thing the bench
-> could NOT prove: the combined simulator emulates every peripheral at **one MAC**, so an open A/C link
-> makes its Victron/Ultimatron records vanish (a single-device artifact — the sim now advertises the
-> passives non-connectably to mitigate, but Ultimatron shares the MAC so it can never be a 2nd
-> connection). On real, separate devices this shouldn't happen. So a persistent link is a viable
-> future direction once validated against real separate hardware; until then the cyclic poll ships.
+> **Coexistence with the shared C6 radio — the one real risk.** The persistent link is held open
+> *while the supervisor keeps its Victron/BMS scan running*. That exact combination once crashed the
+> P4 (`assert failed: sdio_rx_get_buffer sdio_drv.c:953`, ~6.6 s boot-loop) — but that was **DMA
+> internal-DRAM exhaustion**, fixed by the L2-cache headroom (see firmware-ota / pio-idf-p4 skills).
+> Two things keep coexistence cheap now: (1) a **relaxed connection interval** (`updateConnParams`
+> 200–400 ms, latency 0, 6 s supervision timeout) so the held link barely uses airtime; (2)
+> `CONFIG_BT_NIMBLE_MAX_CONNECTIONS=2`, so the transient **Ultimatron GATT poll** gets the 2nd slot
+> alongside the held A/C link (the supervisor stops the scan before either GATT connect, so the peak is
+> at most 2 links + no scan, or 1 link + scan — never 2 links + scan). If a `sdio_rx_get_buffer` assert
+> or link instability ever returns under this model, the levers are: raise L2 back / free more internal
+> DRAM, or lengthen the connection interval further.
 >
-> **The crash cause was concurrent scan + open link, NOT the open link itself.** So there is one
-> safe way to keep the link warm: the **warm-hold** (`OA_CMD_HOLD_MS`, 6 s) at the end of
-> `openairPollOnce()`. After a command write it keeps the connection open and flushes any follow-up
-> command instantly (each tap re-arms the window), so rapid adjustments — nudging a flap to a
-> position, stepping the setpoint — don't each pay a fresh ~3 s connect. It is safe **because it runs
-> inside the single supervisor task**, so the Victron scan is inherently paused for its duration (the
-> abandoned persistent link crashed precisely because it held the link open *while the loop kept
-> scanning*). Do NOT recreate a warm/persistent link anywhere the scan can run at the same time. Only
-> genuine pending commands are written in the hold (no beep-per-poll); it exits + disconnects after
-> 6 s idle, then the normal cyclic cadence resumes. Cost: other BLE sensors pause for the hold window.
+> **`Bt` is the pairing long-press state, NOT a per-connect blink.** A known-client reconnect does not
+> re-enter `Bt` (see the handshake section). With a persistent link there is only the *initial*
+> connect, so `Bt` is a non-issue after pairing.
+
+> ⚠️ **The write shadow + swing "warm-hold" are gone — the link is always warm now.** The old cyclic
+> model needed an `OA_CMD_HOLD_MS` window to flush rapid follow-up commands (e.g. catch a swinging flap
+> with an instant "fix") without paying a fresh connect each tap. With the link permanently open every
+> command is written instantly, so that machinery was removed. `s_writeShadow` (build-on-top-of-the-
+> unit's-state) stays — it is orthogonal to the connection model.
 
 > ⚠️ **Do NOT write a setpoint frame every poll.** The unit re-applies any command it receives
 > (audible **beep** + LED flash). Telemetry notifications arrive on their own once subscribed, so

@@ -402,9 +402,8 @@ static void bleSupervisorTask(void* /*arg*/) {
         }
 
         // Shorten the scan window when an A/C command is waiting: a pending
-        // command otherwise sits behind a full 5 s Victron scan before the loop
-        // reaches openairPollOnce(). A brief scan still catches the A/C's frequent
-        // advertisements and keeps the cyclic poll (no persistent connection).
+        // command otherwise sits behind a full 2 s Victron scan before the loop
+        // reaches openairPollOnce(), which writes it over the persistent link.
         constexpr uint32_t SCAN_FULL_MS = 2000;
         uint32_t SCAN_MS = (openairIsConfigured() && openairCmdPending() && !openairNeedsPair())
                                ? 800 : SCAN_FULL_MS;
@@ -455,26 +454,20 @@ static void bleSupervisorTask(void* /*arg*/) {
             vTaskDelay(pdMS_TO_TICKS(SCAN_MS));
         }
 
-        // OpenAir PLUS A/C — HIGHEST-priority peripheral: polled first, before the
-        // Ultimatron BMS, so its telemetry appears quickly at boot and a queued
-        // command is applied without waiting behind the BMS's multi-second GATT
-        // connect. Cyclic poll (connect, read telemetry, push any pending command,
-        // disconnect); openairPollOnce() gates its own cadence (every 15 s, or
-        // immediately when a command is pending). Only attempt it when the unit
-        // was advertising recently, to avoid a blind connect timeout.
-        // No GATT connect during the OTA self-test (p4OtaPendingVerify): the A/C
-        // connect + service discovery holds several KB of internal DRAM buffers,
-        // and on a fully-provisioned board that is what craters the heap below
-        // the self-test floor. NimBLE + the passive scans still run and stay
-        // covered by the rollback net; the A/C poll resumes (at ~24 KB steady
-        // free) once the image is marked valid.
+        // OpenAir PLUS A/C — HIGHEST-priority peripheral, serviced first. It holds a
+        // PERSISTENT GATT link: openairPollOnce() drains streamed telemetry and
+        // flushes any pending command over the open link (returning immediately so
+        // this scan keeps running concurrently), and reconnects only when the link
+        // is down and the unit advertised recently — the seen-recently gate and
+        // reconnect pacing live inside the driver.
+        // No GATT connect during the OTA self-test (p4OtaPendingVerify): bringing
+        // the A/C link up holds several KB of internal DRAM buffers, and on a
+        // fully-provisioned board that is what craters the heap below the self-test
+        // floor. NimBLE + the passive scans still run and stay covered by the
+        // rollback net; the link comes up (at ~24 KB steady free) once the image is
+        // marked valid.
         if (openairIsConfigured() && !p4OtaPendingVerify()) {
-            uint32_t seen = openairLastSeenMs();
-            if (seen && (millis() - seen) < 30000) {
-                openairPollOnce();
-            } else {
-                LOG_BLE_PL("[ble-sup] skip openair poll — not seen recently");
-            }
+            openairPollOnce();
         }
 
         // Ultimatron BMS — accessory, polled after the A/C. Yields to the A/C:

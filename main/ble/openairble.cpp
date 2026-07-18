@@ -28,9 +28,16 @@
 //   26-27 Flaps1Mode          0/1
 //   28-29 Flaps2Mode          0/1
 //
-// Connection model: passive scan (MAC match) → detect device → connect →
-//   handshake → subscribe → write cmd → wait notify → parse telemetry →
-//   disconnect.  Driven by bleSupervisorTask every scan cycle.
+// Connection model: PERSISTENT GATT link. Passive scan (MAC match) → detect
+//   device → connect → handshake → subscribe, then HOLD the link open. Telemetry
+//   streams in as unsolicited notifications (no polling); commands are written
+//   over the open link as they arrive. The link is torn down only when it drops
+//   (unit power-cycle, physical remote, out of range) or the target changes;
+//   openairPollOnce() reconnects when the unit re-advertises. Holding one link
+//   avoids the connect/disconnect churn that eventually wedged the unit's BLE
+//   stack. A relaxed connection interval keeps radio airtime low so the
+//   supervisor's Victron/BMS scan runs concurrently on the shared C6.
+//   Driven by bleSupervisorTask every cycle.
 
 #include "openairble.hpp"
 #include "logs.hpp"
@@ -111,47 +118,40 @@ static bool          s_haveAdvAddr     = false;
 // as an already-known client, so the unit accepts us without re-entering "Bt".
 static const uint8_t TRUMINUS_ID8[8]  = { 0x01, 0xe8, 0x77, 0x07, 0xed, 0xe0, 0xc8, 0x25 };
 
-// Cyclic-poll cadence: the driver connects, reads telemetry, sends any pending
-// command, and disconnects each cycle. The interval is bounded by shared-radio
-// contention — each poll is a GATT connect on the C6 that pauses the Victron/BLE
-// scan for its duration — NOT by the unit's "Bt" indicator (that is the pairing
-// long-press state; a known-client reconnect does not re-enter it, so cyclic
-// polling does not blink it). Poll immediately when the user changed something
-// (a pending command needs low latency).
-static const uint32_t POLL_INTERVAL_MS = 4000;
-static uint32_t          s_lastPollMs   = 0;
+// (Re)connect pacing while the link is DOWN. The link itself is persistent —
+// once up it is held open and serviced every cycle (drain telemetry, flush
+// commands) with no reconnect. s_lastPollMs timestamps the last connect attempt.
+static const uint32_t OA_RECONNECT_MS    = 5000;    // retry connect cadence when down + seen
+static const uint32_t OA_CONNECT_SEEN_MS = 30000;   // only connect if advertised within this
+static uint32_t       s_lastPollMs       = 0;
 
-// Persistent GATT client: kept alive across polls (the LINK is still cyclic —
-// we disconnect after each poll) so the discovered attribute table survives.
-// Reconnecting with deleteAttributes=false lets getService() return the cached
-// service with zero ATT traffic, skipping the full-database discovery whose
-// SDIO burst spikes internal DRAM (and tipped the post-OTA self-test's heap
-// floor). Full discovery runs only on the first poll or after a cache drop.
-// The object holds no radio resource while disconnected; it lives in PSRAM
+// Relaxed connection parameters applied once the link is up (interval units
+// 1.25 ms, supervision-timeout units 10 ms): a 200–400 ms interval keeps the
+// held link's radio airtime minimal so the concurrent Victron/BMS scan and the
+// WSS tunnel keep their share of the shared C6. Telemetry is slow, so the
+// interval adds no meaningful latency.
+static const uint16_t OA_CONN_MIN     = 160;   // 200 ms
+static const uint16_t OA_CONN_MAX     = 320;   // 400 ms
+static const uint16_t OA_CONN_LATENCY = 0;
+static const uint16_t OA_CONN_TIMEOUT = 600;   // 6 s supervision timeout
+
+// Persistent GATT client: created once and held connected. Reconnecting after a
+// drop with deleteAttributes=false lets getService() return the cached service
+// with zero ATT traffic, skipping full discovery. The object lives in PSRAM
 // (NimBLE host heap is external), so keeping it costs no internal DRAM.
-static NimBLEClient*     s_client     = nullptr;
-static bool             s_gattCached = false;   // s_client holds a valid discovered DB
-
-// Warm-hold: after a command write, keep the GATT link open this long and send
-// any follow-up command instantly (each tap re-arms the window), so rapid
-// adjustments — e.g. nudging a flap to a position — don't pay a fresh connect
-// each time. The hold runs INSIDE openairPollOnce on the single supervisor task,
-// so the Victron scan is paused for its duration; that is what makes it safe
-// (the abandoned persistent link crashed the shared C6 radio by holding the
-// connection open *while scanning*). Other BLE sensors just pause briefly.
-static const uint32_t OA_CMD_HOLD_MS = 6000;
-// A swing command starts the louver oscillating; the user then waits for it to
-// reach the wanted position and taps "fix" to stop it. Hold the link open longer
-// after a swing so that follow-up "fix" tap still lands on the warm connection.
-static const uint32_t OA_CMD_HOLD_SWING_MS = 15000;
-
-// Hold window for the command just written: longer right after a swing so the
-// user can catch the flap and stop it with an instant "fix".
-static uint32_t cmdHoldMs(const OpenAirCmd& c) {
-    bool swing = ((c.configDirty & OA_CFG_FLAP1) && c.flaps1 == OA_FLAP_SWING) ||
-                 ((c.configDirty & OA_CFG_FLAP2) && c.flaps2 == OA_FLAP_SWING);
-    return swing ? OA_CMD_HOLD_SWING_MS : OA_CMD_HOLD_MS;
-}
+static NimBLEClient*  s_client     = nullptr;
+static bool           s_gattCached = false;    // s_client holds a valid discovered DB
+// Data characteristic of the held link, cached so a pending command can be
+// written without re-walking the GATT table. Nulled on disconnect.
+static NimBLERemoteCharacteristic* s_dataChar = nullptr;
+// Link-state tracking: detect a drop (log it once, with the reason) and pace the
+// reconnect. s_wasConnected mirrors the last serviced state on the supervisor task.
+static bool           s_wasConnected   = false;
+static volatile int   s_lastDiscReason = 0;
+// Set from the settings task when the target MAC changes (or is cleared) so the
+// supervisor task — the sole owner of s_client — drops the held link on its next
+// cycle. Cross-task free is unsafe, so we only ever signal via this flag.
+static volatile bool  s_dropRequested  = false;
 
 // Telemetry older than this (3 missed 15 s polls) means the A/C has dropped off
 // — the UI treats it as disconnected even though the last frame is still cached.
@@ -171,13 +171,20 @@ static const uint32_t OA_BACKOFF_MS = 60000;
 static uint8_t           s_notifyBuf[128] = {};
 static int               s_notifyLen      = 0;
 static SemaphoreHandle_t s_notifySem      = nullptr;
+// Guards s_notifyBuf/s_notifyLen between the host notify callback (writer) and
+// the supervisor's drain (reader) — a spinlock, safe to take from the callback.
+static portMUX_TYPE      s_notifyMux      = portMUX_INITIALIZER_UNLOCKED;
 
 // ── Notification callback ────────────────────────────────────────────────────
-// Telemetry arrives once subscribed. Copy it and signal the waiting poll.
+// Telemetry streams in continuously once subscribed. Copy the frame under the
+// spinlock and signal; the supervisor drains + parses it. Keep the callback tiny
+// (no float-printf/mutex — they overflow the host task's small stack).
 static void notifyCb(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, bool) {
+    portENTER_CRITICAL(&s_notifyMux);
     if (len > sizeof(s_notifyBuf)) len = sizeof(s_notifyBuf);
     memcpy(s_notifyBuf, data, len);
     s_notifyLen = (int)len;
+    portEXIT_CRITICAL(&s_notifyMux);
     if (s_notifySem) xSemaphoreGive(s_notifySem);
 }
 
@@ -266,6 +273,30 @@ static bool parseNotification(const uint8_t* ascii, int len) {
     return true;
 }
 
+// Copy the latest notification out from under the callback's spinlock and parse
+// it. parseNotification works on a private buffer, so a notification arriving
+// mid-parse cannot tear the frame.
+static bool copyAndParse() {
+    uint8_t buf[sizeof(s_notifyBuf)];
+    int len;
+    portENTER_CRITICAL(&s_notifyMux);
+    len = s_notifyLen;
+    if (len < 0) len = 0;
+    if (len > (int)sizeof(buf)) len = sizeof(buf);
+    memcpy(buf, s_notifyBuf, len);
+    portEXIT_CRITICAL(&s_notifyMux);
+    return parseNotification(buf, len);
+}
+
+// Drain every telemetry frame that streamed in since the last cycle and parse the
+// most recent (older frames are superseded). Runs on the supervisor task.
+static void drainTelemetry() {
+    if (!s_notifySem) return;
+    bool any = false;
+    while (xSemaphoreTake(s_notifySem, 0) == pdTRUE) any = true;
+    if (any) copyAndParse();
+}
+
 static void writeU16BE(uint8_t* b, int off, unsigned v) {
     b[off]     = (uint8_t)(v >> 8);
     b[off + 1] = (uint8_t)(v & 0xFF);
@@ -309,6 +340,33 @@ static bool buildWriteFrame(const OpenAirCmd& cmd, char out[61]) {
     return true;
 }
 
+// Write a queued command over the OPEN link, if any. The echo of the new state
+// streams back as a later notification (drained next cycle), so we don't block on
+// it. Requeues if no telemetry has seeded the write-shadow yet (never send a
+// blind default frame — every unset field would reconfigure the unit).
+static void flushPendingCmd() {
+    if (!s_dataChar || !s_client || !s_client->isConnected()) return;
+
+    OpenAirCmd cmd = {};
+    bool has = false;
+    xSemaphoreTake(s_cmdMux, portMAX_DELAY);
+    if (s_hasPendingCmd) { cmd = s_pendingCmd; s_hasPendingCmd = false; has = true; }
+    xSemaphoreGive(s_cmdMux);
+    if (!has) return;
+
+    char frame[61] = {};
+    if (!s_haveShadow || !buildWriteFrame(cmd, frame)) {
+        xSemaphoreTake(s_cmdMux, portMAX_DELAY);
+        if (!s_hasPendingCmd) { s_pendingCmd = cmd; s_hasPendingCmd = true; }
+        xSemaphoreGive(s_cmdMux);
+        return;
+    }
+    s_dataChar->writeValue((const uint8_t*)frame, 60, false);
+    ESP_LOGI(TAG, "cmd: ps=%d mode=%d temp=%.1f°C fan=%d flaps=%d/%d",
+             cmd.powerState, cmd.mode, cmd.tempTenths / 10.0f, cmd.blowerSpeed,
+             cmd.flaps1, cmd.flaps2);
+}
+
 // Wait (bounded) for an async disconnect to finish. deleteClient() will not
 // free a still-connected client, and a write to a half-open link hangs.
 static void waitDisconnected(NimBLEClient* client) {
@@ -317,56 +375,44 @@ static void waitDisconnected(NimBLEClient* client) {
     for (int i = 0; i < 20 && client->isConnected(); i++) vTaskDelay(pdMS_TO_TICKS(50));
 }
 
-// End a poll but KEEP the client object + its cached GATT DB for the next poll
-// (the fast path). Only the link is torn down.
-static void parkClient() {
-    waitDisconnected(s_client);
-}
-
 // Fully tear down: disconnect, free the client and invalidate the cache. Used on
 // a GATT-level failure (stale/missing attributes) and on a config/target change,
-// so the next poll rebuilds a clean client and rediscovers.
+// so the next connect rebuilds a clean client and rediscovers.
 static void dropClient() {
     waitDisconnected(s_client);
     if (s_client) { NimBLEDevice::deleteClient(s_client); s_client = nullptr; }
     s_gattCached = false;
+    s_dataChar   = nullptr;
 }
+
+// Held-link disconnect hook: invalidate the cached data-characteristic handle and
+// record the reason (logged by the supervisor). Kept tiny — runs on the NimBLE
+// host task's small stack, so no printf/mutex here.
+class OaClientCb : public NimBLEClientCallbacks {
+    void onDisconnect(NimBLEClient*, int reason) override {
+        s_dataChar       = nullptr;
+        s_lastDiscReason = reason;
+    }
+};
+static OaClientCb s_clientCb;
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-// One cyclic poll: connect → discover → Service Changed → handshake → subscribe
-// → read one telemetry frame → (optionally) write a pending command → read back →
-// disconnect. Runs on the supervisor task. A short-lived connection keeps the
-// NimBLE/SDIO footprint small (a persistent link fought the Victron scan and
-// destabilised the C6 link); the cost is the unit briefly showing "Bt" per poll,
-// which the cadence gate below keeps infrequent.
-bool openairPollOnce() {
-    if (!s_configured) return false;
-
-    // Cadence gate: normally poll every POLL_INTERVAL_MS, or immediately when a
-    // user command is pending (low-latency button response). But once the unit
-    // is confirmed unreachable, back off to OA_BACKOFF_MS even with a command
-    // pending — otherwise a cool command we can't deliver hammers the radio every
-    // cycle and starves the other BLE reads. The command stays parked for when
-    // the unit returns.
-    bool cmdPending;
-    xSemaphoreTake(s_cmdMux, portMAX_DELAY);
-    cmdPending = s_hasPendingCmd;
-    xSemaphoreGive(s_cmdMux);
-    uint32_t interval = s_acNeedsPair ? OA_BACKOFF_MS : POLL_INTERVAL_MS;
-    bool urgent = cmdPending && !s_acNeedsPair;
-    if (!urgent && s_lastPollMs && (millis() - s_lastPollMs) < interval)
-        return false;
-    s_lastPollMs = millis();
-
+// Bring the persistent link UP: connect → discover (cold) or reuse cache (warm)
+// → Service Changed indications → handshake → subscribe → wait for the first
+// streamed telemetry frame → relax the connection interval → HOLD. Returns true
+// with the link held open, false on any failure (link left down for a paced
+// retry). Runs on the supervisor task.
+static bool connectHold() {
     uint32_t t0 = millis();
     NimBLEAddress addr = s_haveAdvAddr ? s_advAddr
                                        : NimBLEAddress(formatMac(s_targetAddr), 0);
 
-    // Reuse the persistent client so its discovered GATT DB survives across polls
-    // (see s_client). Create it once; a cold poll (no cache) does full discovery,
-    // a warm one reconnects with deleteAttributes=false and skips it.
-    if (!s_client) { s_client = NimBLEDevice::createClient(); s_gattCached = false; }
+    if (!s_client) {
+        s_client = NimBLEDevice::createClient();
+        if (s_client) s_client->setClientCallbacks(&s_clientCb, false);
+        s_gattCached = false;
+    }
     NimBLEClient* client = s_client;
     if (!client) {
         // Pool exhausted — every slot still holds an unfreed client. Never
@@ -378,12 +424,6 @@ bool openairPollOnce() {
     // an absent unit doesn't freeze the supervisor (and the Victron/Ultimatron
     // reads behind it) for the full 3×5 s connect budget.
     client->setConnectTimeout(s_acNeedsPair ? 3000 : 5000);
-
-    // NOTE: do NOT force a fast connection interval here. A 7.5–15 ms interval
-    // speeds the GATT setup but hammers the radio the ESP32-C6 shares with WiFi,
-    // starving the WSS cloud tunnel (the cloud icon blinks / drops). Keep the
-    // stack default; command latency is reduced instead by scheduling (A/C polled
-    // first, scan aborted on demand) which does not increase radio airtime.
 
     // Telemetry notifications are 124 bytes and cannot fit the 23-byte default
     // MTU (max notify = MTU-3). The app negotiates a large MTU right after connect.
@@ -402,11 +442,11 @@ bool openairPollOnce() {
     if (!connected) {
         ESP_LOGW(TAG, "connect failed (+%ums)", (unsigned)(millis() - t0));
         // A reachability miss doesn't invalidate the cached DB — keep the client
-        // (and the cache) parked for when the unit returns.
-        parkClient(); return false;
+        // (and the cache) for the next attempt.
+        return false;
     }
 
-    // We reached the unit. Tentatively count this poll as a failure; a telemetry
+    // We reached the unit. Tentatively count this attempt as a failure; a telemetry
     // read (parseNotification) clears the streak. If we connect this many times
     // without ever reading a frame, the unit has dropped our pairing (it accepts
     // the link but withholds the handshake, showing "Bt") — flag it so the UI can
@@ -414,9 +454,9 @@ bool openairPollOnce() {
     // fails above) never trips it.
     if (++s_failStreak >= OA_UNPAIR_FAILS) s_acNeedsPair = true;
 
-    // Cold poll only: full GATT discovery (a per-UUID filtered discovery sometimes
-    // fails on 128-bit custom UUIDs even when the service is present). A warm poll
-    // skips this entirely — getService() below returns the cached service.
+    // Cold connect only: full GATT discovery (a per-UUID filtered discovery
+    // sometimes fails on 128-bit custom UUIDs even when the service is present).
+    // A warm reconnect skips this — getService() below returns the cached service.
     if (!warm && !client->discoverAttributes()) {
         ESP_LOGW(TAG, "attribute discovery failed");
         dropClient(); return false;
@@ -446,101 +486,86 @@ bool openairPollOnce() {
     if (!hsChar->writeValue(TRUMINUS_ID8, sizeof(TRUMINUS_ID8), true)) {
         ESP_LOGW(TAG, "handshake write failed");
         // A write failure on a warm reconnect may mean a stale cached handle —
-        // drop so the next poll rediscovers.
+        // drop so the next connect rediscovers.
         dropClient(); return false;
     }
 
-    // Subscribe; drain any stale signal before we start waiting on notifications.
+    // Subscribe; drain any stale signal before we wait on the first frame.
     while (xSemaphoreTake(s_notifySem, 0) == pdTRUE) {}
     if (!dataChar->subscribe(true, notifyCb)) {
         ESP_LOGW(TAG, "subscribe failed");
         dropClient(); return false;
     }
 
-    // Grab any pending command up front so we can write it as early as possible.
-    OpenAirCmd cmd = {};
-    bool hasCmd = false;
-    xSemaphoreTake(s_cmdMux, portMAX_DELAY);
-    cmd = s_pendingCmd;
-    hasCmd = s_hasPendingCmd;
-    s_hasPendingCmd = false;
-    xSemaphoreGive(s_cmdMux);
-
-    // Fast path: with a command AND a retained shadow (from any prior poll), write
-    // immediately — no need to wait for a fresh telemetry read first, since the
-    // shadow already carries every field we preserve. This removes the read-wait
-    // from the command latency; the read below then captures the post-write state.
-    bool wrote = false;
-    if (hasCmd && s_haveShadow) {
-        char frame[61] = {};
-        if (buildWriteFrame(cmd, frame)) {
-            dataChar->writeValue((const uint8_t*)frame, 60, false);
-            ESP_LOGI(TAG, "cmd: ps=%d mode=%d temp=%.1f°C fan=%d",
-                     cmd.powerState, cmd.mode, cmd.tempTenths / 10.0f, cmd.blowerSpeed);
-            wrote  = true;
-            hasCmd = false;
-        }
+    // Confirm the link is really live by waiting for the first streamed frame. No
+    // frame = the unit accepted the connection but withheld telemetry (the "Bt"
+    // state); drop and let the paced retry try again (failStreak already bumped).
+    if (xSemaphoreTake(s_notifySem, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGW(TAG, "no telemetry after subscribe (+%ums)", (unsigned)(millis() - t0));
+        waitDisconnected(client);
+        return false;
     }
+    copyAndParse();          // clears failStreak, sets s_paired, seeds the shadow
+    s_dataChar = dataChar;   // link is live — cache the write target
 
-    // Read one telemetry frame: the post-write echo when we just wrote (short
-    // wait), otherwise the current state — a longer wait only when we still need
-    // a first read to seed the shadow for future fast-path commands.
-    bool got = (xSemaphoreTake(s_notifySem, pdMS_TO_TICKS(wrote ? 3000 : 5000)) == pdTRUE);
-    if (got) parseNotification(s_notifyBuf, s_notifyLen);
-    else if (!wrote) ESP_LOGW(TAG, "no telemetry within 5 s");
+    // Relax the interval so the held link barely uses the shared radio, leaving
+    // airtime for the concurrent scan + WSS tunnel. Best-effort.
+    client->updateConnParams(OA_CONN_MIN, OA_CONN_MAX, OA_CONN_LATENCY, OA_CONN_TIMEOUT);
 
-    // Slow path: a command was pending but there was no shadow yet (first pairing).
-    // Now that we've read one frame we can build on it; write and read the echo.
-    if (hasCmd) {
-        char frame[61] = {};
-        if (buildWriteFrame(cmd, frame)) {
-            dataChar->writeValue((const uint8_t*)frame, 60, false);
-            ESP_LOGI(TAG, "cmd: ps=%d mode=%d temp=%.1f°C fan=%d",
-                     cmd.powerState, cmd.mode, cmd.tempTenths / 10.0f, cmd.blowerSpeed);
-            if (xSemaphoreTake(s_notifySem, pdMS_TO_TICKS(3000)) == pdTRUE)
-                parseNotification(s_notifyBuf, s_notifyLen);
-        } else {
-            // Still no telemetry ever — keep the command pending, don't blind-write.
-            xSemaphoreTake(s_cmdMux, portMAX_DELAY);
-            s_pendingCmd = cmd; s_hasPendingCmd = true;
-            xSemaphoreGive(s_cmdMux);
-        }
-    }
+    // Flush a command that was queued before the link came up.
+    flushPendingCmd();
 
-    // Warm-hold: once we've written at least one command this session and the
-    // shadow is seeded, keep the link open briefly and flush follow-up commands
-    // instantly (each one re-arms the window). Only entered after a real command
-    // (not a plain telemetry poll) so idle polls still disconnect immediately.
-    if ((wrote || hasCmd) && s_haveShadow) {
-        uint32_t holdUntil = millis() + cmdHoldMs(cmd);
-        while ((int32_t)(holdUntil - millis()) > 0 && client->isConnected()) {
-            OpenAirCmd next = {};
-            bool have = false;
-            xSemaphoreTake(s_cmdMux, portMAX_DELAY);
-            if (s_hasPendingCmd) { next = s_pendingCmd; s_hasPendingCmd = false; have = true; }
-            xSemaphoreGive(s_cmdMux);
-            if (!have) { vTaskDelay(pdMS_TO_TICKS(40)); continue; }
-
-            char frame[61] = {};
-            if (!buildWriteFrame(next, frame)) continue;
-            dataChar->writeValue((const uint8_t*)frame, 60, false);
-            ESP_LOGI(TAG, "cmd (hold): ps=%d mode=%d temp=%.1f°C fan=%d flaps=%d/%d",
-                     next.powerState, next.mode, next.tempTenths / 10.0f,
-                     next.blowerSpeed, next.flaps1, next.flaps2);
-            // Capture the post-write echo so the shadow tracks the unit, then
-            // re-arm the window for the next tap.
-            if (xSemaphoreTake(s_notifySem, pdMS_TO_TICKS(1500)) == pdTRUE)
-                parseNotification(s_notifyBuf, s_notifyLen);
-            holdUntil = millis() + cmdHoldMs(next);
-        }
-    }
-
-    // Keep the client + its cached GATT DB for the next (warm) poll; only the
-    // link is torn down.
-    parkClient();
-    ESP_LOGI(TAG, "poll %s (+%ums)%s", got ? "ok" : "no-telemetry",
+    ESP_LOGI(TAG, "connected + streaming (+%ums)%s",
              (unsigned)(millis() - t0), warm ? " [cached]" : "");
-    return got;
+    return true;
+}
+
+// Called every supervisor cycle. Services an already-open link (drain streamed
+// telemetry, flush any pending command) and returns immediately so the scan runs
+// concurrently; when the link is down it paces a reconnect, connecting only when
+// the unit advertised recently. The link is persistent — held across cycles.
+bool openairPollOnce() {
+    // Target changed/cleared from the settings task: drop the held link here, on
+    // the owning task, before anything else.
+    if (s_dropRequested) {
+        s_dropRequested = false;
+        dropClient();
+        s_wasConnected = false;
+    }
+    if (!s_configured) return false;
+
+    bool connected = s_client && s_client->isConnected();
+
+    // Detect + log a link drop once — the reason code is the key diagnostic for
+    // the unit's BLE stability (why the held link fell over).
+    if (s_wasConnected && !connected) {
+        ESP_LOGW(TAG, "link dropped (reason=%d)", s_lastDiscReason);
+        s_wasConnected = false;
+    }
+
+    // Fast path: link up → service it and return immediately. Telemetry streams in
+    // on its own; a queued command is written over the open link.
+    if (connected) {
+        drainTelemetry();
+        flushPendingCmd();
+        return true;
+    }
+
+    // Link down: pace (re)connect attempts. Back off hard once the unit is known to
+    // have dropped our pairing (it withholds the handshake, showing "Bt").
+    uint32_t now = millis();
+    uint32_t interval = s_acNeedsPair ? OA_BACKOFF_MS : OA_RECONNECT_MS;
+    if (s_lastPollMs && (now - s_lastPollMs) < interval) return false;
+
+    // Only connect when the unit advertised recently — a blind connect against an
+    // absent unit would stall the shared radio for the whole connect budget. (A
+    // held link makes the unit stop advertising, so this gate is disconnected-only.)
+    uint32_t seen = s_lastSeenMs;
+    if (!seen || (now - seen) >= OA_CONNECT_SEEN_MS) return false;
+
+    s_lastPollMs = now;
+    if (connectHold()) { s_wasConnected = true; return true; }
+    return false;
 }
 
 void openairBleHandleAd(const NimBLEAdvertisedDevice* dev) {
