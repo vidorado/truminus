@@ -26,6 +26,22 @@ void displaySyncInit(P4DisplayData& d) {
 void displaySyncTick(P4DisplayData& d, uint32_t iter) {
     p4OtaBeat(P4OTA_BEAT_LOOP);   // liveness for the post-OTA self-test
 
+    // During a firmware install the full-screen OTA progress screen owns the
+    // panel and refreshes itself (p4DisplaySetOtaProgress). Skip the whole-UI
+    // rebuild below: redrawing the now-inactive main screen every tick only adds
+    // CPU / PSRAM / LVGL-lock churn that, coinciding with the download's flash
+    // writes, worsens the panel underruns (the black↔cyan background flicker).
+    // Dismiss any stale dialog once as the install starts so it can't outlive the
+    // switch to the OTA screen.
+    static bool s_wasInstalling = false;
+    bool installing = p4OtaInstalling();
+    if (installing) {
+        if (!s_wasInstalling) p4DisplayDismissDialogs();
+        s_wasInstalling = true;
+        return;
+    }
+    s_wasInstalling = false;
+
     // Steady-state internal-DRAM probe every 30 s — the `min` field is the
     // worst-case ever seen, i.e. how close we run to the OTA heap floor.
     if (iter % 30 == 0) heapDiagMark("steady");
@@ -247,14 +263,6 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
         if (p4DisplayShowUpdatePrompt(ota_cur, ota_latest))
             p4OtaMarkPrompted();
     }
-    // Once an install starts, clear any dialog left on the main screen (the
-    // "update now?" prompt, an error modal) so it can't float over the progress
-    // UI — regardless of whether the install was triggered from the LCD or web.
-    static bool s_wasInstalling = false;
-    bool installing = p4OtaInstalling();
-    if (installing && !s_wasInstalling) p4DisplayDismissDialogs();
-    s_wasInstalling = installing;
-
     OpenAirData oad = openairGetData();
     d.bleState = (vd.valid || ud.valid || td.valid || mp.valid || oad.valid) ? 2
                : (victronIsConfigured() || ultimatronIsConfigured()

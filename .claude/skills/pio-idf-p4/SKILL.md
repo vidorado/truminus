@@ -138,8 +138,19 @@ more PSRAM reads; with `SPIRAM_XIP_FROM_PSRAM` those contend with the LCD
 framebuffer DMA (also PSRAM) → **panel glitches**. Fix:
 `# CONFIG_SPIRAM_XIP_FROM_PSRAM is not set` runs `.text`/`.rodata` from flash (the
 separate flash MSPI bus). **DRAM-neutral** (code → flash, not internal DRAM), so
-it keeps the L2 headroom; verified glitch-free, UI smooth, and the OTA download
-runs from flash without stalls. **Ship the two together** (`sdkconfig.defaults`).
+it keeps the L2 headroom; verified glitch-free in steady-state, UI smooth.
+**Ship the two together** (`sdkconfig.defaults`).
+
+**Caveat — this fixes steady-state, NOT the OTA *download*.** During a self-OTA
+the app *writes* ~2.3 MB to the app1 flash partition; a program/erase blocks the
+flash MSPI bus for its duration, stalling XIP code fetches and briefly starving
+the panel refresh → a black↔cyan background flicker on the full-screen OTA
+progress screen (cosmetic; the dialog stays readable and the update succeeds).
+The textbook lever (`CONFIG_SPI_FLASH_AUTO_SUSPEND`) is unreliable on this
+board's **Boya** flash (mfr `0x68`; IDF suspend is validated for GD/Winbond/XMC/
+ISSI), so instead the render-side mitigation is `displaySyncTick()` skipping the
+whole-UI rebuild while `p4OtaInstalling()` — one less consumer of CPU/PSRAM/
+LVGL-lock contending with the flash writes.
 
 **Diagnosing future cases:**
 - Print free internal heap (`heap_caps_get_free_size(MALLOC_CAP_INTERNAL)`)
