@@ -4,7 +4,6 @@
 #include "tankble.hpp"
 #include "multiplusble.hpp"
 #include "openairble.hpp"
-#include "p4_ota.hpp"
 #include "wifi_manager.hpp"
 #include "logs.hpp"
 #include "heapdiag.hpp"
@@ -460,13 +459,14 @@ static void bleSupervisorTask(void* /*arg*/) {
         // this scan keeps running concurrently), and reconnects only when the link
         // is down and the unit advertised recently — the seen-recently gate and
         // reconnect pacing live inside the driver.
-        // No GATT connect during the OTA self-test (p4OtaPendingVerify): bringing
-        // the A/C link up holds several KB of internal DRAM buffers, and on a
-        // fully-provisioned board that is what craters the heap below the self-test
-        // floor. NimBLE + the passive scans still run and stay covered by the
-        // rollback net; the link comes up (at ~24 KB steady free) once the image is
-        // marked valid.
-        if (openairIsConfigured() && !p4OtaPendingVerify()) {
+        // The persistent link is brought up DURING the OTA self-test as well (no
+        // PendingVerify guard). With the L2-cache DRAM headroom the concurrent boot
+        // peak stays far above the self-test floor, and running it inside the
+        // PENDING_VERIFY window is deliberate: it makes the self-test exercise the
+        // real workload, so a heap-crater OR a crash on the held-link/scan path
+        // rolls back (the bootloader reverts a PENDING_VERIFY image that reboots)
+        // instead of shipping a bad image. See the firmware-ota skill.
+        if (openairIsConfigured()) {
             openairPollOnce();
         }
 
@@ -481,14 +481,13 @@ static void bleSupervisorTask(void* /*arg*/) {
         // recoverable (not yet in the needs-pair backoff).
         bool oaPriority  = oaReachable && !openairNeedsPair()
                         && (openairCmdPending() || !openairPaired());
-        // No GATT connect during the OTA self-test (p4OtaPendingVerify): a
-        // 3×5 s Ultimatron connect stacking with WiFi association buffers is the
-        // sustained internal-DRAM dip that false-rolls-back a healthy image.
-        // NimBLE + the passive scans still run and stay covered by the rollback
-        // net; only the recurring GATT poll is paced out of the ~60 s window,
-        // resuming once the image is marked valid.
+        // Like the A/C link, the BMS GATT poll now runs during the self-test too
+        // (no PendingVerify guard): the L2 headroom keeps the concurrent peak above
+        // the floor, and letting it run makes the self-test measure the real BLE
+        // load rather than a lighter subset — a genuine DRAM problem then rolls back
+        // instead of surfacing only after the image is already valid.
         if (ultimatronIsConfigured() && (cycleCount % ULTIMATRON_EVERY_N) == 0
-            && !oaPriority && !p4OtaPendingVerify()) {
+            && !oaPriority) {
             // Preferred path: the BMS advertised in the last ~15 s, so a GATT
             // connect lands fast. Use the full connect budget (3×5 s) since a
             // present BMS answers well inside it.

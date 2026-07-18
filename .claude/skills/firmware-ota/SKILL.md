@@ -288,23 +288,38 @@ signals** (IP, tunnel CONNECTED, fresh LIN frame, BLE advert):
   The net is one-shot for the first ~minute; it does **not** guard a crash after
   validation.
 
-## Boot sequencing (PENDING_VERIFY only)
+## Boot sequencing — the self-test exercises the FULL workload
 
 The self-test floor is measured during the first ~minute, exactly when boot
-brings up everything at once. The heaviest internal-DRAM/SRAM consumer is the
-**WSS tunnel TLS handshake** (esp-aes DMA contexts must live in SRAM). So on a
-PENDING_VERIFY boot we **defer the tunnel**: `bootTask` calls
-`wstunnelInit(p4OtaPendingVerify())` — `deferConnect=true` sets up the task +
-event handlers but skips the handshake (icon stays CONNECTING). The self-test
-calls `wstunnelApply()` right after `esp_ota_mark_app_valid_cancel_rollback()`,
-so the handshake then runs **alone**, with WiFi/BLE already settled. Normal
-(already-validated) boots pass `deferConnect=false` and are unchanged.
+brings up everything at once. Historically the heaviest consumers — the **WSS
+tunnel TLS handshake** (esp-aes DMA contexts in SRAM), the **OpenAir A/C GATT
+link**, and the **Ultimatron GATT connect** — were all *deferred/skipped* during
+`PENDING_VERIFY` because at the old ~24 KB steady-state free internal DRAM their
+concurrent peak dipped below the floor and rolled healthy images back.
 
-Side effect: with the tunnel deferred, `env_ready()` sees it CONNECTING (not
-CONNECTED), so the 30 s fast-pass can't fire — a PENDING_VERIFY boot validates
-at the **60 s ceiling**, then the tunnel comes up. Acceptable; the ceiling is
-the guarantee. If a board still rolls back with the tunnel deferred, the next
-suspect is the **Ultimatron GATT connect** — defer/suspend BLE similarly.
+**As of the L2-cache DRAM change (128 KB) that is reversed: nothing is deferred
+during the self-test.** `bootTask` calls `wstunnelInit()` (connects immediately,
+even PENDING_VERIFY), and the BLE supervisor runs the OpenAir + Ultimatron GATT
+work with no `p4OtaPendingVerify()` guard. This is deliberate on two counts:
+
+- **The self-test now validates what the board actually runs.** With ~117 KB
+  steady free internal DRAM the concurrent boot peak stays far above the 12 KB
+  floor, so there is no reason to hide the real workload from the measurement.
+- **It restores the rollback net for crash-class bugs.** A held BLE link + the
+  concurrent scan is the exact path that once crashed the shared C6 radio. If it
+  ever regresses, the crash now happens *inside* the PENDING_VERIFY window, so
+  the bootloader reverts the image (a PENDING_VERIFY app that reboots without
+  `esp_ota_mark_app_valid` is rolled back). Deferring that path used to push the
+  potential crash to *after* validation — where nothing could roll it back.
+
+Bonus: with the tunnel up during the self-test, `env_ready()` can see it
+CONNECTED and a healthy board **fast-passes at 30 s** again (the ceiling stays
+the guarantee when the env never comes up). The one thing still deferred during
+PENDING_VERIFY is the **OTA version-check TLS handshake** (`check_task`) — it is
+pure background convenience with no validation value, so keeping its spike out of
+the window costs nothing. If a board ever *does* roll back under the full
+workload, the levers are the DRAM ones (raise L2 / free internal DRAM), not
+re-deferring — re-deferring would blind the self-test again.
 
 ## CI / release builds (one build per release)
 

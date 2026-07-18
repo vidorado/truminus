@@ -112,13 +112,6 @@ static esp_websocket_client_handle_t s_client = nullptr;
 static volatile bool               s_connected = false;
 static volatile uint32_t           s_last_rx_ms = 0;     // ms tick of last WS RX event
 static volatile bool               s_have_ip   = false;   // STA has a usable IP
-// Post-OTA deferral: while true, refuse to start the client no matter which
-// path fires EV_RECONNECT (GOT_IP event, pump wedge-watchdog, …). The TLS
-// handshake is the heaviest internal-DRAM consumer and, run inside the
-// PENDING_VERIFY self-test window, sank the heap below the floor → rollback.
-// Set by wstunnelInit(deferConnect); cleared by wstunnelApply() once the
-// self-test has marked the image valid.
-static volatile bool               s_deferred  = false;
 static volatile TunnelUiState      s_ui_state  = TunnelUiState::DISABLED;
 static volatile int                s_retries   = 0;
 static Stream                      s_streams[MAX_STREAMS] = {};
@@ -1031,14 +1024,6 @@ static void start_client_locked()
         ESP_LOGI(TAG, "disabled or no server URL — not starting");
         return;
     }
-    // Post-OTA self-test window: stay down until the image is validated. Every
-    // reconnect trigger (GOT_IP, pump wedge) funnels through here, so this one
-    // guard keeps the TLS handshake out of the heap-floor window; wstunnelApply()
-    // clears it and reconnects once the self-test passes.
-    if (s_deferred) {
-        ESP_LOGI(TAG, "connect deferred (post-OTA self-test) — not starting");
-        return;
-    }
     // Don't even try to spin up esp_websocket_client until the STA has an
     // IP — without one esp-tls fails getaddrinfo() (ESP_ERR_ESP_TLS_CANNOT
     // _RESOLVE_HOSTNAME) and the client just thrashes.  We re-enter here
@@ -1179,7 +1164,6 @@ void wstunnelSaveConfig(const TunnelConfig& cfg)
 void wstunnelApply()
 {
     if (!s_events) return;
-    s_deferred = false;   // self-test passed (or a live settings change) — allow connect
     xSemaphoreTake(s_lock, portMAX_DELAY);
     bool en = s_cfg.enabled;
     xSemaphoreGive(s_lock);
@@ -1198,7 +1182,7 @@ bool wstunnelIsConnected() { return s_connected; }
 
 TunnelUiState wstunnelUiState() { return s_ui_state; }
 
-void wstunnelInit(bool deferConnect)
+void wstunnelInit()
 {
     static bool inited = false;
     if (inited) return;
@@ -1246,16 +1230,9 @@ void wstunnelInit(bool deferConnect)
         }
     }
 
-    s_deferred = deferConnect;
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (s_cfg.enabled && !deferConnect) {
+    if (s_cfg.enabled) {
         start_client_locked();
-    } else if (s_cfg.enabled) {
-        // Deferred (post-OTA self-test): keep the icon "connecting" — the saved
-        // s_ui_state from above already reflects that — and wait for the OTA
-        // self-test to fire wstunnelApply() once the image is marked valid.
-        // s_deferred (above) makes every reconnect trigger a no-op until then.
-        ESP_LOGI(TAG, "connect deferred until post-OTA self-test completes");
     }
     xSemaphoreGive(s_lock);
 

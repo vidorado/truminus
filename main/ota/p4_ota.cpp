@@ -646,11 +646,10 @@ static void check_task(void*) {
     // slices so the skip is responsive; publish the deadline for the UI.
     //
     // BUT NOT during PENDING_VERIFY: a version-check TLS handshake is a big
-    // internal-DRAM spike (same class as the WSS handshake the self-test
-    // defers), and on a fully-provisioned board it can push free DRAM below the
-    // self-test floor and roll the freshly-OTA'd image back.  So while the
-    // image is unverified, ignore the skip and keep waiting until the self-test
-    // marks it valid — exactly when wstunnelApply() is also allowed to run.
+    // internal-DRAM spike, and unlike the tunnel/BLE workload it is pure
+    // background convenience — nothing about the update needs it validated. Keep
+    // it out of the self-test window (one less spike there), so while the image is
+    // unverified we ignore the skip and wait until the self-test marks it valid.
     s_warmup_end_ms.store((uint32_t)(esp_timer_get_time() / 1000ULL) + INITIAL_CHECK_DELAY_MS);
     for (uint32_t slept = 0; slept < INITIAL_CHECK_DELAY_MS; slept += 250) {
         if (s_check_request.load() && !p4OtaPendingVerify()) break;
@@ -1314,13 +1313,6 @@ static void selftest_task(void*) {
     ESP_LOGI(TAG, "image marked valid — rollback cancelled (min free_int during "
                   "self-test was %u B, floor %u B)",
              (unsigned)min_free, (unsigned)HEAP_FLOOR);
-
-    // The WSS tunnel was deferred for this PENDING_VERIFY boot (its TLS
-    // handshake is the heaviest internal-DRAM/SRAM consumer and, coinciding
-    // with WiFi/BLE bring-up, is what sustained the heap below the floor).
-    // Now the image is valid, so the handshake can no longer roll us back —
-    // bring the tunnel up.  No-op if the tunnel is disabled in NVS.
-    wstunnelApply();
 
     // App image is good — bring the web assets (LittleFS) in line with this
     // release.  Cheap no-op when /littlefs/fs.ver already matches the marker.

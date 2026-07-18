@@ -37,14 +37,10 @@ struct TunnelConfig {
 };
 
 // Load config from NVS + spawn worker task (no-op if disabled).  Safe to
-// call once from bootTask after WiFi has an IP.
-//
-// deferConnect: set up the task + handlers but DON'T open the connection yet,
-// even if enabled.  Used on a freshly-OTA'd (PENDING_VERIFY) boot so the TLS
-// handshake's internal-DRAM/SRAM spike doesn't coincide with WiFi/BLE bring-up
-// during the self-test heap-floor window.  The icon stays CONNECTING; the OTA
-// self-test calls wstunnelApply() to bring it up once the image is valid.
-void wstunnelInit(bool deferConnect = false);
+// call once from bootTask after WiFi has an IP.  Connects immediately when
+// enabled — including on a freshly-OTA'd (PENDING_VERIFY) boot, so the self-test
+// validates the TLS handshake under the L2-cache DRAM headroom.
+void wstunnelInit();
 
 void wstunnelLoadConfig(TunnelConfig& out);
 void wstunnelSaveConfig(const TunnelConfig& cfg);

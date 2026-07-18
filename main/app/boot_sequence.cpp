@@ -117,11 +117,12 @@ static void bootTask(void* /*arg*/) {
 
     // WebSocket reverse tunnel — exposes the local HTTP server through CGNAT
     // via a Plesk-hosted Node.js bridge.  Spawns its own task; respects the
-    // "tunnel/enabled" NVS flag.  On a freshly-OTA'd image the tunnel's TLS
-    // handshake is deferred (p4OtaPendingVerify): connecting it during the
-    // self-test cratered free internal DRAM to ~255 B (worse than the ~7 KB when
-    // deferred). The OTA self-test resumes it once the image is valid.
-    wstunnelInit(p4OtaPendingVerify());
+    // "tunnel/enabled" NVS flag.  The TLS handshake runs at boot even on a
+    // freshly-OTA'd image (PENDING_VERIFY): the L2-cache DRAM headroom keeps it
+    // clear of the self-test floor, and bringing it up inside the window is
+    // deliberate — the self-test then validates the tunnel too, and env_ready()
+    // can fast-pass on a CONNECTED tunnel. See the firmware-ota skill.
+    wstunnelInit();
     heapDiagMark("wstunnel_init");
 
     // WS pump runs at 100 ms cadence so touch inputs on the LCD reach
