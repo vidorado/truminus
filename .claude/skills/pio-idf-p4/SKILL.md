@@ -141,16 +141,44 @@ separate flash MSPI bus). **DRAM-neutral** (code → flash, not internal DRAM), 
 it keeps the L2 headroom; verified glitch-free in steady-state, UI smooth.
 **Ship the two together** (`sdkconfig.defaults`).
 
-**Caveat — this fixes steady-state, NOT the OTA *download*.** During a self-OTA
-the app *writes* ~2.3 MB to the app1 flash partition; a program/erase blocks the
-flash MSPI bus for its duration, stalling XIP code fetches and briefly starving
-the panel refresh → a black↔cyan background flicker on the full-screen OTA
-progress screen (cosmetic; the dialog stays readable and the update succeeds).
-The textbook lever (`CONFIG_SPI_FLASH_AUTO_SUSPEND`) is unreliable on this
-board's **Boya** flash (mfr `0x68`; IDF suspend is validated for GD/Winbond/XMC/
-ISSI), so instead the render-side mitigation is `displaySyncTick()` skipping the
-whole-UI rebuild while `p4OtaInstalling()` — one less consumer of CPU/PSRAM/
-LVGL-lock contending with the flash writes.
+**Caveat — this fixes steady-state, NOT the OTA *download*, and that one is
+UNFIXABLE here (accepted as cosmetic).** During a self-OTA the app *writes*
+~2.3 MB to the app1 flash partition, and the whole download shows a black↔cyan
+flicker on the full-screen OTA progress screen (cosmetic; content stays readable,
+the update is 100% reliable). Root cause was pinned on the bench with a `glitch`
+CLI diagnostic (stress one bus at a time behind the OTA screen — not committed):
+
+- **It is NOT flash-bus vs framebuffer, and NOT PSRAM-bus contention.** Hammering
+  PSRAM↔PSRAM memcpy at ~51 MB/s (above the framebuffer's ~46 MB/s) did **not**
+  flicker. Only flash *writes* did.
+- **It is the cache disable.** Every flash program/erase calls
+  `spi_flash_disable_interrupts_caches_and_other_cpu()`, which turns off the **L2
+  cache**. On the P4 *all* PSRAM access — including the MIPI-DSI DMA fetching the
+  framebuffer — is routed through L2, so while the cache is off the scan-out
+  starves → underrun → cyan. Both **erase** (long ~40 ms cache-off, worse) and
+  **program** (sub-ms, milder) windows flicker.
+
+Why nothing clean fixes it on this board:
+
+- **Bounce buffer** (the textbook fix — feed the panel from an internal-SRAM slice
+  immune to cache-off) **does not exist for MIPI-DSI** in IDF 6.0 *or master*
+  (`esp_lcd_dpi_panel_config_t` has no `bounce_buffer_size_px`; it is RGB-only).
+- **Framebuffer in internal RAM** is impossible: 800×480×2 = **768 KB** ≫ the
+  ~117 KB free internal DRAM.
+- **`CONFIG_SPI_FLASH_AUTO_SUSPEND`** *would* fix it (keeps the cache enabled,
+  suspending the flash op only briefly for reads) — but on this board's **Boya**
+  flash (mfr `0x68`; IDF suspend is validated only for GD/Winbond/XMC/ISSI) it
+  **boot-loops the board** (early hang at flash init / XIP fetch, register dump).
+  Verified on the bench — **do NOT re-enable it.**
+
+So the download flicker is architectural (P4 + MIPI-DSI + PSRAM framebuffer +
+cache-off-on-flash-write) and is **accepted as cosmetic**. `bulk_flash_erase=true`
+was considered but rejected: it only moves the *erase* flicker into one upfront
+burst; the *program* flicker persists through the whole download, so the visible
+result is unchanged. A harmless side-cleanup shipped anyway: `displaySyncTick()`
+skips the whole-UI rebuild while `p4OtaInstalling()` (the main screen is inactive
+under the OTA screen), saving pointless CPU/LVGL work — it does **not** affect the
+flicker (that is below LVGL).
 
 **Diagnosing future cases:**
 - Print free internal heap (`heap_caps_get_free_size(MALLOC_CAP_INTERNAL)`)

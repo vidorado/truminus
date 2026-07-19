@@ -27,10 +27,12 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
     p4OtaBeat(P4OTA_BEAT_LOOP);   // liveness for the post-OTA self-test
 
     // During a firmware install the full-screen OTA progress screen owns the
-    // panel and refreshes itself (p4DisplaySetOtaProgress). Skip the whole-UI
-    // rebuild below: redrawing the now-inactive main screen every tick only adds
-    // CPU / PSRAM / LVGL-lock churn that, coinciding with the download's flash
-    // writes, worsens the panel underruns (the black↔cyan background flicker).
+    // panel and refreshes itself (p4DisplaySetOtaProgress), so skip the whole-UI
+    // rebuild below — the main screen is inactive under the OTA screen and
+    // redrawing it every tick is wasted CPU/LVGL work. NOTE: this does NOT affect
+    // the download's black↔cyan flicker; that is an L2-cache-off framebuffer
+    // underrun below LVGL (see pio-idf-p4 skill), unfixable on this board and
+    // accepted as cosmetic. This early-out is purely a CPU-saving cleanup.
     // Dismiss any stale dialog once as the install starts so it can't outlive the
     // switch to the OTA screen.
     static bool s_wasInstalling = false;
