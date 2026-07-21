@@ -103,6 +103,10 @@ static uint8_t           s_writeShadow[30] = {};
 static bool              s_haveShadow      = false;
 
 static volatile uint32_t s_lastSeenMs  = 0;
+// millis() of the last telemetry frame parsed (notification or keepalive READ).
+// Owned by the supervisor task (every parse path runs there), so a plain word is
+// safe. Paces the keepalive READ against the unit's own notification cadence.
+static uint32_t          s_lastFrameMs = 0;
 
 // Full advertised address (incl. type) of the matched peer, captured at scan
 // time.  We connect with THIS rather than NimBLEAddress(mac, 0): the OpenAir
@@ -153,9 +157,23 @@ static volatile int   s_lastDiscReason = 0;
 // cycle. Cross-task free is unsafe, so we only ever signal via this flag.
 static volatile bool  s_dropRequested  = false;
 
-// Telemetry older than this (3 missed 15 s polls) means the A/C has dropped off
-// — the UI treats it as disconnected even though the last frame is still cached.
-static const uint32_t AC_STALE_MS = 45000;
+// Telemetry older than this means the A/C has dropped off — the UI treats it as
+// disconnected even though the last frame is still cached. The window depends on
+// the unit's power state: a RUNNING unit streams frequently, but a unit in standby
+// (OFF) only emits a frame about every ~100 s (measured), so it needs a wider
+// window or it would false-flag as disconnected between its own frames. The
+// keepalive READ (OA_KEEPALIVE_MS) refreshes both cases sooner while the link is
+// healthy; these windows are the fallback if a keepalive read is missed/blocked.
+static const uint32_t AC_STALE_ON_MS  = 60000;    // unit ON:  frequent telemetry
+static const uint32_t AC_STALE_OFF_MS = 120000;   // unit OFF: ~100 s between frames
+
+// Keepalive READ cadence. When the unit has not streamed a telemetry frame within
+// this window, openairPollOnce() issues one READ of the data characteristic to
+// pull a fresh frame on demand. A READ (unlike a setpoint WRITE) does NOT make the
+// unit re-apply a command, so it triggers no beep/LED flash; it also doubles as a
+// link-liveness probe. Only issued when the unit has gone quiet, so a chatty unit
+// adds zero extra ATT traffic.
+static const uint32_t OA_KEEPALIVE_MS = 15000;
 
 // Once the A/C is confirmed unreachable (s_acNeedsPair), stop hammering it: a
 // stuck cool command would otherwise force a connect attempt EVERY supervisor
@@ -262,6 +280,7 @@ static bool parseNotification(const uint8_t* ascii, int len) {
     d.probe2C = (float)(int16_t)readU16BE(bytes, 54);  // field 25 Sonda2C
     d.valid   = true;
     d.lastMs  = millis();
+    s_lastFrameMs = d.lastMs;   // pace the keepalive READ off this
 
     ESP_LOGI(TAG, "telemetry probe1=%.0f probe2=%.0f blower=%d%% comp_rpm=%d err=%d batt=%d pwr=%d",
              d.probe1C, d.probe2C, d.blowerSpeedPct, d.compressorSpeedRpm, d.errors,
@@ -295,6 +314,18 @@ static void drainTelemetry() {
     bool any = false;
     while (xSemaphoreTake(s_notifySem, 0) == pdTRUE) any = true;
     if (any) copyAndParse();
+}
+
+// Keepalive: pull a telemetry frame with a READ when the unit has gone quiet, so
+// a healthy-but-silent held link doesn't age past the stale window into a false
+// "disconnected". A READ returns the same 124-char frame as a notification and,
+// unlike a WRITE, does not make the unit re-apply a command (no beep/LED flash).
+// A short/garbage read is parsed as a no-op (parseNotification rejects it before
+// touching any state). Runs on the supervisor task; blocks for one ATT round-trip.
+static void keepaliveRead() {
+    if (!s_dataChar || !s_client || !s_client->isConnected()) return;
+    NimBLEAttValue v = s_dataChar->readValue();
+    if (v.size() >= 120) parseNotification(v.data(), (int)v.size());
 }
 
 static void writeU16BE(uint8_t* b, int off, unsigned v) {
@@ -547,6 +578,10 @@ bool openairPollOnce() {
     // on its own; a queued command is written over the open link.
     if (connected) {
         drainTelemetry();
+        // Keepalive READ only when the unit has streamed nothing recently, so a
+        // quiet link stays fresh without adding traffic to a chatty one.
+        if (s_lastFrameMs && (millis() - s_lastFrameMs) >= OA_KEEPALIVE_MS)
+            keepaliveRead();
         flushPendingCmd();
         return true;
     }
@@ -604,7 +639,10 @@ bool openairNeedsPair() { return s_acNeedsPair; }
 bool openairConnected() {
     if (!s_dataMux) return false;
     xSemaphoreTake(s_dataMux, portMAX_DELAY);
-    bool live = s_data.valid && (millis() - s_data.lastMs) < AC_STALE_MS;
+    // A standby (OFF) unit reports far less often, so widen the window; use the
+    // last reported PowerState (byte 10: 0=OFF, 1=ON) to pick it.
+    uint32_t stale = (s_data.uPowerState == 0) ? AC_STALE_OFF_MS : AC_STALE_ON_MS;
+    bool live = s_data.valid && (millis() - s_data.lastMs) < stale;
     xSemaphoreGive(s_dataMux);
     return live;
 }
