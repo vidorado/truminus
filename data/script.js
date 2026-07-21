@@ -25,6 +25,11 @@ var s_acFanSpeed  = 3;           // cool+Man blower speed 1..6
 var s_acFlap1     = 0;           // louver 1 mode — raw wire 0/1 (see OA_FLAP_* firmware)
 var s_acFlap2     = 0;           // louver 2 mode — raw wire 0/1
 var s_acConnected = false;       // true when BLE poll returned valid telemetry
+// Tri-state gate: false until the first 'ac' frame lands, so a fresh page load /
+// reconnect shows a neutral "not-yet-known" state instead of a false "A/C offline"
+// during the connect→snapshot round-trip. Stays true across reconnects (the last
+// known state is kept, no re-flash). "unknown" ≠ "disconnected".
+var s_acKnown     = false;
 var s_acNeedsPair = false;        // unit dropped pairing (shows "Bt") — prompt re-pair
 var s_acCompRpm   = 0;           // A/C compressor speed (RPM); >0 → snowflake blinks
 var s_acErrCode   = 0;           // OpenAir Errors value (0 = no fault)
@@ -842,7 +847,7 @@ function refreshIndicators() {
                      (s_acMode === 'cool' || s_acMode === 'eco');
     var coolOn      = acSelected && s_acConnected;   // confirmed by BLE poll
     var compOn      = coolOn && s_acCompRpm > 0;      // compressor running
-    var acStrike    = acSelected && !s_acConnected;   // cooling wanted but unreachable
+    var acStrike    = acSelected && s_acKnown && !s_acConnected;   // cooling wanted but unreachable (known state only)
     var heatOn      = linOk && s_heat;
     var heatDemand  = heatOn && s_roomTemp !== null && (s_roomTemp < s_temp - 0.3);
     var fireIcon = document.querySelector('#ind-fire i');
@@ -1071,8 +1076,13 @@ function footerAlerts() {
     // state is unreachable and the alert would never fire. Rejecting handshake
     // ("Bt") gets the actionable re-pair text; a plain unreachable unit gets the
     // generic offline line.
-    if (!wserror && s_openair && !s_heat && !s_acConnected) {
+    if (!wserror && s_openair && !s_heat && s_acKnown && !s_acConnected) {
         list.push({ text: t(s_acNeedsPair ? 'ac_repair' : 'ac_offline'), col: '#ff4444' });
+    } else if (!wserror && s_openair && !s_heat && !s_acKnown) {
+        // "unknown" phase: the first telemetry frame hasn't landed yet, so cool/eco
+        // are disabled. Say so (neutral info, no warning triangle) instead of the
+        // false "offline" alert, so the user knows why the controls are greyed.
+        list.push({ text: t('ac_connecting'), col: '#8aa0b8', info: true });
     }
     var f = resolveFault();
     if (f) list.push({ text: f.short, col: f.col });
@@ -1091,13 +1101,18 @@ function renderFooterAlerts() {
     if (list.length === 0) { line.textContent = ''; line.style.color = ''; return; }
     if (s_alertIdx >= list.length) s_alertIdx = 0;
     var a = list[s_alertIdx];
-    // FA solid warning triangle (U+F071, fa6s) + the message, matching the LCD.
+    // Warnings get the FA solid warning triangle (U+F071, fa6s), matching the LCD;
+    // a neutral info line (e.g. "Connecting to A/C\u2026") carries no triangle.
     line.textContent = '';
-    var ico = document.createElement('i');
-    ico.className = 'fi alert-tri';
-    ico.textContent = '\uF071';
-    line.appendChild(ico);
-    line.appendChild(document.createTextNode(' ' + a.text));
+    if (!a.info) {
+        var ico = document.createElement('i');
+        ico.className = 'fi alert-tri';
+        ico.textContent = '\uF071';
+        line.appendChild(ico);
+        line.appendChild(document.createTextNode(' ' + a.text));
+    } else {
+        line.appendChild(document.createTextNode(a.text));
+    }
     line.style.color = a.col;
 }
 // Rotate the footer alert every 5 s (only advances when >1 alert is active).
@@ -1300,6 +1315,7 @@ function applyAc(d) {
     // `valid` frame — so the snowflake strikes through the moment the unit drops
     // off (remote override, out of range, powered down…).
     s_acConnected = !!d.conn;
+    s_acKnown     = true;   // real state has arrived — leave the "unknown" phase
     s_acCompRpm   = parseInt(d.comp_rpm) || 0;
     var code = parseInt(d.errors) || 0;
     if (code !== s_acErrCode) {
