@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+# TruMinus pre-commit guard.
+#
+# Keeps data/index.html (and CSS url()) cache-bust ?v= hashes in sync with the
+# actual asset bytes, so the "edited a JS/CSS asset, committed without a build"
+# pattern never lands stale hashes in git (scripts/cache_bust.py normally only
+# runs at build time). cache_bust.py is deterministic and a no-op when the
+# hashes already match, so a clean commit sails through untouched.
+#
+# Install (per clone): git config core.hooksPath .githooks
+set -e
+
+root=$(git rev-parse --show-toplevel)
+py=$(command -v python3 || true)
+[ -z "$py" ] && exit 0   # no python -> leave it to the build-time cache_bust
+
+out=$("$py" "$root/scripts/cache_bust.py" 2>&1 || true)
+case "$out" in
+  *updated:*)
+    echo "$out"
+    echo "pre-commit: data/ cache-bust hashes were stale and have been refreshed."
+    echo "            stage them and commit again:  git add -u data/"
+    exit 1
+    ;;
+esac
+exit 0

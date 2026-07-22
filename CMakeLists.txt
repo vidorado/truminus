@@ -147,4 +147,37 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
         COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/apply_patches.py
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
+
+    # Refresh the esp32p4-docs skill's Kconfig option index when IDF changed.
+    # --if-stale compares the recorded IDF git HEAD and no-ops otherwise, so
+    # this stays cheap on every configure. Uses the build's own IDF_PATH.
+    set(_p4docs_idf_arg "")
+    if(DEFINED ENV{IDF_PATH})
+        set(_p4docs_idf_arg --idf $ENV{IDF_PATH})
+    endif()
+    execute_process(
+        COMMAND python3
+            ${CMAKE_CURRENT_SOURCE_DIR}/.claude/skills/esp32p4-docs/gen_config_index.py
+            --if-stale ${_p4docs_idf_arg}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    # Install the tracked pre-commit hook on any clone, so it works after a
+    # plain `git clone` + build without a per-machine setup step. Points
+    # core.hooksPath at .githooks/; idempotent, and overrides any stale value.
+    find_program(GIT_EXECUTABLE git)
+    if(GIT_EXECUTABLE)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} rev-parse --is-inside-work-tree
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            OUTPUT_VARIABLE _in_git OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(_in_git STREQUAL "true")
+            execute_process(
+                COMMAND ${GIT_EXECUTABLE} config core.hooksPath .githooks
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            )
+        endif()
+    endif()
 endif()
