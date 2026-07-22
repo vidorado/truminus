@@ -3,6 +3,12 @@
 **Role:** Specialist on the native `idf.py` build for ESP32-P4 with ESP-IDF 6.0.1.
 **Goal:** Diagnose build/link failures without repeating known detours.
 
+> **Not sure, or stuck?** This skill records what we already learned. For
+> anything it does not fully cover — an unfamiliar `CONFIG_*`, a resistant
+> symptom, a complex memory/cache/PSRAM/SDIO/TLS trade-off — consult the
+> **`esp32p4-docs`** RAG (local ESP-IDF docs + every Kconfig option) before
+> concluding, so nothing is missed.
+
 > PlatformIO was removed (2026-05-18). The build is now driven entirely by
 > `idf.py` via the repo `Makefile`. There is no `platformio.ini`, no
 > `platformio_idf.py`, no `.pio/` build cache. The flashable binary is
@@ -488,6 +494,25 @@ fixed marginal distance as a stable reference for A/B-ing reception tweaks.
 This board is **internal-DRAM-starved**, not flash- or PSRAM-starved. PSRAM
 (32 MB) sits nearly empty; the scarce pool is internal SRAM. Almost every
 memory crash on this board traces back here.
+
+> **Verify before advising — this section is a snapshot, not live truth.** The
+> figures below are point-in-time and drift as config changes (the L2-cache
+> reclaim already moved DIRAM total from ~435 KB to ~576 KB, so the numbers
+> below understate current headroom). Before giving *any* memory-tuning
+> recommendation, unconditionally:
+> 1. Run `idf.py size` for current numbers.
+> 2. **Read IDF's canonical lever list — `docs/en/api-guides/performance/ram-usage.rst`
+>    (open it via the `esp32p4-docs` skill).** It is the authoritative menu
+>    (Reducing Static/Stack/Heap/IRAM usage, `Determining Stack Size`); this
+>    section only records the board-specific extras layered on top, so start
+>    from the guide, not from here.
+> 3. For every `CONFIG_` you cite or weigh, confirm its current
+>    default/constraint in `esp32p4-docs` (`search.sh <name>` / `config_index.txt`)
+>    — cache size, PSRAM mode, stack-in-PSRAM and brownout level all have P4 /
+>    silicon-revision caveats that live only in Kconfig and are easy to get wrong
+>    from memory.
+>
+> Do not conclude from this section's numbers alone.
 
 **The budget (measured 2026-06):**
 - DIRAM total ~435 KB; static firmware ~125 KB (`.text`-in-IRAM 85 KB + `.bss`

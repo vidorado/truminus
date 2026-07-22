@@ -10,6 +10,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Comments describe the current state of the code, not its history.** Once a bug is fixed, the comment explains how the code works now — never "this used to do X", "previously failed because…", or "changed from Y". The one exception is a **gotcha that can recur**: a non-obvious constraint a future change could re-break (e.g. "the snapshot must list every field the change-broadcaster covers"). Phrase those as a forward-looking invariant, not a war story. The same applies to commit messages: describe the change, don't narrate the debugging journey.
 
+## Research discipline — don't satisfice
+
+**When the result isn't good, dig into the docs instead of settling.** For *any*
+topic touching ESP-IDF or the ESP32-P4 — not just memory/RAM — if a fix didn't
+work, a symptom persists after a change, a test still fails, a second attempt
+missed, or you're about to answer from memory or a distilled skill without a
+cited source, **stop and search the `esp32p4-docs` RAG** (local ESP-IDF docs +
+every `CONFIG_*` option; `search.sh <term>` / `config_index.txt`) before you
+conclude, retry blindly, or give up. A skill captures what we already learned and
+is a *starting point*, not the last word — the docs and Kconfig it was distilled
+from are the source of truth and routinely hold a knob, default or
+silicon-revision caveat the skill omits (e.g. the ES-silicon fixed brownout
+threshold). Prefer citing a doc/Kconfig line over asserting from memory.
+
 ## Project Overview
 
 TruMinus is firmware for the **JC4880P443C** board (ESP32-P4) that emulates a Truma CP-Plus D control unit to manage a **Truma Combi D** heater over the LIN bus. Control surfaces: MQTT, WebSocket web UI, serial CLI, and a physical 800×480 LCD with capacitive touch. Solar charge data (Victron BLE) and battery SOC (Ultimatron BLE) are surfaced on both the LCD and the web UI.
@@ -173,6 +187,7 @@ WiFi config · MQTT config · Monitorización (Victron/Ultimatron/tank/Multiplus
 ## Related skills
 
 - **`pio-idf-p4`** — build system, IDF 6.0 pitfalls, P4 memory layout, ModemManager, corrupted build dir, USB-Serial-JTAG console, CI caching, `PROJECT_VER`, WiFi power save, LittleFS/Flash-button, RMT open-drain, DRAM exhaustion cascade.
+- **`esp32p4-docs`** — local RAG over the ESP-IDF docs (`~/esp/esp-idf/docs/en/*.rst`) + all `CONFIG_*` Kconfig options (precomputed `config_index.txt`, `search.sh`). Consult before answering any ESP-IDF/P4 platform, API, cache/memory-tuning or `sdkconfig`-option question — and **always** for complex/cross-subsystem problems, when unsure an option exists, or when a fix is proving resistant, so no Kconfig knob (like the L2 cache) is missed.
 - **`firmware-ota`** — P4 self-OTA: GitHub-Releases-direct discovery, versioning, auto-prompt policy, transfer tuning, PENDING_VERIFY self-test/rollback net.
 - **`wss-tunnel`** — WSS reverse tunnel (firmware side): two-httpd split, Nagle on loopback, LRU eviction, mbedtls/PSA heap, plus the local httpd/WS server gotchas. Bridge side: companion repo [`vidorado/truminus-cloud-server`](https://github.com/vidorado/truminus-cloud-server) → `tunnel-bridge` skill.
 - **`ui-interfaces`** — LCD touch UI ↔ WebSocket web UI coordination, layout, responsive CSS gotchas, panel semantics.
