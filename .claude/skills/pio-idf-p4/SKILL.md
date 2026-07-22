@@ -514,24 +514,33 @@ memory crash on this board traces back here.
 >
 > Do not conclude from this section's numbers alone.
 
-**The budget (measured 2026-06):**
-- DIRAM total ~435 KB; static firmware ~125 KB (`.text`-in-IRAM 85 KB + `.bss`
-  24 KB + `.data` 18 KB) → ~310 KB heap at boot (`idf.py size`).
-- Runtime fills it to **~22 KB free steady-state** (esp_hosted WiFi+BLE over
-  SDIO + NimBLE host + lwip + the WSS tunnel's TLS). PSRAM stays ~26 MB free.
-- Internal heap is ~95 % full: a 256 KB region of ~2100 small (~124 B) blocks +
-  a 113 KB region — network/TLS/BLE working set, much of it DMA-pinned.
+**The budget (static measured 2026-07; runtime floor needs an on-target read):**
+- DIRAM total 576 KB; static firmware ~116 KB (`.text`-in-IRAM ~76 KB + `.bss`
+  ~25 KB + `.data` ~15 KB) → ~447 KB heap at boot (`idf.py size`). The L2-cache
+  reclaim (256→128 KB) is what lifted total from ~435 KB and boot heap from
+  ~310 KB.
+- Runtime fills it with the esp_hosted WiFi+BLE (SDIO) + NimBLE host + lwip +
+  WSS-tunnel TLS working set, much of it DMA-pinned; PSRAM stays ~26 MB free.
+  Steady-state free internal is **not** derivable from `idf.py size` — measure it
+  live (heap-caps / a `mem` CLI) instead of trusting a number here. It bottomed
+  at ~22 KB before the L2 reclaim; the reclaim widened that margin, but confirm
+  on-target after any change.
+- Under load the internal heap is mostly a large population of small (~124 B)
+  network/TLS/BLE blocks plus a ~113 KB region, much of it DMA-pinned/unmovable.
 
 **Why it bites — the OTA self-test heap floor.** `p4_ota.cpp` rolls back if free
-internal stays below `HEAP_FLOOR` (12 KB) for `HEAP_BREACH_LIMIT` samples. With
-only ~10 KB headroom, anything that spikes internal use during the
+internal stays below `HEAP_FLOOR` (12 KB) for `HEAP_BREACH_LIMIT` samples. When
+internal headroom is thin, anything that spikes internal use during the
 PENDING_VERIFY boot tips it over. Observed trigger: **weak BLE coverage** — a
 failing/slow Ultimatron GATT connect holds NimBLE buffers longer, and (with BLE
 bring-up overlapping WiFi's transient buffers) free internal dipped to **6 KB**
 → "heap floor breached" rollback. The same starvation also surfaced as a NimBLE
 `Load access fault` in `NimBLEAdvertisedDevice::update` (corruption near OOM).
-The rollback reason is written to the faultlog `diag` record so it shows in the
-web About overlay even on the rolled-back-to image (see firmware-ota skill).
+The L2 reclaim widened the margin so this is no longer acute, but it stays an
+invariant: keep internal headroom well clear of `HEAP_FLOOR` across the entire
+PENDING_VERIFY workload. The rollback reason is written to the faultlog `diag`
+record so it shows in the web About overlay even on the rolled-back-to image
+(see firmware-ota skill).
 
 **Forced to internal — cannot move to PSRAM:**
 - Task stacks from plain `xTaskCreate`. `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y`
