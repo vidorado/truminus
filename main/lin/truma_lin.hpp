@@ -33,4 +33,10 @@ struct TrumaLinSnapshot {
 void trumaLinStart(int tx_pin, int rx_pin);
 
 // Thread-safe snapshot accessor for the main loop / WS pump.
-void trumaLinGetSnapshot(TrumaLinSnapshot& out);
+//
+// Returns false and leaves `out` UNTOUCHED if the lock could not be taken, so
+// the caller keeps its last known values. It must not report a zeroed snapshot
+// on contention: linOk would read false and the temperatures as no-data, which
+// is indistinguishable from a genuinely dead bus — momentary contention would
+// flash "No LIN bus" on the LCD and push linok=0 to every browser.
+bool trumaLinGetSnapshot(TrumaLinSnapshot& out);

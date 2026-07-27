@@ -353,13 +353,9 @@ void trumaLinStart(int tx_pin, int rx_pin) {
     ESP_LOGI(TAG, "scheduler started on UART1 TX=%d RX=%d @9600", tx_pin, rx_pin);
 }
 
-void trumaLinGetSnapshot(TrumaLinSnapshot& out) {
-    if (g_lock && xSemaphoreTake(g_lock, pdMS_TO_TICKS(10)) == pdTRUE) {
-        out = g_snap;
-        xSemaphoreGive(g_lock);
-    } else {
-        out = {};
-        out.roomTemp  = NAN;
-        out.waterTemp = NAN;
-    }
+bool trumaLinGetSnapshot(TrumaLinSnapshot& out) {
+    if (!g_lock || xSemaphoreTake(g_lock, pdMS_TO_TICKS(10)) != pdTRUE) return false;
+    out = g_snap;
+    xSemaphoreGive(g_lock);
+    return true;
 }
