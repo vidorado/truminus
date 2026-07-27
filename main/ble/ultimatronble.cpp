@@ -52,11 +52,16 @@ static UltimatronData    s_data     = {};
 
 static volatile bool s_ultSuspended = false;
 
-// Freshness window: a stored sample older than this is reported as invalid so
-// the LCD/web surface "no connection" instead of a misleading stale reading.
-// Sized at ~4 poll intervals (poll cadence ~30 s) so a few missed polls don't
-// flap the panel, but a BMS that stops responding is flagged within ~2 min.
-static const uint32_t ULT_STALE_MS = 120000;
+// Two freshness windows, because the two readings age very differently:
+//   SOC changes slowly and stays useful long after the link drops, so a 5 min
+//   window keeps the battery panel up (with the last SOC) through a few missed
+//   polls or a temporary BLE outage.
+//   Charge/discharge (battV/battA → power) can flip sign in seconds, so a stale
+//   current shown as live is misleading; it expires at ~35 s (just over the
+//   ~30 s poll cadence) so a healthy link never flaps but a real loss of data
+//   blanks the power/flow within one cycle.
+static const uint32_t ULT_SOC_STALE_MS  = 300000;   // 5 min
+static const uint32_t ULT_FLOW_STALE_MS = 35000;    // ~35 s
 
 // DIAGNOSTIC: last time the BMS MAC was seen in a scan window (0 = never).
 static volatile uint32_t s_lastSeenMs = 0;
@@ -133,9 +138,11 @@ bool ultimatronPollOnce(bool blind) {
     }
     // Recovery poll of a non-advertising BMS: a single short attempt so a miss
     // only briefly displaces the passive scans. Preferred poll (seen recently):
-    // full budget, since a present BMS answers well inside it.
-    const uint32_t connTimeout = blind ? 2000 : 5000;
-    const int      maxAttempts = blind ? 1    : 3;
+    // a present BMS lands on the first attempt, so keep the budget tight — this
+    // connect BLOCKS the shared BLE loop, and every second here is a second an
+    // A/C flap command can be stuck waiting behind it.
+    const uint32_t connTimeout = blind ? 2000 : 4000;
+    const int      maxAttempts = blind ? 1    : 2;
     client->setConnectTimeout(connTimeout);
 
     bool connected = false;
@@ -181,7 +188,7 @@ bool ultimatronPollOnce(bool blind) {
 
     const uint8_t cmd[] = {0xDD, 0xA5, 0x03, 0x00, 0xFF, 0xFD, 0x77};
     bool got = false;
-    for (int attempt = 1; attempt <= 5 && !got; attempt++) {
+    for (int attempt = 1; attempt <= 3 && !got; attempt++) {
         s_rxLen = 0; memset(s_rxBuf, 0, sizeof(s_rxBuf));
         while (xSemaphoreTake(s_rxSem, 0) == pdTRUE) {}
         writeChar->writeValue(cmd, sizeof(cmd), false);
@@ -261,7 +268,7 @@ UltimatronData ultimatronGetData() {
     d.battA = -1.5f + 1.0f * sinf(t * 0.9f);
     d.battV = 13.0f + 0.2f * sinf(t * 1.1f);
     d.tempC = 18.0f + 3.0f * sinf(t * 0.4f);
-    d.valid = true; d.lastMs = millis();
+    d.valid = true; d.flowValid = true; d.lastMs = millis();
     return d;
 #else
     UltimatronData copy = {};
@@ -270,11 +277,16 @@ UltimatronData ultimatronGetData() {
         copy = s_data;
         xSemaphoreGive(s_dataMux);
     }
-    // Expire a stale sample: without a fresh successful poll the reading is no
-    // longer trustworthy, so report it as invalid rather than let consumers
-    // paint an hours-old value as if it were live.
-    if (copy.valid && (millis() - copy.lastMs) >= ULT_STALE_MS)
-        copy.valid = false;
+    // Apply the two freshness windows at read time. SOC stays valid (panel up)
+    // for 5 min; the charge/discharge reading expires at ~35 s so consumers can
+    // blank the power/flow while still showing the last SOC.
+    if (copy.valid) {
+        uint32_t age = millis() - copy.lastMs;
+        copy.flowValid = age < ULT_FLOW_STALE_MS;
+        if (age >= ULT_SOC_STALE_MS) { copy.valid = false; copy.flowValid = false; }
+    } else {
+        copy.flowValid = false;
+    }
     return copy;
 #endif
 }
@@ -290,7 +302,7 @@ void ultimatronBleReloadConfig() {}
 
 UltimatronData ultimatronGetData() {
 #ifdef ENABLE_SOLAR_DUMMY
-    static UltimatronData d = { 78, 13.1f, -2.3f, 18.5f, true, 0 };
+    static UltimatronData d = { 78, 13.1f, -2.3f, 18.5f, true, 0, true };
     float t = (float)(esp_timer_get_time() / 1000000ULL);
     d.soc     = (uint8_t)(60 + (int)(20.0f * sinf(t * 0.6f)));
     d.battA   = -1.5f + 1.0f * sinf(t * 0.9f);

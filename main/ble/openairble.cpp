@@ -94,6 +94,10 @@ static OpenAirCmd        s_pendingCmd  = {};
 // Only write a setpoint frame when the user actually changed something. Writing
 // every poll makes the unit re-apply the command each cycle (beep + LED flash).
 static bool              s_hasPendingCmd = false;
+// millis() when the user last queued a command. The BLE supervisor uses it to
+// keep the blocking BMS poll out of the way for a short cooldown after any A/C
+// command, so a run of flap adjustments never stalls behind a GATT connect.
+static volatile uint32_t s_lastCmdMs     = 0;
 // Snapshot of the unit's own write-region (the first 30 bytes of the telemetry
 // frame — every writable field: BatteryType, Power, TempScale, LED, flaps, …).
 // Commands are built ON TOP of this so we only ever change the four fields the
@@ -662,9 +666,12 @@ void openairSetCmd(const OpenAirCmd& cmd) {
         xSemaphoreTake(s_cmdMux, portMAX_DELAY);
         s_pendingCmd = cmd;
         s_hasPendingCmd = true;   // send it on the next poll, then stop re-sending
+        s_lastCmdMs = millis();
         xSemaphoreGive(s_cmdMux);
     }
 }
+
+uint32_t openairLastCmdMs() { return s_lastCmdMs; }
 
 // ── NVS config ───────────────────────────────────────────────────────────────
 bool openairLoadConfig(std::string& addr) {
@@ -765,6 +772,7 @@ uint32_t openairLastPollMs()  { return 0; }
 bool openairIsConfigured()    { return false; }
 OpenAirData openairGetData()  { return {}; }
 void openairSetCmd(const OpenAirCmd&) {}
+uint32_t openairLastCmdMs()   { return 0; }
 bool openairPollOnce()        { return false; }
 bool openairNeedsPair()       { return false; }
 bool openairConnected()       { return false; }

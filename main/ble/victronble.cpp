@@ -481,22 +481,33 @@ static void bleSupervisorTask(void* /*arg*/) {
         // recoverable (not yet in the needs-pair backoff).
         bool oaPriority  = oaReachable && !openairNeedsPair()
                         && (openairCmdPending() || !openairPaired());
+        // Cooldown: for a short window after ANY A/C command, keep the blocking
+        // BMS poll out of the loop even once the command has flushed (pending
+        // clears), so a burst of flap adjustments never lands one command behind
+        // an in-flight GATT connect. Gated on reachability like oaPriority.
+        constexpr uint32_t OA_CMD_COOLDOWN_MS = 15000;
+        uint32_t oaCmd   = openairLastCmdMs();
+        bool oaRecentCmd = oaReachable && oaCmd && (millis() - oaCmd) < OA_CMD_COOLDOWN_MS;
         // Like the A/C link, the BMS GATT poll now runs during the self-test too
         // (no PendingVerify guard): the L2 headroom keeps the concurrent peak above
         // the floor, and letting it run makes the self-test measure the real BLE
         // load rather than a lighter subset — a genuine DRAM problem then rolls back
         // instead of surfacing only after the image is already valid.
         if (ultimatronIsConfigured() && (cycleCount % ULTIMATRON_EVERY_N) == 0
-            && !oaPriority) {
+            && !oaPriority && !oaRecentCmd) {
             // Preferred path: the BMS advertised in the last ~15 s, so a GATT
-            // connect lands fast. Use the full connect budget (3×5 s) since a
-            // present BMS answers well inside it.
+            // connect lands on the first attempt. The budget is kept tight
+            // (2×4 s connect, 3× read) because this poll BLOCKS the shared BLE
+            // loop and any long stall shows up as A/C command latency.
             uint32_t seen = ultimatronLastSeenMs();
             if (seen && (millis() - seen) < 15000) {
                 ultimatronPollOnce();
-            } else if (!ultimatronGetData().valid
+            } else if (!ultimatronGetData().flowValid
                        && (lastUltRecoverMs == 0
                            || millis() - lastUltRecoverMs >= ULT_RECOVER_MS)) {
+                // Trigger on flow-staleness (~35 s since the last good poll),
+                // not the 5 min SOC window — so we start trying to reconnect
+                // ~35 s after data stops, still paced by ULT_RECOVER_MS.
                 // Recovery path: the data has gone stale and the BMS is no
                 // longer advertising (many units stop advertising after their
                 // first connection). Attempt one *short* blind connect (2 s, 1
@@ -509,6 +520,13 @@ static void bleSupervisorTask(void* /*arg*/) {
                 LOG_BLE_PL("[ble-sup] skip ult poll — not advertising recently");
             }
         }
+
+        // A flap command queued WHILE the BMS GATT poll above was blocking this
+        // single BLE loop would otherwise wait out the next scan before
+        // openairPollOnce() flushes it. Flush now over the persistent link (a
+        // no-op fast return when nothing is pending) so it lands immediately.
+        if (openairIsConfigured() && openairCmdPending())
+            openairPollOnce();
 
         cycleCount++;
 

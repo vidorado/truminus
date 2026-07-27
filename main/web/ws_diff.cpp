@@ -26,6 +26,7 @@ bool victronChanged(const VictronData& c, const VictronData& p) {
 
 bool ultimatronChanged(const UltimatronData& c, const UltimatronData& p) {
     return c.valid != p.valid
+        || c.flowValid != p.flowValid   // re-emit when the power/flow blanks or returns
         || (c.valid && (c.soc != p.soc
             || fabsf(c.battV - p.battV) > 0.05f
             || fabsf(c.battA - p.battA) > 0.05f));

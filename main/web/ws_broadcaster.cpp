@@ -251,8 +251,9 @@ static void broadcastBleData() {
     UltimatronData u = ultimatronGetData();
     if (!inited || ultimatronChanged(u, prevU)) {
         snprintf(buf, sizeof(buf),
-                 "{\"command\":\"batt\",\"valid\":%s,\"soc\":%u,\"battV\":%.2f,\"battA\":%.2f}",
-                 u.valid ? "true" : "false", (unsigned)u.soc, u.battV, u.battA);
+                 "{\"command\":\"batt\",\"valid\":%s,\"flow\":%s,\"soc\":%u,\"battV\":%.2f,\"battA\":%.2f}",
+                 u.valid ? "true" : "false", u.flowValid ? "true" : "false",
+                 (unsigned)u.soc, u.battV, u.battA);
         wsQueueSend(buf);
         prevU = u;
     }

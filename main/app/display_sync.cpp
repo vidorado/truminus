@@ -81,12 +81,14 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
     }
 
     if (ud.valid) {
-        d.batt.valid    = true;
-        d.batt.soc      = (int)ud.soc;
-        d.batt.voltageV = ud.battV;
-        d.batt.currentA = ud.battA;
+        d.batt.valid     = true;
+        d.batt.flowValid = ud.flowValid;
+        d.batt.soc       = (int)ud.soc;
+        d.batt.voltageV  = ud.battV;
+        d.batt.currentA  = ud.battA;
     } else {
-        d.batt.valid = false;
+        d.batt.valid     = false;
+        d.batt.flowValid = false;
     }
 
     // Fresh-water tank — BTHome sensor.

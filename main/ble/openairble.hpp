@@ -103,6 +103,10 @@ OpenAirData openairGetData();
 // Update the pending command (thread-safe).  Called from main.cpp whenever the
 // A/C control state changes so the next poll delivers the latest setpoint.
 void openairSetCmd(const OpenAirCmd& cmd);
+// millis() when a command was last queued (0 = none this boot). The BLE
+// supervisor keeps the blocking BMS poll out of the way for a short cooldown
+// after a command so consecutive flap adjustments stay responsive.
+uint32_t openairLastCmdMs();
 
 // True while a user command is queued/in-flight. Callers that reconcile the UI
 // from telemetry use this to avoid fighting a change the user just made.

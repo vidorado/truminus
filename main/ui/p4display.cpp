@@ -2585,7 +2585,9 @@ void p4DisplayUpdate(const P4DisplayData& d)
         lv_label_set_text(ui.lbl_solar_yield_u,   "");
     }
 
-    // Battery
+    // Battery — SOC persists on the long (5 min) freshness window; the
+    // instantaneous charge/discharge power expires far sooner (~35 s), so the
+    // port can read "--" while the SOC is still shown from the last poll.
     if (d.batt.valid) {
         int soc = d.batt.soc;
         if (soc < 0)   soc = 0;
@@ -2594,8 +2596,13 @@ void p4DisplayUpdate(const P4DisplayData& d)
         lv_color_t bc = (soc < 20) ? C_RED : (soc < 50) ? C_AMBER_BAR : C_GREEN;
         lv_obj_set_style_bg_color(ui.bar_batt, bc, LV_PART_INDICATOR);
         lv_label_set_text_fmt(ui.lbl_batt_soc, "%d%%", soc);
+    } else {
+        lv_label_set_text(ui.lbl_batt_soc, "--%");
+        lv_bar_set_value(ui.bar_batt, 0, LV_ANIM_OFF);
+    }
 
-        // CARGA / DESCARGA port — same V×A > 0 = charging convention as the web.
+    // CARGA / DESCARGA port — same V×A > 0 = charging convention as the web.
+    if (d.batt.valid && d.batt.flowValid) {
         int battW = (int)lroundf(d.batt.voltageV * d.batt.currentA);
         char gb[20];
         lv_label_set_text_fmt(ui.lbl_bpwr_w, "%s W", group_int(gb, sizeof(gb), battW));
@@ -2619,8 +2626,6 @@ void p4DisplayUpdate(const P4DisplayData& d)
             lv_obj_add_flag(ui.flow_bpwr_str, LV_OBJ_FLAG_HIDDEN);
         }
     } else {
-        lv_label_set_text(ui.lbl_batt_soc, "--%");
-        lv_bar_set_value(ui.bar_batt, 0, LV_ANIM_OFF);
         lv_label_set_text(ui.lbl_bpwr_w, "--");
         lv_obj_set_style_bg_color(ui.box_bpwr, C_PORT_GREY_BODY, 0);
         lv_obj_set_style_bg_color(ui.hdr_bpwr, C_PORT_GREY_HDR, 0);

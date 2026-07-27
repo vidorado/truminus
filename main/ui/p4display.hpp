@@ -31,6 +31,7 @@ struct P4SolarData {
 
 struct P4BattData {
     bool  valid;      // false → display SOC and bar as "--" / empty
+    bool  flowValid;  // false → SOC still shown, but charge/discharge power as "--"
     int   soc;        // 0–100 %
     float voltageV;
     float currentA;   // pack current [A]; V*A > 0 = charging (web convention)

@@ -9,8 +9,12 @@ struct UltimatronData {
     float    battV;     // pack voltage [V]
     float    battA;     // current [A] (negative = charging in BMS convention)
     float    tempC;     // first NTC temperature [°C]
-    bool     valid;
+    bool     valid;     // SOC trustworthy: sample within the 5 min SOC window
     uint32_t lastMs;    // esp_timer_get_time()/1000 at last valid reception
+    bool     flowValid; // charge/discharge (battV/battA) fresh: within ~35 s.
+                        // A stale current is misleading, so it expires far
+                        // sooner than the slow-moving SOC; consumers show "--"
+                        // for the power/flow while keeping the SOC visible.
 };
 
 // Call once from app_main. Loads NVS config only.

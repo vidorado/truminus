@@ -1353,6 +1353,17 @@ function applyBatt(d) {
         fill.style.background = col;
     }
 
+    // Charge/discharge (power/flow) expires much faster than the SOC. When it's
+    // stale (flow === false) keep the SOC but blank the power and flow. Treat a
+    // missing field as fresh so an older firmware/cached frame still shows it.
+    if (d.flow === false) {
+        if (bpw) bpw.textContent = '--';
+        if (bfl) bfl.classList.remove('active', 'flow-r', 'flow-l');
+        if (bpp) { bpp.classList.remove('batt-chg'); bpp.classList.remove('batt-dis'); }
+        if (bph) bph.textContent = t('batt_charge');
+        return;
+    }
+
     var battV = parseFloat(d.battV) || 0;
     var battA = parseFloat(d.battA) || 0;
     var battW = Math.round(battV * battA);
