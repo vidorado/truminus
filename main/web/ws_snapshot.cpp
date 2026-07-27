@@ -15,18 +15,11 @@
 #include "wifi_manager.hpp"
 #include "wstunnel.hpp"
 #include "mode_controller.hpp"
+#include "ws_frames.hpp"
+#include "ble_status.hpp"
 #include "esp_heap_caps.h"
 #include <cmath>
 #include <cstdlib>
-
-// Format a Multiplus AC power field for JSON: a plain integer, or "null"
-// when the value is the VE.Bus "not available" sentinel (inverter off / not
-// reporting), so the web UI shows no reading instead of a bogus number.
-static const char* multiPowerJson(int32_t w, char* buf, size_t n) {
-    if (w == MULTI_POWER_NA) return "null";
-    snprintf(buf, n, "%d", (int)w);
-    return buf;
-}
 
 void wsSendOtaFrame() {
     P4OtaStatus ota;
@@ -95,110 +88,57 @@ void wsOnConnected() {
     wsQueueSend(buf);
 
     // Push current BLE data so newly-connected browsers don't have to wait
-    // for the next change in broadcastBleData() to populate the panels.
-    VictronData v = victronGetData();
-    snprintf(buf, WS_SNAP_BUF,
-             "{\"command\":\"solar\",\"valid\":%s,\"state\":%u,"
-             "\"pvW\":%d,\"kWh\":%.2f,\"battV\":%.2f,\"battA\":%.2f}",
-             v.valid ? "true" : "false",
-             (unsigned)v.state, (int)v.pvW, v.kWhToday, v.battV, v.battA);
+    // for the next change in the broadcaster to populate the panels.
+    wsFmtSolar(buf, WS_SNAP_BUF, victronGetData());
     wsQueueSend(buf);
 
-    UltimatronData u = ultimatronGetData();
-    snprintf(buf, WS_SNAP_BUF,
-             "{\"command\":\"batt\",\"valid\":%s,\"flow\":%s,\"soc\":%u,\"battV\":%.2f,\"battA\":%.2f}",
-             u.valid ? "true" : "false", u.flowValid ? "true" : "false",
-             (unsigned)u.soc, u.battV, u.battA);
+    wsFmtBatt(buf, WS_SNAP_BUF, ultimatronGetData());
     wsQueueSend(buf);
 
-    TankData tk = tankGetData();
-    snprintf(buf, WS_SNAP_BUF,
-             "{\"command\":\"tank\",\"valid\":%s,\"pct\":%u}",
-             tk.valid ? "true" : "false", (unsigned)tk.pct);
+    wsFmtTank(buf, WS_SNAP_BUF, tankGetData());
     wsQueueSend(buf);
 
-    MultiplusData mp = multiplusGetData();
-    char mpInW[12], mpOutW[12];
-    snprintf(buf, WS_SNAP_BUF,
-             "{\"command\":\"multi\",\"valid\":%s,\"state\":%u,"
-             "\"ac_in_w\":%s,\"ac_out_w\":%s,"
-             "\"batt_v\":%.2f,\"batt_a\":%.1f,"
-             "\"ac_in_state\":%u,\"alarm\":%u,\"soc\":%u}",
-             mp.valid ? "true" : "false",
-             (unsigned)mp.deviceState,
-             multiPowerJson(mp.acInW, mpInW, sizeof(mpInW)),
-             multiPowerJson(mp.acOutW, mpOutW, sizeof(mpOutW)),
-             std::isnan(mp.battV) ? 0.0 : mp.battV, mp.battA,
-             (unsigned)mp.acInState, (unsigned)mp.alarm,
-             (unsigned)mp.soc);
+    wsFmtMulti(buf, WS_SNAP_BUF, multiplusGetData());
     wsQueueSend(buf);
 
     // OpenAir A/C telemetry (last poll result, if any).
     if (openairIsConfigured()) {
-        OpenAirData oa = openairGetData();
-        snprintf(buf, WS_SNAP_BUF,
-                 "{\"command\":\"ac\",\"valid\":%s,\"conn\":%s,"
-                 "\"probe1\":%.1f,\"probe2\":%.1f,"
-                 "\"blower_pct\":%d,\"comp_rpm\":%d,\"errors\":%d,\"needpair\":%s}",
-                 oa.valid ? "true" : "false", openairConnected() ? "true" : "false",
-                 oa.probe1C, oa.probe2C,
-                 oa.blowerSpeedPct, oa.compressorSpeedRpm, oa.errors,
-                 openairNeedsPair() ? "true" : "false");
+        wsFmtAc(buf, WS_SNAP_BUF, openairGetData(),
+                openairConnected(), openairNeedsPair());
         wsQueueSend(buf);
     }
 
     // Push current LIN snapshot so freshly-loaded pages get room/water temp
-    // without waiting for the next change in broadcastLinTemps().
-    TrumaLinSnapshot lin;
+    // without waiting for the next change in the broadcaster.
+    // Seeded to "no data" so a failed lock take sends honest placeholders
+    // rather than garbage; the next change broadcast corrects them.
+    TrumaLinSnapshot lin = { false, NAN, NAN, false, 0, 0, 0, 0 };
     trumaLinGetSnapshot(lin);
-    auto fmtTemp = [](float t, char* out, size_t n) {
-        if (!std::isfinite(t) || t <= -200.0f) snprintf(out, n, "-273");
-        else                              snprintf(out, n, "%.1f", t);
-    };
-    char rt[16], wt[16];
-    fmtTemp(lin.roomTemp,  rt, sizeof(rt));
-    fmtTemp(lin.waterTemp, wt, sizeof(wt));
-    snprintf(buf, WS_SNAP_BUF,
-             "{\"command\":\"status\",\"id\":\"/room_temp\",\"value\":\"%s\"}", rt);
+    char val[16];
+    wsFmtTemp(val, sizeof(val), lin.roomTemp);
+    wsFmtStatus(buf, WS_SNAP_BUF, "room_temp", val);
     wsQueueSend(buf);
-    snprintf(buf, WS_SNAP_BUF,
-             "{\"command\":\"status\",\"id\":\"/water_temp\",\"value\":\"%s\"}", wt);
+    wsFmtTemp(val, sizeof(val), lin.waterTemp);
+    wsFmtStatus(buf, WS_SNAP_BUF, "water_temp", val);
     wsQueueSend(buf);
-    snprintf(buf, WS_SNAP_BUF,
-             "{\"command\":\"status\",\"id\":\"/water_heating\",\"value\":\"%d\"}",
-             lin.waterHeating ? 1 : 0);
+    wsFmtStatus(buf, WS_SNAP_BUF, "water_heating", lin.waterHeating ? "1" : "0");
     wsQueueSend(buf);
-    snprintf(buf, WS_SNAP_BUF,
-             "{\"command\":\"status\",\"id\":\"/linok\",\"value\":\"%d\"}",
-             lin.linOk ? 1 : 0);
+    wsFmtStatus(buf, WS_SNAP_BUF, "linok", lin.linOk ? "1" : "0");
     wsQueueSend(buf);
 
     // AM2301 external sensor temperature.
     Am2301Data am = am2301GetData();
-    char ot[16];
-    fmtTemp(am.valid ? am.tempC : NAN, ot, sizeof(ot));
-    snprintf(buf, WS_SNAP_BUF,
-             "{\"command\":\"status\",\"id\":\"/outdoor_temp\",\"value\":\"%s\"}", ot);
+    wsFmtTemp(val, sizeof(val), am.valid ? am.tempC : NAN);
+    wsFmtStatus(buf, WS_SNAP_BUF, "outdoor_temp", val);
     wsQueueSend(buf);
 
-    // Icon states (BLE + tunnel).  This snapshot must list every source the
-    // change-broadcaster (broadcastIconStates) covers — the broadcaster only
-    // emits on change, so any state already stable when a client connects is
+    // Icon states (BLE + tunnel).  This snapshot must cover every icon the
+    // change-broadcaster (broadcastIconStates) emits — the broadcaster only
+    // fires on change, so any state already stable when a client connects is
     // delivered here or never.
-    VictronData    vx = victronGetData();
-    UltimatronData ux = ultimatronGetData();
-    TankData       tx = tankGetData();
-    MultiplusData  mx = multiplusGetData();
-    OpenAirData    ox = openairGetData();
-    int ble = (vx.valid || ux.valid || tx.valid || mx.valid || ox.valid) ? 2
-            : (victronIsConfigured() || ultimatronIsConfigured()
-               || tankIsConfigured() || multiplusIsConfigured()
-               || openairIsConfigured()) ? 1
-            : 0;
-    snprintf(buf, WS_SNAP_BUF, "{\"command\":\"icon\",\"id\":\"ble\",\"state\":%d}", ble);
+    wsFmtIcon(buf, WS_SNAP_BUF, "ble", bleIconState());
     wsQueueSend(buf);
-    snprintf(buf, WS_SNAP_BUF, "{\"command\":\"icon\",\"id\":\"tunnel\",\"state\":%d}",
-             static_cast<int>(wstunnelUiState()));
+    wsFmtIcon(buf, WS_SNAP_BUF, "tunnel", static_cast<int>(wstunnelUiState()));
     wsQueueSend(buf);
 
     // OTA status so the page can show an "update available" banner without

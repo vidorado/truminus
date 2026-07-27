@@ -6,13 +6,14 @@
 #include "tankble.hpp"
 
 // Change-detection predicates for the WebSocket broadcasters (the "diff" half of
-// main.cpp's broadcast* functions). Pure (no ESP-IDF deps) so the threshold /
-// NaN / sentinel edge cases are host-tested against the real code — see
-// test/host/test_ws_diff.cpp. The JSON formatting and the wsQueue enqueue stay
-// in main.cpp; these only answer "did this value change enough to re-broadcast?".
+// ws_broadcaster.cpp's broadcast* functions). Pure (no ESP-IDF deps) so the
+// threshold / NaN / sentinel edge cases are host-tested against the real code —
+// see test/host/test_ws_diff.cpp. JSON formatting lives in ws_frames.cpp and the
+// wsQueue enqueue in ws_broadcaster.cpp; these only answer "did this value
+// change enough to re-broadcast?".
 //
-// Each predicate encodes the field comparison only; main.cpp still gates the
-// first emit with its own `!inited` flag.
+// Each predicate encodes the field comparison only; ws_broadcaster.cpp still
+// gates the first emit with its own `!inited` flag.
 
 // True when two AC power readings differ enough to rebroadcast. Treats the
 // MULTI_POWER_NA "no data" sentinel as its own state and avoids the abs()

@@ -6,6 +6,7 @@
 #include "tankble.hpp"
 #include "multiplusble.hpp"
 #include "openairble.hpp"
+#include "ble_status.hpp"
 #include "truma_lin.hpp"
 #include "am2301.hpp"
 #include "wifi_manager.hpp"
@@ -109,8 +110,10 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
     d.multi.alarm       = mp.alarm;
     d.multi.acInState   = mp.acInState;
 
-    // LIN snapshot → room/water temp + LIN-ok dot.
-    TrumaLinSnapshot lin;
+    // LIN snapshot → room/water temp + LIN-ok dot.  Static so a failed lock take
+    // carries the previous tick's values forward instead of blanking the panel;
+    // this runs only on the main loop, so there is no sharing to guard.
+    static TrumaLinSnapshot lin = { false, NAN, NAN, false, 0, 0, 0, 0 };
     trumaLinGetSnapshot(lin);
     d.linOk     = lin.linOk;
     d.roomTemp  = lin.roomTemp;
@@ -268,11 +271,7 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
             p4OtaMarkPrompted();
     }
     OpenAirData oad = openairGetData();
-    d.bleState = (vd.valid || ud.valid || td.valid || mp.valid || oad.valid) ? 2
-               : (victronIsConfigured() || ultimatronIsConfigured()
-                  || tankIsConfigured() || multiplusIsConfigured()
-                  || openairIsConfigured()) ? 1
-               : 0;
+    d.bleState = bleIconState();
 
     d.openairConfigured = openairCfgIsActive();
     // "Connected" = live telemetry, not merely a cached frame — so the snowflake
