@@ -76,6 +76,16 @@ struct Stream {
 static constexpr int64_t IDLE_EVICT_US = 5000000;   // 5 s
 
 static SemaphoreHandle_t      s_lock     = nullptr;     // protects cfg + streams
+
+// Invariant: EVERY s_lock acquisition reachable from on_ws_event() (which
+// runs synchronously on the esp_websocket_client task) MUST use this bounded
+// timeout, never portMAX_DELAY.  The supervisor holds s_lock while blocked in
+// esp_websocket_client_stop() waiting for that task to set STOPPED_BIT; an
+// unbounded take on the client task deadlocks both, and only a reboot clears
+// it.  On a failed take the handler drops the operation — always safe here,
+// because the only contender is a concurrent client rebuild that tears down
+// and re-establishes every stream anyway.
+static constexpr TickType_t   EVENT_HANDLER_LOCK_TICKS = pdMS_TO_TICKS(2000);
 static EventGroupHandle_t     s_events   = nullptr;
 static constexpr EventBits_t  EV_RECONNECT = BIT0;
 static constexpr EventBits_t  EV_STOP      = BIT1;
@@ -582,7 +592,12 @@ static void handle_open(uint32_t id)
     // materialises the stream on the next pump tick once data arrives
     // (the server pushes the HTTP request line right after `open`, so
     // the latency is sub-frame in practice).
-    xSemaphoreTake(s_lock, portMAX_DELAY);
+    //
+    // Bounded take (see EVENT_HANDLER_LOCK_TICKS): this runs on the client
+    // task, which the supervisor blocks waiting to stop while holding s_lock
+    // — an unbounded take deadlocks both.  A missed open is harmless: the
+    // bridge times it out and the browser reopens on its next request.
+    if (xSemaphoreTake(s_lock, EVENT_HANDLER_LOCK_TICKS) != pdTRUE) return;
     enqueue_pending_locked(id);
     xSemaphoreGive(s_lock);
 }
@@ -592,7 +607,10 @@ static void handle_open(uint32_t id)
 // receive data inside JSON).
 static void handle_data(uint32_t id, const uint8_t* raw, size_t rlen)
 {
-    xSemaphoreTake(s_lock, portMAX_DELAY);
+    // Bounded take — see EVENT_HANDLER_LOCK_TICKS.  Dropping this batch on a
+    // failed take is safe: it only fails during a rebuild, which drops the
+    // stream regardless.
+    if (xSemaphoreTake(s_lock, EVENT_HANDLER_LOCK_TICKS) != pdTRUE) return;
     Stream* s = find_stream_locked(id);
     int sock  = s ? s->sock : -1;
     if (sock < 0) {
@@ -649,20 +667,25 @@ static void handle_data(uint32_t id, const uint8_t* raw, size_t rlen)
             vTaskDelay(pdMS_TO_TICKS(2));
             continue;
         }
-        // Local socket gone — tear the stream down.
+        // Local socket gone — tear the stream down.  Bounded take (see
+        // EVENT_HANDLER_LOCK_TICKS); if it fails the concurrent rebuild is
+        // already dropping every stream, so skipping the teardown is safe.
         ESP_LOGI(TAG, "stream %u: local write failed (errno=%d)", (unsigned)id, errno);
-        xSemaphoreTake(s_lock, portMAX_DELAY);
-        Stream* s2 = find_stream_locked(id);
-        if (s2) free_stream_locked(*s2);
-        xSemaphoreGive(s_lock);
-        send_ctrl("close", id);
+        if (xSemaphoreTake(s_lock, EVENT_HANDLER_LOCK_TICKS) == pdTRUE) {
+            Stream* s2 = find_stream_locked(id);
+            if (s2) free_stream_locked(*s2);
+            xSemaphoreGive(s_lock);
+            send_ctrl("close", id);
+        }
         break;
     }
 }
 
 static void handle_close(uint32_t id)
 {
-    xSemaphoreTake(s_lock, portMAX_DELAY);
+    // Bounded take — see EVENT_HANDLER_LOCK_TICKS.  A skipped close during a
+    // rebuild is harmless: the rebuild drops every stream anyway.
+    if (xSemaphoreTake(s_lock, EVENT_HANDLER_LOCK_TICKS) != pdTRUE) return;
     Stream* s = find_stream_locked(id);
     if (s) free_stream_locked(*s);
     // Also drop any matching entry from the pending queue — the browser
@@ -698,14 +721,12 @@ static void parse_and_dispatch(const char* json, size_t len)
 
 // ── esp_websocket_client event handler ────────────────────────────────────────
 
-static void send_hello()
+// `token` is snapshotted by the caller under s_lock (the CONNECTED branch)
+// so this takes no lock — it runs on the client task, where an unbounded
+// s_lock take would deadlock the supervisor's stop (see
+// EVENT_HANDLER_LOCK_TICKS).
+static void send_hello(const char* token)
 {
-    char token[sizeof(s_cfg.token)];
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    strncpy(token, s_cfg.token, sizeof(token));
-    token[sizeof(token) - 1] = '\0';
-    xSemaphoreGive(s_lock);
-
     char buf[256];
     snprintf(buf, sizeof(buf),
              "{\"type\":\"hello\",\"node\":\"truminus\",\"token\":\"%s\"}", token);
@@ -729,12 +750,25 @@ static void on_ws_event(void* /*arg*/, esp_event_base_t /*base*/,
         // stream-id counter, and a stale entry with the same id would
         // swallow the new stream's bytes.  Bounded take — if the lock is
         // busy the supervisor is mid-rebuild and will drop them itself.
-        if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(2000)) == pdTRUE) {
-            drop_all_streams_locked();
-            while (s_pending_n > 0) pending_remove_locked(0);
-            xSemaphoreGive(s_lock);
+        // We also snapshot the token here so send_hello() needs no lock of
+        // its own (it runs on this client task; an unbounded take would
+        // deadlock the supervisor's stop — see EVENT_HANDLER_LOCK_TICKS).
+        {
+            char token[sizeof(s_cfg.token)] = {0};
+            bool greet = false;
+            if (xSemaphoreTake(s_lock, EVENT_HANDLER_LOCK_TICKS) == pdTRUE) {
+                drop_all_streams_locked();
+                while (s_pending_n > 0) pending_remove_locked(0);
+                strncpy(token, s_cfg.token, sizeof(token));
+                token[sizeof(token) - 1] = '\0';
+                greet = true;
+                xSemaphoreGive(s_lock);
+            }
+            // Skip the greeting only when the take failed, i.e. a rebuild is
+            // tearing this client down; the fresh client greets on its own
+            // CONNECTED, and the RX-silence watchdog is the backstop.
+            if (greet) send_hello(token);
         }
-        send_hello();
         break;
     case WEBSOCKET_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "disconnected (attempt %d/%d)", (int)s_retries + 1, FAIL_RETRY_LIMIT);
@@ -751,13 +785,14 @@ static void on_ws_event(void* /*arg*/, esp_event_base_t /*base*/,
         } else if (s_ui_state != TunnelUiState::FAILED) {
             s_ui_state = TunnelUiState::CONNECTING;
         }
-        // Bounded take: if the supervisor holds s_lock while blocked in
-        // esp_websocket_client_stop() (it waits for the client task to set
-        // STOPPED_BIT), an unbounded take here deadlocks both tasks — this
-        // event is dispatched FROM the client task.  Skipping the cleanup
-        // is safe: stop_client_locked() and the CONNECTED branch above both
-        // drop streams, and the pump reaps strays when send_data() fails.
-        if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(2000)) == pdTRUE) {
+        // Bounded take (see EVENT_HANDLER_LOCK_TICKS): if the supervisor holds
+        // s_lock while blocked in esp_websocket_client_stop() (it waits for the
+        // client task to set STOPPED_BIT), an unbounded take here deadlocks
+        // both tasks — this event is dispatched FROM the client task.  Skipping
+        // the cleanup is safe: stop_client_locked() and the CONNECTED branch
+        // above both drop streams, and the pump reaps strays when send_data()
+        // fails.
+        if (xSemaphoreTake(s_lock, EVENT_HANDLER_LOCK_TICKS) == pdTRUE) {
             drop_all_streams_locked();
             while (s_pending_n > 0) pending_remove_locked(0);
             xSemaphoreGive(s_lock);
