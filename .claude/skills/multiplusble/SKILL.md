@@ -14,8 +14,8 @@ against `Fabian-Schmidt/esphome-victron_ble` (C++).  Same outer envelope as
 the SolarCharger record (see `victronble/SKILL.md`) but a different record
 type byte and a packed-bitstream plaintext layout.
 
-Implementation: `main/multiplusble.cpp` (parser, NVS, snapshot).  Hooked
-into the shared `VictronScanCb::onResult` in `main/victronble.cpp` so we
+Implementation: `main/ble/multiplusble.cpp` (parser, NVS, snapshot).  Hooked
+into the shared `VictronScanCb::onResult` in `main/ble/victronble.cpp` so we
 don't fight NimBLE for the single global scan callback slot.
 
 ---
@@ -38,7 +38,7 @@ mfr[10..]  = AES-128-CTR ciphertext (16 bytes consumed)
 
 `mfr[6]` is the **only** field that distinguishes VE.Bus from Solar — the
 rest of the cipher envelope is the same.  The Solar parser in
-`main/victronble.cpp` gates on `mfr[6] == 0x01` to avoid mis-decrypting
+`main/ble/victronble.cpp` gates on `mfr[6] == 0x01` to avoid mis-decrypting
 VE.Bus traffic with the solar key.
 
 ### AES-128-CTR nonce
@@ -91,7 +91,7 @@ LSB-first packed bit stream.  Fields are listed in emission order:
 
 **Signed-int sign extension**: read N bits, then if bit (N−1) is set, OR
 in `~((1<<N)−1)` to extend.  `BitReader::readS(int bits)` in
-`main/multiplusble.cpp` does this.
+`main/ble/multiplusble.cpp` does this.
 
 ### `device_state` enum (subset relevant to UI)
 
@@ -106,7 +106,7 @@ in `~((1<<N)−1)` to extend.  `BitReader::readS(int bits)` in
 ```
 
 Anything not enumerated here just renders as `--` upstream; expand
-`multiplusStateName()` (in `main/multiplusble.cpp`) when new states show
+`multiplusStateName()` (in `main/ble/multiplusble.cpp`) when new states show
 up on the wire.
 
 ### `ac_in_state` (shore-side connection)

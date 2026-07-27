@@ -40,9 +40,9 @@ that board's wiring differed. The IDF `driver/uart.h` path on the P4 does not, a
 routing** (RX goes silent) — don't try it; it's a hardware pull-up, not a firmware
 fix. Diagnostic: scope TXD for a rounded (vs sharp) rising edge, or build with
 `-DLIN_SELFTEST` for a boot-time baud-sweep loopback dump. See README
-"Hardware: P4 ↔ Truma LIN wiring" and `main/lin_driver.cpp::ensureStarted()`.
+"Hardware: P4 ↔ Truma LIN wiring" and `main/lin/lin_driver.cpp::ensureStarted()`.
 
-Also note `readFrame()` (`main/lin_driver.cpp`) does **not** rely on a fixed echo
+Also note `readFrame()` (`main/lin/lin_driver.cpp`) does **not** rely on a fixed echo
 length: the half-baud break loops back as 1–2 bytes (non-deterministic on the IDF
 UART), so it scans for the `(0x55, PID)` header and reads `expectedLen` + checksum
 after it, ending on a bus-idle gap. A count-based parser truncated frames here.

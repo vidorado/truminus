@@ -1,6 +1,6 @@
 # Skill: WSS reverse tunnel — firmware side
 
-The story behind `main/wstunnel.cpp` + `main/webserver.cpp`. Use this
+The story behind `main/web/wstunnel.cpp` + `main/web/webserver.cpp`. Use this
 when debugging tunnel-specific firmware behaviour: latency that
 doesn't reproduce on LAN, dying WebSocket, stuck "pending timeout,
 closing" loops, mbedtls/PSA OOM during TLS handshake.
@@ -351,7 +351,7 @@ we close a stranger's stream and the server double-deletes.
 
 - **`esp_http_server` does not invoke the URI handler for the WS upgrade leg.**
   The handshake is handled internally before any handler runs
-  (`components/esp_http_server/src/httpd_uri.c:362`: *"If the request is
+  (`$IDF_PATH/components/esp_http_server/src/httpd_uri.c:362`: *"If the request is
   websocket handshake, then do not call the uri->handler"*). `req->method`
   stays `HTTP_GET` for every subsequent frame, so a
   `if (req->method == HTTP_GET) handshake()` branch eats every frame without

@@ -1,9 +1,9 @@
 ---
 name: firmware-ota
-description: TruMinus P4 self-OTA — GitHub-Releases-direct update of the application image, versioning via git describe, minor/major auto-prompt, transfer tuning, and the PENDING_VERIFY self-test/rollback net. Read before touching main/p4_ota.cpp, the release workflow, or the OTA settings/web UI.
+description: TruMinus P4 self-OTA — GitHub-Releases-direct update of the application image, versioning via git describe, minor/major auto-prompt, transfer tuning, and the PENDING_VERIFY self-test/rollback net. Read before touching main/ota/p4_ota.cpp, the release workflow, or the OTA settings/web UI.
 ---
 
-# Firmware self-OTA (`main/p4_ota.cpp`)
+# Firmware self-OTA (`main/ota/p4_ota.cpp`)
 
 Over-the-air updates of the **P4 application image**. The C6 co-processor path
 is separate (`c6_ota.cpp`, reflashes the C6 from an embedded binary). Origin:
@@ -434,7 +434,7 @@ failed — will retry next boot` / `web differs … updating`.
 Install progress on the LCD OTA screen + WS `{"command":"ota",…,"installing":true,"progress":N}`.
 
 The LCD **"Actualizaciones" settings screen** (`show_updates` in
-`main/p4settings.cpp`) **pauses BLE on entry and resumes it in `upd_back_cb`**
+`main/ui/p4settings.cpp`) **pauses BLE on entry and resumes it in `upd_back_cb`**
 (`victronBleSuspend()`/`ultimatronBleSuspend()` — flag-only, idempotent). BLE's
 continuous scan window (RX-range recovery under C6 coex) otherwise starves WiFi
 enough that the GitHub version check hangs on "Checking…" and a download

@@ -26,9 +26,9 @@ threshold). Prefer citing a doc/Kconfig line over asserting from memory.
 
 ## Project Overview
 
-TruMinus is firmware for the **JC4880P443C** board (ESP32-P4) that emulates a Truma CP-Plus D control unit to manage a **Truma Combi D** heater over the LIN bus. Control surfaces: MQTT, WebSocket web UI, serial CLI, and a physical 800×480 LCD with capacitive touch. Solar charge data (Victron BLE) and battery SOC (Ultimatron BLE) are surfaced on both the LCD and the web UI.
+TruMinus is firmware for the **JC4880P443C** board (ESP32-P4) that emulates a Truma CP-Plus D control unit to manage a **Truma Combi D** heater over the LIN bus. Control surfaces: WebSocket web UI, serial CLI, and a physical 800×480 LCD with capacitive touch. Solar charge (Victron BLE), battery SOC (Ultimatron BLE), fresh-water tank level (BTHome), inverter state (Victron VE.Bus) and an OpenAir PLUS A/C are surfaced on both the LCD and the web UI.
 
-> **Status (2026-05):** mid-migration from the previous ESP32-C5 / NM-CYD-C5 board to the JC4880P443C / ESP32-P4 board. `main/main.cpp` runs the LCD, WiFi (via C6 hosted), BLE supervisor, the HTTP/WebSocket server and a minimal IDF-native LIN scheduler (`main/truma_lin.cpp`, no MQTT). The legacy Arduino-flavoured `settings.cpp` / `trumaframes.cpp` / `waterboost.cpp` / `commandreader.cpp` / `autodiscovery.cpp` are **still dormant** (use `String`/`AsyncWebServer`/`ArduinoJson`/`mqttClient`, not in `main/CMakeLists.txt::SRCS`) and will be ported later to bring MQTT, Home Assistant autodiscovery, water-boost and the serial CLI back online. Treat the codebase as porting-in-progress, not feature-complete.
+> **Status:** the migration off the old ESP32-C5 / NM-CYD-C5 board is complete and the legacy Arduino-flavoured layer is **gone** — `settings.cpp`, `trumaframes.cpp`, `waterboost.cpp`, `commandreader.cpp` and `autodiscovery.cpp` were deleted, not merely dormant. **MQTT and Home Assistant autodiscovery are not implemented** (the build pins `NO_MQTT`); the web UI, LCD and serial CLI are the live control surfaces. Water-boost has no replacement yet. Byte-level LIN protocol reference lives in the truma-protocol skill, not in a dormant source file.
 
 ## Build System
 
@@ -48,6 +48,16 @@ make flash-monitor # flash then monitor
 make clean         # idf.py fullclean
 ```
 
+### Host tests (`test/host/`)
+
+The IDF-free modules under `main/` — every `*_codec.cpp`, plus `lin_frames`, `lin_protocol`, `mode_controller`, `ws_command`, `ws_diff`, `version_compare` — are compiled natively and run under Catch2. **No ESP-IDF, no hardware, seconds to run**; use them as the fast feedback loop for any logic change.
+
+```bash
+cd test/host && ./build.sh && ./build/tests
+```
+
+`test/host/CMakeLists.txt` lists those sources **by path**, so moving a module between `main/` subdirectories breaks the suite — update the `add_library` list (and `INCLUDE_DIRS`, which mirrors `main/CMakeLists.txt`) in the same commit. `.github/workflows/tests.yml` runs this on every push so the breakage surfaces immediately; `ci.yml` (the full IDF firmware build) stays `workflow_dispatch`-only.
+
 VSCode: install `espressif.esp-idf-extension`, copy `.vscode/settings.json.template` → `.vscode/settings.json` and fill in your IDF path. IntelliSense reads `build/compile_commands.json`.
 
 **Before touching the build** (sdkconfig, components, link errors, IRAM overflow, corrupted `build/`, ModemManager, CI caching, the VSCode Flash button), **read `.claude/skills/pio-idf-p4/SKILL.md`** — all the IDF 6.0 + ESP32-P4 pitfalls live there.
@@ -56,18 +66,18 @@ VSCode: install `espressif.esp-idf-extension`, copy `.vscode/settings.json.templ
 
 `managed_components/` is gitignored and re-downloaded by the IDF component
 manager, so editing those files directly does NOT persist. The durable way to
-patch a registry component (or PlatformIO platform files) is **`scripts/apply_patches.py`**,
+patch a registry component is **`scripts/apply_patches.py`**,
 run automatically at cmake-configure time (wired in `CMakeLists.txt`). Each
 entry is an idempotent string find/replace (no-op once applied), so it
 re-applies after any component re-download. To add one: append an entry to the
 `PATCHES` list (target path + old/new strings + desc) and, by convention, drop
 a documentation diff in `patches/`. Existing patches cover `esp_lcd_st7701`,
-`jc4880_bsp`, `esp_lvgl_port` (GT911 graceful I2C), `esp-nimble-cpp`
-(`findAdvField` OOB-read guard) and PlatformIO bootloader linker includes.
+`jc4880_bsp`, `esp_lvgl_port` (GT911 graceful I2C) and `esp-nimble-cpp`
+(`findAdvField` OOB-read guard).
 
 ### Web assets are served from LittleFS (8 MB partition)
 
-Files in `data/` are baked into a LittleFS image by `littlefs_create_partition_image()` (`main/CMakeLists.txt`) and flashed to the `littlefs` partition at `0x810000`. A `web_assets_prep` `ALL` target runs on every build *before* the image is regenerated: `scripts/cache_bust.py` rewrites `?v=<sha1>` querystrings so browsers refetch changed assets, and `scripts/gen_gz.py` pre-gzips compressible files as adjacent `<file>.gz` (`mtime=0` for determinism). `serveFile()` prefers a sibling `.gz` with `Content-Encoding: gzip`; `data/*.gz` is gitignored. Web-only reflash: `idf.py littlefs-flash-littlefs`. (The old `compress_fs.py` → `main/webfiles.h` embed pipeline is gone; the script remains but is unused.)
+Files in `data/` are baked into a LittleFS image by `littlefs_create_partition_image()` (`main/CMakeLists.txt`) and flashed to the `littlefs` partition at `0x810000`. A `web_assets_prep` `ALL` target runs on every build *before* the image is regenerated: `scripts/cache_bust.py` rewrites `?v=<sha1>` querystrings so browsers refetch changed assets, and `scripts/gen_gz.py` pre-gzips compressible files as adjacent `<file>.gz` (`mtime=0` for determinism). `serveFile()` prefers a sibling `.gz` with `Content-Encoding: gzip`; `data/*.gz` is gitignored. Web-only reflash: `idf.py littlefs-flash-littlefs`. (The old `compress_fs.py` → `main/webfiles.h` embed pipeline is gone, script included.)
 
 ## Architecture
 
@@ -76,34 +86,71 @@ Files in `data/` are baked into a LittleFS image by `littlefs_create_partition_i
 ```
 Truma Combi D ←→ LIN transceiver ←→ ESP32-P4 UART
                                        ↕
-                              MQTT broker / Web clients / Serial / Touch UI
+                              Web clients / Serial CLI / Touch UI
                                        ↕
-                              Victron BLE (solar) / Ultimatron BLE (battery)
+                              BLE: Victron solar · Ultimatron BMS · tank
+                                   Victron VE.Bus · OpenAir PLUS A/C
 ```
 
 ### Source layout (`main/`)
 
-ESP-IDF native convention: no `src/`; all firmware sources live in `main/`.
+ESP-IDF native convention: no top-level `src/`; all firmware sources live under `main/`, grouped into subdirectories. Every subdirectory is on the include path (`main/CMakeLists.txt::INCLUDE_DIRS`), so headers are included by bare name (`#include "truma_lin.hpp"`), not by relative path.
 
-- **`main.cpp`** — `app_main` entry point: inits NVS + netif + display, spawns `bootTask` for WiFi/C6-OTA/BLE/web. Hosts `wsPumpTask`, the WS command router (`onWsCommand`) and the LCD↔web diff broadcaster.
+**A `*_codec.cpp` module is deliberately free of every ESP-IDF dependency** so it can be compiled natively and unit-tested — see §"Host tests". Keep decoding/encoding/derivation logic in those modules and I/O in their non-codec siblings; that split is what makes the logic testable.
+
+**`app/` — composition root**
+- **`main.cpp`** (in `main/`) — `app_main`: NVS → faultlog/crashcatch → event loop + netif → log levels → language → display init → `bootStart()`, then a 1 Hz loop calling `displaySyncTick()`.
+- **`boot_sequence.cpp/.hpp`** — the background `bootTask`: WiFi/ESP-Hosted, C6 OTA, BT controller, BLE inits, LittleFS, web server, tunnel, `wsPumpTask`, CLI, AM2301, LIN, self-OTA, then NimBLE last. Ordering is deliberate — it sequences heap peaks instead of stacking them.
+- **`display_sync.cpp/.hpp`** — per-tick aggregation of every subsystem snapshot into one `P4DisplayData`, plus the status-line alert rotation and the Truma/A-C error modal policy.
+
+**`ui/`**
 - **`p4display.cpp/.hpp`** — LVGL UI for the 800×480 LCD. See §"Display Implementation".
-- **`truma_lin.cpp/.hpp`** — Active IDF-native LIN scheduler. Emulates the CP-Plus D on `UART_NUM_1 @ 9600`, writes 7 setpoint frames + the 0x20 control frame each cycle, alternates two master requests (`0xB8` OnOff, `0xB2` GetErrorInfo) over 0x3C/0x3D, reads frames 0x21/0x22. Thread-safe `TrumaLinSnapshot`. No MQTT/autodiscovery/waterboost. See `.claude/skills/truma-protocol/SKILL.md`.
+- **`p4settings.cpp/.hpp`** — the ⚙ settings screens (WiFi, monitoring MACs, display, language, tunnel, updates) plus the on-screen keyboard.
+
+**`lin/`**
+- **`truma_lin.cpp/.hpp`** — Active IDF-native LIN scheduler. Emulates the CP-Plus D on `UART_NUM_1 @ 9600`, writes 7 setpoint frames + the 0x20 control frame each cycle, alternates two master requests (`0xB8` OnOff, `0xB2` GetErrorInfo) over 0x3C/0x3D, reads frames 0x21/0x22. Thread-safe `TrumaLinSnapshot`. See `.claude/skills/truma-protocol/SKILL.md`.
 - **`lin_driver.cpp/.hpp`** — Low-level half-duplex LIN driver over `driver/uart.h`.
-- **`trumaframes.cpp/.hpp`** — Legacy Arduino LIN protocol layer (dormant; not built). Byte-level reference for the future MQTT/autodiscovery port. See the truma-protocol skill.
-- **`settings.cpp/.hpp`** — Setpoint abstraction (`TBoilerSetting`/`TTempSetting`/`TFanSetting`/`TOnOffSetting`), dormant until ported.
-- **`globals.hpp`** — shared `mqttClient`, `ws`, MQTT base topics, HA autodiscovery identifiers.
-- **`autodiscovery.cpp/.hpp`** — Home Assistant MQTT discovery payloads (`-DAUTODISCOVERY`).
+- **`lin_protocol.cpp`**, **`lin_frames.cpp`**, **`lin_codec.cpp`** — IDF-free PID/checksum, frame bit-packing and value codecs (host-tested).
+- **`mode_controller.cpp/.hpp`** — `derive_mode()`: control state → LIN setpoints, plus the fan/boiler string↔int conversions (host-tested).
+
+**`web/`**
 - **`webserver.cpp/.hpp`** — IDF-native HTTP + WebSocket server on `esp_http_server`. Streams files from `/littlefs/` in 16 KB PSRAM chunks with `.gz` fallback; WS JSON `{id,value}` frames via `cJSON`; outgoing frames via the `wsQueue` FreeRTOS queue. Dead-fd reaping and httpd gotchas: see `.claude/skills/wss-tunnel/SKILL.md`.
-- **`victronble.cpp/.hpp`** — Victron Solar Charger BLE (Instant Readout, NimBLE 2.x). See `.claude/skills/victronble/SKILL.md`.
+- **`ws_router.cpp`** / **`ws_command.cpp`** — incoming WS frames: routing, and the IDF-free `{id,value}` → action parsing (host-tested).
+- **`ws_snapshot.cpp`** — the full-state burst sent to a browser on connect.
+- **`ws_broadcaster.cpp`** — `wsPumpTask` (100 ms): change-detected outgoing frames, plus A/C state adoption from unit telemetry.
+- **`ws_diff.cpp/.hpp`** — IDF-free "did this value change enough to rebroadcast" predicates (host-tested).
+- **`wifi_manager.cpp/.hpp`** — STA bring-up, status, and async AP scan.
+- **`wstunnel.cpp/.hpp`** — WSS reverse tunnel (CGNAT traversal). See `.claude/skills/wss-tunnel/SKILL.md`.
+
+> `ws_snapshot.cpp` and `ws_broadcaster.cpp` are two halves of one contract: the broadcaster only emits *on change*, so any state already stable when a client connects reaches it through the snapshot or never. Adding a field means touching both.
+
+**`ble/`** — every driver exposes a mutex-guarded `…GetData()` snapshot and an `…IsConfigured()` NVS gate.
+- **`victronble.cpp/.hpp`** — Victron Solar Charger BLE (Instant Readout, NimBLE 2.x); also hosts the shared scan callback and the BLE supervisor task. See `.claude/skills/victronble/SKILL.md`.
 - **`ultimatronble.cpp/.hpp`** — Ultimatron LiFePO4 BMS BLE (GATT). See `.claude/skills/ultimatronble/SKILL.md`.
 - **`tankble.cpp/.hpp`** — Fresh-water tank level via BTHome v2 service-data (UUID `0xFCD2`, moisture tag `0x2F`), gated by NVS `tank/addr`. Piggybacks on `VictronScanCb::onResult`. Exposes `TankData`, WS `{"command":"tank",…}`.
 - **`multiplusble.cpp/.hpp`** — Victron VE.Bus / Multiplus Instant Readout (record `0x0C`). Read-only (no documented VE.Bus GATT). Exposes `MultiplusData`, WS `{"command":"multi",…}`. See `.claude/skills/multiplusble/SKILL.md`.
-- **`p4_ota.cpp/.hpp`** — Self-OTA for the P4 application image (distinct from `c6_ota.cpp`). See `.claude/skills/firmware-ota/SKILL.md`.
-- **`wstunnel.cpp/.hpp`** — WSS reverse tunnel (CGNAT traversal). See `.claude/skills/wss-tunnel/SKILL.md`.
-- **`am2301.cpp`** — AM2301/DHT22 outdoor temperature on GPIO52 via RMT. See pio-idf-p4 SKILL §14.
+- **`openairble.cpp/.hpp`**, **`openair_config.cpp/.hpp`** — OpenAir PLUS (Bergstrom/Dirna) A/C over BLE GATT: telemetry, commands, pairing state. `openair_config` caches the NVS "configured" flag that flips the LCD panel between CALEFACCIÓN and CLIMATIZACIÓN. See `.claude/skills/openair-plus/SKILL.md`.
+- **`victron_codec.cpp`**, **`ultimatron_codec.cpp`**, **`multiplus_codec.cpp`**, **`bthome_codec.cpp`** — IDF-free advertisement/GATT parsers (host-tested).
+
+**`sensors/`**
+- **`am2301.cpp/.hpp`** — AM2301/DHT22 outdoor temperature on GPIO52 via RMT (30 s cadence). See pio-idf-p4 SKILL §14.
+- **`am2301_codec.cpp`** — IDF-free pulse-train → temperature/humidity decode (host-tested).
+
+**`ota/`**
+- **`p4_ota.cpp/.hpp`** — Self-OTA for the P4 application image, plus the LittleFS web-asset sync and the PENDING_VERIFY self-test/rollback net. See `.claude/skills/firmware-ota/SKILL.md`.
+- **`c6_ota.cpp/.hpp`** — reflashes the ESP32-C6 co-processor over SDIO when the embedded slave firmware and the host ESP-Hosted library disagree.
+- **`version_compare.cpp/.hpp`** — IDF-free semver comparison (host-tested).
+
+**`core/`**
 - **`i18n.cpp/.hpp`** — `TK` enum + `t(TK::KEY)`. Spanish (default) / English, persisted in NVS.
-- **`waterboost.cpp/.hpp`**, **`commandreader.cpp/.hpp`** — dormant (40-min boost cycle; serial CLI line buffer).
+- **`control_state.hpp`** — `P4ControlState`, the single shared control-surface struct.
+- **`cli.cpp/.hpp`** — serial REPL on USB-Serial-JTAG (`wifi`, `victron`, `ultimatron`, `tunnel`, `show`, `help`). Live, not dormant.
+- **`flags.cpp/.h`** — build-flag definitions + the runtime per-TAG `ESP_LOG` level silencer. Force-included into every `main` TU via `-include`.
+- **`faultlog.cpp`** / **`faultlog_codec.cpp`** — persisted reset-reason history (codec host-tested).
+- **`crashcatch.cpp/.hpp`** — `--wrap=esp_panic_handler` shim that stashes the crash context (PC/RA/SP/stack) in RTC memory for the next boot to report.
+- **`heapdiag.cpp/.hpp`** — `heapDiagMark()` internal-DRAM probes used to track the OTA heap floor.
 - **`logs.hpp`** — logging macros / tag conventions.
+- **`globals.hpp`** — MQTT base topics + Home Assistant autodiscovery identifiers. **Currently included by nothing**: it is a kept spec reference for the unimplemented MQTT port, not live code. Do not assume anything here is in effect.
 
 ### Web Interface (`data/`)
 
@@ -113,16 +160,17 @@ Layout, responsive breakpoints, panel semantics (SOLAR/BATERÍA/INVERSOR), CSS g
 
 ## Key Design Patterns
 
-- **Conditional compilation:** `WEBSERVER`, `AUTODISCOVERY`, `NO_MQTT`, `JC4880_P4`, `ENABLE_BLE`, `ENABLE_SOLAR_DUMMY`, `ENABLE_BOILER_DUMMY` gate whole features. `WEBSERVER`, `NO_MQTT`, `JC4880_P4` are pinned in the root `CMakeLists.txt` (visible to every component).
-- **Settings flow:** external input (MQTT / WS / serial / touch) → `settings.cpp` validates → `main.cpp` loop writes the right LIN frame → Truma responds → frame published back to MQTT/WS/LCD.
-- **Task pinning:** the LIN UART task is pinned to **Core 0** so blocking serial reads don't fight WiFi/MQTT/LVGL on Core 1 (P4 is dual-core RV32IMAFC).
-- **LVGL locking:** `lv_timer_handler()` runs on a dedicated task. Any LVGL access from `app_main` / `loop` / `lin_task` must be wrapped in `lvglLock()` / `lvglUnlock()` — prefer a short timeout (e.g. 10 ms) over `portMAX_DELAY`. The `st`-mutation lock contract is in the ui-interfaces skill.
+- **Conditional compilation:** `WEBSERVER`, `NO_MQTT`, `JC4880_P4` are pinned in the root `CMakeLists.txt` (visible to every component); `ENABLE_BLE` is set on the `main` component. `ENABLE_BOILER_DUMMY` / `ENABLE_TEMP_DUMMY` inject fake sensor values for bench work. `AUTODISCOVERY` is referenced by no live code.
+- **`P4ControlState` is the single source of truth for the control surface.** It lives as `st` inside `p4display.cpp`; LVGL callbacks mutate it directly, and remote setters (`p4SetHeating`, `p4SetRoomSetpoint`, …) take the LVGL lock to mutate it plus refresh the widgets atomically. Everyone else *reads* it via `p4GetControlState()`. Flow: input (WS / serial / touch) → `p4Set*` validates and stores → `lin_task` reads it back through `derive_mode()` and writes the LIN frames → the Truma responds → the snapshot fans back out to LCD and web.
+- **Snapshot pattern:** every asynchronous producer (LIN, each BLE driver, AM2301, WiFi, OTA) owns a mutex-guarded struct and exposes a by-value `…GetSnapshot()/…GetData()`. Consumers never reach into producer state.
+- **Task pinning:** the LIN UART task is pinned to **Core 0** so blocking serial reads don't fight WiFi/LVGL on Core 1 (P4 is dual-core RV32IMAFC).
+- **LVGL locking:** `lv_timer_handler()` runs on a dedicated task. Any LVGL access from `app_main` / `displaySyncTick` / `lin_task` must be wrapped in `lvglLock()` / `lvglUnlock()` — prefer a short timeout (e.g. 10 ms) over `portMAX_DELAY`. The `st`-mutation lock contract is in the ui-interfaces skill.
+- **Never call a raw LVGL setter from a periodic refresh path.** `lv_label_set_text()` and every `lv_obj_set_style_*()` invalidate unconditionally — they do *not* short-circuit on an unchanged value — so a 1 Hz whole-UI refresh overflows LVGL's 32-slot dirty-area list and degrades into a full 800×480 repaint every second. `p4display.cpp` provides guarded `set_text` / `set_text_fmt` / `set_bg_color` / `set_text_color` / `set_text_opa` / `set_opa` / `set_height` / `bm_set_ctrl` helpers; use those. (`lv_obj_add_flag`/`add_state`/`lv_bar_set_value` self-guard and are safe raw.)
 - **Splash boot ordering:** `app_main` inits NVS + netif + `p4DisplayInit()` then spawns `bootTask` (prio 5); the 2 s minimum-splash acts as a floor, not an added delay.
-- **MQTT publish throttling:** values published on change or after a 10 s timeout.
 
-## MQTT Topics
+## MQTT
 
-Base topics in `globals.hpp` — status `truma/status/<field>`, setpoints `truma/set/<field>`. Writable setpoints: `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off/eco/high/1–10), `energy_idx` (0–4), `simultemp`, `error_reset`, `refresh`, `ping`.
+**Not implemented.** `NO_MQTT` is pinned project-wide and no MQTT client is built or started. The `mqtt` NVS namespace and the settings screen that writes it are leftovers awaiting the port. When it lands, the intended contract (recorded in `core/globals.hpp`) is status on `truma/status/<field>`, setpoints on `truma/set/<field>`, with writable `temp`, `heating`, `boiler` (off/eco/high/boost), `fan` (off/eco/high/1–10), `energy_idx` (0–4), `simultemp`, `error_reset`, `refresh`, `ping`.
 
 ---
 
@@ -132,8 +180,8 @@ Base topics in `globals.hpp` — status `truma/status/<field>`, setpoints `truma
 - **Memory:** 16 MB Flash (QIO @ 80 MHz) / 32 MB PSRAM (HEX @ 200 MHz).
 - **Display:** 4.3" **ST7701** RGB panel, 800×480 landscape (`esp_lcd_st7701`). Framebuffer must live in PSRAM. Use the BSP's `bsp_display_start()` + `esp_lvgl_port`; do **not** pull Arduino-Core display libraries.
 - **Touch:** **GT911** on the shared I2C bus (`BSP_I2C_SCL=GPIO8`, `BSP_I2C_SDA=GPIO7`); RST/INT not wired (`BSP_LCD_TOUCH_RST = GPIO_NUM_NC`).
-- **Connectivity:** WiFi + BLE 5 via a separate ESP32-C6 co-processor over SDIO/SPI (see `components/jc4880_bsp/WIFI_ARCHITECTURE.md`).
-- **BSP:** vendored at `components/jc4880_bsp/` (forked from `csvke/esp32_p4_jc4880p433c_bsp`); pulls `esp_lcd_st7701`, `esp_lcd_touch_gt911`, `esp_lvgl_port`, `lvgl` from the registry on first build.
+- **Connectivity:** WiFi + BLE 5 via a separate ESP32-C6 co-processor over SDIO/SPI (see `managed_components/jc4880_bsp/`).
+- **BSP:** pulled as a managed component (`managed_components/jc4880_bsp/`) (forked from `csvke/esp32_p4_jc4880p433c_bsp`); pulls `esp_lcd_st7701`, `esp_lcd_touch_gt911`, `esp_lvgl_port`, `lvgl` from the registry on first build.
 - **Upload:** USB-CDC on `/dev/ttyACM0` (P4 exposes USB natively; the JTAG console gotcha is in pio-idf-p4 SKILL §7). Speed 460800.
 
 ### Pin assignments
@@ -142,7 +190,7 @@ LIN bus on **connector J5 → TX=GPIO27 / RX=GPIO26, UART_NUM_1 @ 9600** (`LIN_T
 
 ---
 
-## Display Implementation (`main/p4display.cpp`)
+## Display Implementation (`main/ui/p4display.cpp`)
 
 Three horizontal bands at 800×480: top bar (55 px: logo, outdoor temp, ⚙, WiFi+LIN dots), content area (387 px, split at x=370), status bar (38 px: logo, SSID+IP, status message). Colour palette = `C_BG / C_PANEL / C_BORDER / C_ACCENT / …` constants at the top of the file.
 
@@ -180,7 +228,9 @@ void lvglUnlock();
 
 ### Settings screens (⚙ button)
 
-WiFi config · MQTT config · Monitorización (Victron/Ultimatron/tank/Multiplus MACs+keys, each with a 🔍 BLE-discovery button) · Display (timeout) · Language · Túnel · Actualizaciones. Blocking screens use the navigation-request pattern: an LVGL callback sets `s_navRequest`; `loop()` reads it outside the LVGL mutex, takes the lock, runs the screen, reboots if credentials changed.
+WiFi config · MQTT config (inert, see §MQTT) · Monitorización (Victron/Ultimatron/tank/Multiplus/OpenAir MACs+keys, each with a 🔍 BLE-discovery button; OpenAir adds a pairing flow) · Display (timeout) · Language · Túnel · Actualizaciones.
+
+Entry is `p4SettingsShow()`, called **directly from the ⚙ LVGL event callback** — the port task already holds the LVGL lock there, so no hand-off is needed. Screens that must outlive a callback (BLE/WiFi scans) post an `lv_async_call` populate callback instead. Screens that change credentials reboot on save.
 
 ---
 
@@ -196,3 +246,4 @@ WiFi config · MQTT config · Monitorización (Victron/Ultimatron/tank/Multiplus
 - **`victronble`** — Victron Instant Readout BLE (Solar / SmartShunt / BMV).
 - **`multiplusble`** — Victron VE.Bus / Multiplus Instant Readout (record 0x0C).
 - **`ultimatronble`** — Ultimatron BMS GATT protocol.
+- **`openair-plus`** — OpenAir PLUS (Bergstrom/Dirna) A/C BLE protocol: telemetry frame, command writes, pairing handshake.

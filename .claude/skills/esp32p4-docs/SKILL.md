@@ -74,8 +74,8 @@ context before concluding — the index help text is a summary, not the last wor
 | Memory types / layout | `docs/en/api-guides/{memory-types,linker-script-generation}.rst` |
 | Startup / app flow | `docs/en/api-guides/startup.rst` |
 | Fatal errors / core dump | `docs/en/api-guides/{fatal-errors,core_dump}.rst` |
-| Cache Kconfig (P4) | `components/esp_system/port/soc/esp32p4/Kconfig.cache` |
-| PSRAM Kconfig (P4) | `components/esp_psram/esp32p4/Kconfig.spiram` |
+| Cache Kconfig (P4) | `$IDF_PATH/components/esp_system/port/soc/esp32p4/Kconfig.cache` |
+| PSRAM Kconfig (P4) | `$IDF_PATH/components/esp_psram/esp32p4/Kconfig.spiram` |
 | All `CONFIG_*` at a glance | `config_index.txt` |
 
 ## Keeping it in sync (automatic)

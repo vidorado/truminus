@@ -86,7 +86,7 @@ VictronConnect → device → ⚙ three dots → **Product info** → field **"E
 
 ---
 
-## Implementation in TruMinus (`main/victronble.cpp`)
+## Implementation in TruMinus (`main/ble/victronble.cpp`)
 
 - `victronBleInit()`: loads MAC + key from NVS namespace `"solar"`, brings NimBLE up, starts `bleTask`.
 - `bleTask`: 3 s active scan every 5 s; `onResult` filters by company ID + marker + MAC + key-check.
