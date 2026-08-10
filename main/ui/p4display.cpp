@@ -677,6 +677,10 @@ static bool s_acConnected = false;
 // set, the topbar snowflake blinks — analogous to the flame while the Truma
 // burner is firing. Driven with the shared 500 ms icon-blink timer phase.
 static bool s_acCompressorOn = false;
+// Cached burner-for-hot-water flag and water temperature (LIN frames 0x22/0x21).
+// Drive the topbar drop the same way the two above drive the flame/snowflake.
+static bool  s_waterHeating = false;
+static float s_waterTemp    = NAN;
 
 // Btnmatrix maps filled from i18n strings each time build_main_screen() runs.
 // Stored as module-level arrays so LVGL's pointer reference stays valid.
@@ -1564,6 +1568,25 @@ static void refresh_flame_icon()
     }
 }
 
+// Update the topbar water-drop indicator.  Three states, mirroring the web's
+// refreshIndicators(): dim when hot water isn't selected (or the bus is down, so
+// the setting is queued rather than applied), solid once selected, and blinking
+// while the Truma reports the burner actually running for it.  "At target"
+// (within 1 °C of the mode's setpoint) drops back to solid — frame 0x22 can keep
+// asserting demand for a moment after the temperature is satisfied.
+static void refresh_tint_icon()
+{
+    bool boilerOn = s_linOk && st.boilerMode != 0;
+    float wSet    = (st.boilerMode == 1) ? 40.0f : 60.0f;
+    bool atTemp   = boilerOn && !std::isnan(s_waterTemp) && s_waterTemp > 0.0f
+                    && s_waterTemp >= wSet - 1.0f;
+    bool demand   = boilerOn && s_waterHeating && !atTemp;
+    set_text_opa(ui.icon_tint,
+        !boilerOn ? LV_OPA_30
+      : demand    ? (s_iconBlink ? LV_OPA_COVER : LV_OPA_20)
+                  : LV_OPA_COVER);
+}
+
 // Set a one-of-N selection on a button matrix via the CHECKED ctrl bit.
 static void bm_select(lv_obj_t* bm, int sel, int count)
 {
@@ -1718,6 +1741,7 @@ boiler:
     bm_select(ui.btnmx_boiler, bi, 4);
 
     refresh_flame_icon();
+    refresh_tint_icon();   // st.boilerMode may have just changed
 }
 
 // ── Event callbacks ───────────────────────────────────────────────────────────
@@ -2474,8 +2498,10 @@ static void icon_blink_timer_cb(lv_timer_t*)
                 : (s_tunnel_state == 3) ? IST_FAILED
                                         : IST_DISABLED;
     for (int i = 0; i < 4; i++) repaint_icon(i);
-    // Advance the snowflake blink (compressor running) on the same phase.
+    // Advance the snowflake blink (compressor running) and the water-drop blink
+    // (burner running for hot water) on the same phase.
     refresh_flame_icon();
+    refresh_tint_icon();
 }
 
 void p4DisplayRebuild()
@@ -2604,13 +2630,15 @@ void p4DisplayUpdate(const P4DisplayData& d)
     // is up AND the function is requested.  Without LIN the values reported
     // by the rest of the UI are stale/wishful — keep the icons dim to avoid
     // implying the appliance is actually doing something.  Matches the web
-    // refreshIndicators() gating.
-    set_text_opa(ui.icon_tint,
-        (d.linOk && d.boilerMode != 0) ? LV_OPA_COVER : LV_OPA_30);
+    // refreshIndicators() gating.  Cache first: both refreshers read the
+    // statics, not `d`, so the 500 ms blink timer sees the same state.
     s_linOk = d.linOk;
     s_acConnected = d.acConnected;
     s_acCompressorOn = d.acCompressorOn;
+    s_waterHeating = d.waterHeating;
+    s_waterTemp = d.waterTemp;
     refresh_flame_icon();
+    refresh_tint_icon();
 
     // Boiler thermometer.  The scale tops out at the selected boiler target
     // (40 °C in eco, 60 °C otherwise) so the fill rescales with the setpoint.

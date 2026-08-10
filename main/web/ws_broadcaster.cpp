@@ -166,7 +166,14 @@ static void broadcastControlChanges(const P4ControlState& cs) {
         emit("ac_flap2", cs.acFlap2 ? "1" : "0");
         acChanged = true;
     }
-    if (!inited || cs.roomSetpoint != prev.roomSetpoint) acChanged = true;
+    // The setpoint stepper is SHARED between Truma heat and A/C cooling, so a
+    // change to it only concerns the A/C while a cooling mode is actually
+    // selected. Without this gate, nudging the room target in CALEFACCIÓN (or
+    // with the A/C off) queues a BLE command to a unit that should be left
+    // alone — which wakes it and makes it beep.
+    bool acCooling = openairCfgIsActive() && !cs.heatingOn &&
+                     (cs.acMode == 1 || cs.acMode == 2);
+    if (acCooling && cs.roomSetpoint != prev.roomSetpoint) acChanged = true;
 
     // Push a setpoint to the unit ONLY when the user actually changed an A/C
     // control — never on init (the default control state is not the unit's real

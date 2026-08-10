@@ -91,10 +91,12 @@ void encodeMasterGetError() {
 
 SemaphoreHandle_t g_lock = nullptr;
 TrumaLinSnapshot  g_snap = { false, NAN, NAN, false, 0, 0, 0, 0 };
+TrumaLinDiag      g_diag = {};
 
-void publish_snapshot(const TrumaLinSnapshot& s) {
+void publish_snapshot(const TrumaLinSnapshot& s, const TrumaLinDiag& d) {
     if (g_lock && xSemaphoreTake(g_lock, pdMS_TO_TICKS(10)) == pdTRUE) {
         g_snap = s;
+        g_diag = d;
         xSemaphoreGive(g_lock);
     }
 }
@@ -233,10 +235,11 @@ void lin_task(void*) {
     snap.waterTemp = NAN;
     uint32_t lastLinOkMs = 0;
 
-    // Diagnostic counters — dumped every 5 s so you can see slave activity
-    // even when no frame fully validates (checksum, length, …).
-    uint32_t cyclesTotal = 0;
-    uint32_t okF21 = 0, okF22 = 0, okF3D = 0;
+    // Diagnostic counters — dumped every 5 s (INFO, see trumaLinSetVerbose) and
+    // published alongside the snapshot for the `lin` CLI command, so you can see
+    // slave activity even when no frame fully validates (checksum, length, …).
+    TrumaLinDiag diag = {};
+    uint32_t lastF21Ms = 0, lastF22Ms = 0, lastF3DMs = 0;
     uint32_t lastDumpMs = 0;
 
     for (;;) {
@@ -272,12 +275,16 @@ void lin_task(void*) {
             snap.roomTemp  = (float)parseF21RoomTemp(g_lin->LinMessage);
             snap.waterTemp = (float)parseF21WaterTemp(g_lin->LinMessage);
             lastLinOkMs = nowMs();
-            okF21++;
+            lastF21Ms   = nowMs();
+            diag.okF21++;
+            memcpy(diag.last21, g_lin->LinMessage, 8);
         }
         bool gotF22 = g_lin->readFrame(0x22, 8);
         if (gotF22) {
             snap.waterHeating = parseF22WaterHeating(g_lin->LinMessage);
-            okF22++;
+            lastF22Ms = nowMs();
+            diag.okF22++;
+            memcpy(diag.last22, g_lin->LinMessage, 8);
         }
         snap.linOk = (nowMs() - lastLinOkMs) < 5000;
 
@@ -298,10 +305,13 @@ void lin_task(void*) {
             masterTurn = MT_ONOFF;
         }
         memcpy(g_lin->LinMessage, masterTx, 8);
+        memcpy(diag.lastTx3C, masterTx, 8);
         g_lin->writeFrame(0x3C, 8);
         if (g_lin->readFrame(0x3D, 8)) {
             memcpy(masterRx, g_lin->LinMessage, 8);
-            okF3D++;
+            memcpy(diag.last3D, masterRx, 8);
+            lastF3DMs = nowMs();
+            diag.okF3D++;
             // Reply SID is request SID + 0x40 (LIN diagnostic ack pattern).
             if (masterRx[2] == (masterTx[2] + 0x40)) {
                 if (masterTx[2] == 0xB8) {        // OnOff reply
@@ -314,17 +324,27 @@ void lin_task(void*) {
             }
         }
 
-        publish_snapshot(snap);
-        p4OtaBeat(P4OTA_BEAT_LIN);   // liveness for the post-OTA self-test
-        cyclesTotal++;
-
         uint32_t t = nowMs();
+        diag.cycles++;
+        diag.rxBytes  = g_lin->rxBytesTotal;
+        diag.onState  = onState;
+        diag.ageF21Ms = lastF21Ms ? (t - lastF21Ms) : UINT32_MAX;
+        diag.ageF22Ms = lastF22Ms ? (t - lastF22Ms) : UINT32_MAX;
+        diag.ageF3DMs = lastF3DMs ? (t - lastF3DMs) : UINT32_MAX;
+        memcpy(diag.lastTx20, f20.data, 8);
+
+        publish_snapshot(snap, diag);
+        p4OtaBeat(P4OTA_BEAT_LIN);   // liveness for the post-OTA self-test
+
         if (t - lastDumpMs > 5000) {
-            ESP_LOGI(TAG, "cycles=%lu  rxBytes=%lu  reads ok: 0x21=%lu 0x22=%lu 0x3D=%lu  linOk=%d  room=%.1f water=%.1f",
-                     (unsigned long)cyclesTotal,
-                     (unsigned long)g_lin->rxBytesTotal,
-                     (unsigned long)okF21, (unsigned long)okF22, (unsigned long)okF3D,
-                     snap.linOk, snap.roomTemp, snap.waterTemp);
+            ESP_LOGI(TAG, "cycles=%lu  rxBytes=%lu  reads ok: 0x21=%lu 0x22=%lu 0x3D=%lu  linOk=%d  room=%.1f water=%.1f  on=%d err=%02X/%02X state=%u/%u",
+                     (unsigned long)diag.cycles,
+                     (unsigned long)diag.rxBytes,
+                     (unsigned long)diag.okF21, (unsigned long)diag.okF22,
+                     (unsigned long)diag.okF3D,
+                     snap.linOk, snap.roomTemp, snap.waterTemp, onState,
+                     snap.errClass, snap.errCode,
+                     snap.requestedState, snap.currentState);
             lastDumpMs = t;
         }
 
@@ -362,4 +382,16 @@ bool trumaLinGetSnapshot(TrumaLinSnapshot& out) {
     out = g_snap;
     xSemaphoreGive(g_lock);
     return true;
+}
+
+bool trumaLinGetDiag(TrumaLinDiag& out) {
+    if (!g_lock || xSemaphoreTake(g_lock, pdMS_TO_TICKS(10)) != pdTRUE) return false;
+    out = g_diag;
+    xSemaphoreGive(g_lock);
+    return true;
+}
+
+void trumaLinSetVerbose(bool on) {
+    esp_log_level_set(TAG,   on ? ESP_LOG_INFO : LOG_LEVEL_TRUMA_LIN);
+    esp_log_level_set("lin", on ? ESP_LOG_INFO : LOG_LEVEL_LIN);
 }

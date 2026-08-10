@@ -71,6 +71,11 @@ struct P4DisplayData {
     // Boiler: 0=off  1=eco(40°C)  2=high(60°C)  3=boost
     int   boilerMode;
 
+    // Burner running for hot water, from LIN frame 0x22. Makes the topbar drop
+    // blink, the water analogue of acCompressorOn/the flame — without it the
+    // LCD can only show requested-vs-not while the web shows real demand.
+    bool  waterHeating;
+
     // Energy: 0=Gas  1=Gas+Elec850  2=Gas+Elec1700  3=Elec850  4=Elec1700
     int   energyIdx;
 

@@ -497,23 +497,35 @@ After an automatic temperature shutdown:
 
 ## Diagnostic tools
 
-**Serial CLI:**
+**Serial CLI** (`main/core/cli.cpp`, USB-Serial-JTAG). One LIN command:
+
 ```
-sniff on|off      passive LIN bus listen
-busindex          full bus state (frames + raw bytes)
-lindebug on|off   verbose mode for the LIN driver
-reset             start error reset
-boiler eco|high|boost|off
-heating 0|1
-fan off|eco|high|1..10
-temp 5.0..30.0
+lin               full bus state (see below)
+lin log on|off    raise/lower the truma_lin + lin tags to INFO at runtime,
+                  which turns on the scheduler's 5 s counter dump (they
+                  default to WARN — see LOG_LEVEL_TRUMA_LIN in core/flags.h)
 ```
 
-**Output of `busindex`:**
+Output of `lin`:
 ```
-RX 21h : OK  XX XX XX XX XX XX XX XX  room:XX.X°
-RX 22h : OK  XX XX XX XX XX XX XX XX  water:XX.X° heat:0|1
-TX 20h :     XX XX XX XX XX XX XX XX  room_sp:XX.X° fan/water:XXh
-B8 onOff: OK  req=X cur=X  (on|off)
-B2 errInfo: OK  class:XXh code:XXh
+bus:       linOk=1  cycles=NNNN  rxBytes=NNNN
+temps:     room=XX.X  water=XX.X  waterHeating=0|1
+onOff:     requesting=on  requested=N (name)  current=N (name)
+error:     class=0xXX  code=0xXX (N)
+RX 21h     XX XX XX XX XX XX XX XX   Nms ago  ok=N
+RX 22h     XX XX XX XX XX XX XX XX   Nms ago  ok=N
+RX 3Dh     XX XX XX XX XX XX XX XX   Nms ago  ok=N
+TX 20h     XX XX XX XX XX XX XX XX
+TX 3Ch     XX XX XX XX XX XX XX XX
 ```
+
+**`onOff: requested` vs `current` is the key line when the Truma answers on the
+bus but does nothing.** `requesting=on` with `current=1 (idle)` means the unit is
+refusing to start — a fault or lockout — not a comms failure. `okF3D=0` instead
+means the master request never gets a reply at all.
+
+There is **no** `sniff` / `busindex` / `lindebug` / `reset` command, and no
+`boiler`/`heating`/`fan`/`temp` setters: control is via the web UI, the LCD, or
+a WebSocket `{"id":"/boiler","value":"eco"}` frame. Passive sniffing is a
+compile-time mode (`-DLIN_SNIFF_ONLY`), not a runtime toggle. The error-reset
+sequence documented above is **not implemented**.

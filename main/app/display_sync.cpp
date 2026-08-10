@@ -116,9 +116,10 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
     // this runs only on the main loop, so there is no sharing to guard.
     static TrumaLinSnapshot lin = { false, NAN, NAN, false, 0, 0, 0, 0 };
     trumaLinGetSnapshot(lin);
-    d.linOk     = lin.linOk;
-    d.roomTemp  = lin.roomTemp;
-    d.waterTemp = lin.waterTemp;
+    d.linOk        = lin.linOk;
+    d.roomTemp     = lin.roomTemp;
+    d.waterTemp    = lin.waterTemp;
+    d.waterHeating = lin.waterHeating;
 
     // AM2301 external sensor → outdoor temp (NAN until first valid read).
     Am2301Data am = am2301GetData();
