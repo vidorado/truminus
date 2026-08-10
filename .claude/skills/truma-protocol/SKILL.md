@@ -74,18 +74,14 @@ Primary status frame; replaces the 0x16 of the plain (non-D) CP Plus protocol. L
 |------|------|-------|----------|
 | 0    | 7:0  | `R_Room_Temperature_current` bits 7:0 | LSB of 12-bit Kelvin×10 |
 | 1    | 3:0  | `R_Room_Temperature_current` bits 11:8 | MSB nibble |
-| 1    | 7:4  | **4-bit rolling counter** | 0→F→0, ≈8–9 s/step. NOT flags. |
+| 1    | 7:4  | `R_Water_Temperature_current` bits 3:0 | LSB nibble — measured, see below |
 | 2    | 7:0  | `R_Water_Temperature_current` bits 11:4 | High byte of 12-bit Kelvin×10 |
 | 3    | —    | Unknown | Constant 0xB8 in captures |
 | 7    | —    | Unknown | — |
 
-**Flags in byte 1 (bit by bit):**
-- bit0 → `/antifreeze`
-- bit1 → `/supply220` (220 V mains present)
-- bit2 → `/window` (window open)
-- bit3 → `/roomdemand` (heating demand active)
-- bit4 → **IGNORE** — it's the LSB of the rolling counter, NOT `/waterdemand`
-- bit7 → `/error` (error active)
+**Byte 1 carries no flags.** All eight bits are temperature: bits 3:0 the room
+value's high nibble, bits 7:4 the water value's low nibble. A sample from a
+running unit — `D5 EB BF` → room `0xBD5` = 29.9 °C, water `0xBFE` = 34.0 °C.
 
 **Temperature decode (both temperatures use the same encoding):**
 ```cpp
@@ -98,7 +94,21 @@ double waterTemp  = rawWater / 10.0 - 273.0;
 - Both temperatures are sanity-checked (room: 0-50 °C, water: 0-100 °C) before being published.
 - Water temperature here is the **authoritative source** for `truma/status/water_temp`; `TFrame22` only carries the `water_heating` state.
 
-**Counter pitfall (byte 1 bits 7:4):** the rolling counter goes from ≈25 s/step to ≈8 s/step when the unit enters normal operation. It signals state transition; do NOT treat it as flags.
+**Byte 1 bits 7:4 are the water temperature's low nibble — NOT a rolling
+counter.** Measured on a real Combi D while the boiler heated 30.2 → 36.5 °C
+over 11 minutes: the nibble rolled F→0 four times and **byte 2 incremented on
+the very same sample every time** (0xBD→0xBE→0xBF→0xC0→0xC1), which is a single
+monotonic 12-bit value, not two independent fields. The step rate also
+accelerated from ≈47 s to ≈6 s as the burner ramped up — a fixed-period counter
+cannot do that — while the room temperature (byte 0 + byte 1 bits 3:0) stayed
+put at 29.7–30.0 °C throughout. `parseF21WaterTemp()` is correct as written.
+
+> Earlier revisions of this file described those bits as a 4-bit rolling counter
+> and listed per-bit flags for byte 1 (`/antifreeze`, `/supply220`, `/window`,
+> …). Both readings are wrong for the CP Plus **D** protocol: bits 3:0 are the
+> room temperature's high nibble (they decode to plausible temperatures) and
+> bits 7:4 are the water temperature's low nibble. Those descriptions probably
+> belong to the legacy frame 0x16.
 
 ---
 
@@ -341,14 +351,25 @@ byte[6] = errorShort
 | 0x10, 0x20, 0x30 | Error | Software reset may clear it |
 | 0x40  | Locked | Requires technical support or 12 V power-cycle |
 
-> ⚠️ **Only surface a fault when `errClass` is one of the classes above.** At cold
-> boot the `0x3D` reply can arrive **one byte misaligned** (the half-duplex echo is
-> read as 1 or 2 bytes non-deterministically — see `lin_driver.cpp`), so the parser
-> loads `errClass`/`errCode` from the *request* frame's `byte[5]=0x46` / `byte[6]=0x20`
-> instead of a real reply. That surfaces as a spurious **"Clase 46h / Cod.32"** red
-> modal on the LCD. `0x46` is not a defined class, so `display_sync.cpp` gates the
-> Truma error modal on a known-class check (`trumaClassKnown`), mirroring the
-> "unknown A/C code → ignore" guard. Never treat an out-of-set class as a fault.
+> ⚠️ **`byte[3] = 0x23` is load-bearing — it is the sub-function selector.**
+> Verified on a real Combi D: with `byte[3] = 0x00` the unit answers
+> `01 06 F2 <request D2..D5> 22`, i.e. a *positive* RSID (0xF2) carrying an echo
+> of the request rather than a fault report. Parsed at the documented offsets
+> that yields the nonexistent class `0x46` / code `0x20` — which is exactly the
+> "Clase 46h / Cod.32" artefact. With `byte[3] = 0x23` the same unit answers
+> `01 06 F2 02 06 36 FB 26` → class `0x06`, code `0x36` (54). The echo is **not**
+> a misaligned read; it is what a wrong sub-function returns.
+>
+> Because the echo passes the `RSID == SID + 0x40` check, a wrong `byte[3]` makes
+> a locked-out heater look fault-free on every UI. **Gate every fault surface on
+> `trumaClassKnown()`** (`lin_codec`, shared by `display_sync.cpp` and the WS
+> broadcaster) so an out-of-set class is never reported as a fault — but treat a
+> persistent `0x46` as a sign the *request* is wrong, not as harmless noise.
+
+**Class 0x06 in the field:** the heater keeps answering the bus and reports
+`current = 2 (on, running)` to TOnOff, yet runs neither burner nor blower — a
+fan-only request does nothing either. `linOk` stays 1 throughout. Do not read
+that as a comms or firmware problem: check the error class first.
 
 ---
 

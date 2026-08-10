@@ -113,3 +113,22 @@ TEST_CASE("Frame 0x22 water heating flag", "[lin][parsing]") {
         REQUIRE(parseF22WaterHeating(data2) == false);
     }
 }
+
+TEST_CASE("Truma error class gate", "[lin][parsing]") {
+    SECTION("Classes the Truma defines are faults") {
+        for (uint8_t c : {0x01, 0x02, 0x05, 0x06, 0x10, 0x20, 0x30, 0x40})
+            REQUIRE(trumaClassKnown(c) == true);
+    }
+
+    SECTION("No error is not a fault") {
+        REQUIRE(trumaClassKnown(0x00) == false);
+    }
+
+    SECTION("A misaligned 0x3D read is rejected") {
+        // The half-duplex echo can shift the reply by one byte, loading the
+        // request's own byte[5]=0x46 as the class. Never a fault.
+        REQUIRE(trumaClassKnown(0x46) == false);
+        REQUIRE(trumaClassKnown(0xB2) == false);
+        REQUIRE(trumaClassKnown(0xFF) == false);
+    }
+}

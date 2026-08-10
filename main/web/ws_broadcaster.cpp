@@ -10,6 +10,7 @@
 #include "openairble.hpp"
 #include "openair_config.hpp"
 #include "truma_lin.hpp"
+#include "lin_codec.hpp"
 #include "am2301.hpp"
 #include "wifi_manager.hpp"
 #include "wstunnel.hpp"
@@ -336,6 +337,24 @@ static void broadcastLinTemps() {
     }
     if (!inited || lin.linOk != prev.linOk) {
         emit("linok", lin.linOk ? "1" : "0");
+    }
+
+    // Truma fault, gated on a class the Truma actually defines (trumaClassKnown)
+    // so a misaligned 0x3D read can't fabricate one. The snapshot sends the same
+    // pair on connect — keep both sides in step.
+    {
+        bool    fault = trumaClassKnown(lin.errClass);
+        uint8_t cls   = fault ? lin.errClass : 0;
+        uint8_t code  = fault ? lin.errCode  : 0;
+        bool    pFault = trumaClassKnown(prev.errClass);
+        if (!inited || cls != (pFault ? prev.errClass : 0)) {
+            snprintf(val, sizeof(val), "%u", cls);
+            emit("err_class", val);
+        }
+        if (!inited || code != (pFault ? prev.errCode : 0)) {
+            snprintf(val, sizeof(val), "%u", code);
+            emit("err_code", val);
+        }
     }
 
     // AM2301 external sensor — not LIN-derived, but shares this slot to reuse

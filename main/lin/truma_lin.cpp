@@ -72,11 +72,15 @@ void encodeMasterGetError() {
     masterTx[0] = 0x7F;   // NAD (broadcast variant used by CP-Plus)
     masterTx[1] = 0x06;
     masterTx[2] = 0xB2;   // SID = GetErrorInfo
-    // Byte 3 = 0x00 confirmed by sniff of a real CP-Plus D on the bus.
-    // The truma-protocol skill (and the legacy port it inherited) had 0x23
-    // here, which the Truma might silently reject — possibly the cause of
-    // the spurious E545 errors users have seen.
-    masterTx[3] = 0x00;
+    // Byte 3 MUST be 0x23. It is the sub-function selector, and it is the only
+    // value that yields a real error report: with 0x00 the Combi answers
+    // `01 06 F2 <our own D2..D5> 22` — a positive RSID (0xF2) carrying an echo
+    // of the request instead of a fault, which lands as the nonexistent class
+    // 0x46 / code 0x20 and is then dropped by trumaClassKnown(). The effect is
+    // a unit that can be locked out while every UI shows no fault at all.
+    // Verified on the bench: 0x23 returns `01 06 F2 02 06 36 FB 26` →
+    // class 0x06 (hard lockout) / code 0x36 (54, flame interruption).
+    masterTx[3] = 0x23;
     masterTx[4] = 0x17;
     masterTx[5] = 0x46;
     masterTx[6] = 0x20;

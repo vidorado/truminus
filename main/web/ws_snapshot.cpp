@@ -11,6 +11,7 @@
 #include "openairble.hpp"
 #include "openair_config.hpp"
 #include "truma_lin.hpp"
+#include "lin_codec.hpp"
 #include "am2301.hpp"
 #include "wifi_manager.hpp"
 #include "wstunnel.hpp"
@@ -124,6 +125,16 @@ void wsOnConnected() {
     wsFmtStatus(buf, WS_SNAP_BUF, "water_heating", lin.waterHeating ? "1" : "0");
     wsQueueSend(buf);
     wsFmtStatus(buf, WS_SNAP_BUF, "linok", lin.linOk ? "1" : "0");
+    wsQueueSend(buf);
+    // Truma fault. Only a class the Truma actually defines counts: the 0x3D read
+    // can arrive one byte misaligned and echo request bytes back (class 0x46 /
+    // code 0x20), which would pop a spurious fault — same guard the LCD applies.
+    bool fault = trumaClassKnown(lin.errClass);
+    snprintf(val, sizeof(val), "%u", fault ? lin.errClass : 0);
+    wsFmtStatus(buf, WS_SNAP_BUF, "err_class", val);
+    wsQueueSend(buf);
+    snprintf(val, sizeof(val), "%u", fault ? lin.errCode : 0);
+    wsFmtStatus(buf, WS_SNAP_BUF, "err_code", val);
     wsQueueSend(buf);
 
     // AM2301 external sensor temperature.

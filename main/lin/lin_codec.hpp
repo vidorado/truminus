@@ -19,3 +19,9 @@ double parseF21WaterTemp(const uint8_t* d);
 
 // Frame 0x22 byte 1: 0x40/0x50 = water heating active.
 bool parseF22WaterHeating(const uint8_t* d);
+
+// True when `c` is an error class the Truma actually defines (see the
+// truma-protocol skill). GATE EVERY FAULT SURFACE ON THIS: the 0x3D read can
+// arrive one byte misaligned and echo the request back as class 0x46 / code
+// 0x20, which would otherwise be reported as a real fault.
+bool trumaClassKnown(uint8_t c);
