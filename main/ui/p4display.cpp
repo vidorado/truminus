@@ -2146,6 +2146,13 @@ void p4SetFanMode(int mode)
     if (mode > 12) mode = 12;
     if (!lvglLockForSet()) return;
     st.fanMode = mode;
+    // Same normalisation the on-screen controls and p4SetHeating() apply: eco
+    // and high (1/2) exist only while heating, the numeric levels only while
+    // it is off. Neither UI can produce the other combination, but a remote
+    // setter can — `{"id":"/fan","value":"high"}` with heat off used to stick,
+    // and derive_mode() then encoded it as 0x12, which frame 0x20 cannot tell
+    // apart from level 2. Normalising here keeps st truthful for every caller.
+    apply_heat_fan_rule();
     refresh_controls();
     lvglUnlock();
 }
