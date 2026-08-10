@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Auto-apply patches to managed_components and PlatformIO platform files.
+Auto-apply patches to managed_components.
 
 Called from CMakeLists.txt at cmake configure time (see CMakeLists.txt).
 Each patch is idempotent: checks if already applied before modifying.
@@ -70,27 +70,6 @@ PATCHES = [
         "desc":   "jc4880_bsp: drop use_dma2d flag for IDF 6.0",
     },
 
-    # ── PlatformIO espressif32 platform: bootloader linker-script includes ────
-    # PlatformIO's espidf.py builds CFLAGS for the bootloader linker-script
-    # preprocessor but omits the parent ld/ directory, so bootloader.sections.
-    # common.ld (which lives one level up from esp32p4/) is not found.
-    # Patch: patches/platformio_espidf_bootloader_includes.patch
-    {
-        "target": Path.home() / ".platformio" / "platforms" / "espressif32"
-                  / "builder" / "frameworks" / "espidf.py",
-        "old": (
-            '    bootloader_extra_includes = [\n'
-            '        str(Path(FRAMEWORK_DIR) / "components" / "bootloader" / "subproject" / "main" / "ld" / idf_variant)\n'
-            '    ]'
-        ),
-        "new": (
-            '    bootloader_extra_includes = [\n'
-            '        str(Path(FRAMEWORK_DIR) / "components" / "bootloader" / "subproject" / "main" / "ld" / idf_variant),\n'
-            '        str(Path(FRAMEWORK_DIR) / "components" / "bootloader" / "subproject" / "main" / "ld"),\n'
-            '    ]'
-        ),
-        "desc":   "PlatformIO espidf.py: add main/ld/ to bootloader linker-script include paths",
-    },
     # ── ESP-IDF component: esp_lvgl_port — GT911 I2C read crash ────────────
     # A transient I2C error (noise, bus contention) makes
     # esp_lcd_touch_read_data() return ESP_ERR_INVALID_RESPONSE.
@@ -157,24 +136,6 @@ PATCHES = [
         "desc":   "esp-nimble-cpp: guard findAdvField against corrupt/oversized m_payload",
     },
 
-    # Same patch for the versioned copy of the platform (if present).
-    {
-        "target": Path.home() / ".platformio" / "platforms"
-                  / "espressif32@src-3ace0f14b41a59a9fa78289abea8a5b4"
-                  / "builder" / "frameworks" / "espidf.py",
-        "old": (
-            '    bootloader_extra_includes = [\n'
-            '        str(Path(FRAMEWORK_DIR) / "components" / "bootloader" / "subproject" / "main" / "ld" / idf_variant)\n'
-            '    ]'
-        ),
-        "new": (
-            '    bootloader_extra_includes = [\n'
-            '        str(Path(FRAMEWORK_DIR) / "components" / "bootloader" / "subproject" / "main" / "ld" / idf_variant),\n'
-            '        str(Path(FRAMEWORK_DIR) / "components" / "bootloader" / "subproject" / "main" / "ld"),\n'
-            '    ]'
-        ),
-        "desc":   "PlatformIO espidf.py (versioned): add main/ld/ to bootloader linker-script include paths",
-    },
 ]
 
 

@@ -104,7 +104,7 @@ float tempC = (rawT - 2731) / 10.0f;   // Kelvin×10 → °C
 
 ---
 
-## TruMinus implementation (src/ultimatronble.cpp)
+## TruMinus implementation (main/ble/ultimatronble.cpp)
 
 - `ultimatronBleInit()`: loads MAC from NVS, creates mutex + semaphore, launches `ultimatronTask`
 - `ultimatronTask`: waits 22 s (WiFi/Victron settle), then calls `pollUltratron()` every 30 s

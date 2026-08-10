@@ -24,6 +24,8 @@ idf_component_register(
         "lin/mode_controller.cpp"
         "web/ws_command.cpp"
         "web/ws_diff.cpp"
+        "web/ws_frames.cpp"
+        "ble/ble_status.cpp"
         "ota/version_compare.cpp"
         "core/flags.cpp"
         "core/heapdiag.cpp"

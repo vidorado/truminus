@@ -73,9 +73,11 @@ If you need to change `sdkconfig`: run `idf.py menuconfig`, or edit
 
 ## 4. ESP32-P4 rev < v3 memory — non-contiguous SRAM
 
-The board JSON (`boards/jc4880_p4.json`) declares `chip_variant: "esp32p4_es"`
-→ enables `CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y` → linker uses
-`-Wl,--enable-non-contiguous-regions`.
+`sdkconfig` sets `CONFIG_ESP32P4_REV_MIN_1=y`, which selects
+`CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y` → linker uses
+`-Wl,--enable-non-contiguous-regions`.  (This used to be declared as
+`chip_variant: "esp32p4_es"` in a PlatformIO board JSON; PlatformIO is no longer
+used and that file is gone — sdkconfig is the only source now.)
 
 **SRAM layout** (from `esp-idf/esp_system/ld/memory.ld`):
 - `sram_low  (RWX) @ 0x4FF00000` — ~179 KB — shared IRAM/DRAM
@@ -214,10 +216,10 @@ effects:
   effect. Fix is the sdkconfig change, not picocom flags.
 
 - **`esp_console` REPLs must use `esp_console_new_repl_usb_serial_jtag()`**
-  (see `main/cli.cpp::cliStart`). The UART variant binds the line editor
+  (see `main/core/cli.cpp::cliStart`). The UART variant binds the line editor
   to UART0 and the input vanishes into the void. The JTAG variant only
   declares its config struct if primary console is JTAG (the `#if
-  CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG` in `components/console/esp_console.h`),
+  CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG` in `$IDF_PATH/components/console/esp_console.h`),
   so the previous point and this one are linked.
 
 - **linenoise must run in dumb mode on USB-Serial-JTAG.** The JTAG
@@ -432,7 +434,7 @@ problem is sensitivity/antenna (§15), not power-save tuning — don't reach for
 
 ## 14. RMT on an open-drain single-wire bus must idle *high*
 
-The single-wire AM2301/DHT22 reader (`main/am2301.cpp`, DATA on GPIO52) uses an
+The single-wire AM2301/DHT22 reader (`main/sensors/am2301.cpp`, DATA on GPIO52) uses an
 RMT TX channel (start pulse) + RX channel (response) bound to the **same GPIO**
 (IDF 6.0 wires them in loopback automatically — no `io_loop_back` flag, and
 `io_od_mode` is gone too: call `gpio_od_enable()` after channel creation). The
@@ -479,7 +481,7 @@ is caught but the `AUX_ADV_IND` carrying the name/payload is dropped. Verified
 end-to-end: a non-connectable extended advert from a phone is invisible at
 range, nameless-MAC at the margin, full name when touching the board.
 
-**Diagnostic tool — serial CLI `scan [secs]`** (`main/cli.cpp`): lists every
+**Diagnostic tool — serial CLI `scan [secs]`** (`main/core/cli.cpp`): lists every
 advertiser with RSSI + **ADV** (adverts heard this window = reception-quality
 metric). It disables the controller's duplicate filter for the scan window
 (restored after) so ADV reflects the true received rate. Reuses
@@ -613,7 +615,7 @@ movable and worth doing is the **bring-up transient** (see levers below).
   the cheap, build-real alternative is **differential measurement** — snapshot
   `heap_caps_get_free_size(MALLOC_CAP_INTERNAL/SPIRAM)` at each subsystem
   bring-up boundary and read who consumes what from the deltas (see
-  `main/heapdiag.cpp`, gated by `HEAP_DIAG` in `flags.h`, off by default).
+  `main/core/heapdiag.cpp`, gated by `HEAP_DIAG` in `flags.h`, off by default).
   GOTCHA hit in the 2026-06 second audit: an async task (the BLE supervisor)
   whose marks interleave with `bootTask`'s contaminates the deltas via the shared
   `prev` — serialize bring-up (start BLE *last*) so the sequential marks are
@@ -665,7 +667,7 @@ movable and worth doing is the **bring-up transient** (see levers below).
    unverified in esp_hosted here.
 
 **Host-stack note:** NimBLE *is* the lightweight host. IDF 6.0's `choice BT_HOST`
-(`components/bt/Kconfig`) offers only NimBLE / Bluedroid / controller-only —
+(`$IDF_PATH/components/bt/Kconfig`) offers only NimBLE / Bluedroid / controller-only —
 **there is no "ESP-BLE-HOST"**; Bluedroid is heavier. `esp_ble_mesh` /
 `esp_ble_audio` are profile layers, not host stacks. Switching hosts does not
 save internal DRAM.

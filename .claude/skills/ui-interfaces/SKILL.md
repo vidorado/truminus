@@ -7,7 +7,7 @@ High-level context on the two user interfaces and how they stay in sync. No deta
 ## Both interfaces are functionally equivalent
 
 Every control feature must exist in both:
-- **LCD touch UI** (`main/p4display.cpp`) — physical 800×480 LVGL screen on the JC4880-P4 board (replaces the old 320×240 CYD-C5 implementation).
+- **LCD touch UI** (`main/ui/p4display.cpp`) — physical 800×480 LVGL screen on the JC4880-P4 board (replaces the old 320×240 CYD-C5 implementation).
 - **Web** (`data/index.html` + `script.js` + `styles.css` + `i18n.js`) — WebSocket JSON, no framework, responsive.
 
 If a control, status indicator, or piece of UI logic is added on one side, the equivalent must land on the other. The only exception is when the user explicitly asks for a single-surface change.
@@ -85,7 +85,7 @@ All web controls send with a 300 ms debounce to avoid flooding the ESP32 with ra
 `boilerCb` forces `fan="off"` when the boiler is enabled from the LCD. `main.cpp` immediately overrides this back to "eco" if heating is on. It's a benign side effect that doesn't exist on the web path.
 
 ### Outdoor temperature
-The LCD has an AM2301/DHT22 sensor on **GPIO52** (`AM2301_DATA_PIN` in `main/main.cpp`), read every 30 s via the RMT peripheral (`main/am2301.cpp`). Outdoor temperature is shown in the LCD top bar and broadcast to web clients as `{"command":"status","id":"outdoor_temp","value":"..."}`. Web clients display it but cannot read it independently.
+The LCD has an AM2301/DHT22 sensor on **GPIO52** (`AM2301_DATA_PIN` in `main/main.cpp`), read every 30 s via the RMT peripheral (`main/sensors/am2301.cpp`). Outdoor temperature is shown in the LCD top bar and broadcast to web clients as `{"command":"status","id":"outdoor_temp","value":"..."}`. Web clients display it but cannot read it independently.
 
 ### LVGL lock for `p4display.cpp::st` mutations
 The remote setters (`p4SetHeating`, `p4SetFanMode`, `p4SetBoilerMode`, `p4SetEnergyIdx`, `p4SetRoomSetpoint`, `p4SetScreenTimeoutIdx`) take `bsp_display_lock(50)`; the on-screen button callbacks already run on the LVGL task with the lock held. The diff-broadcast helper (`broadcastControlChanges` in `main.cpp`) reads `st` via `p4GetControlState` from `wsPumpTask` *without* the lock — safe because each field is a plain int/bool/float, but don't introduce composite reads. Prefer a short lock timeout (e.g. 10 ms) over `portMAX_DELAY` to avoid deadlocks if the LVGL task is busy.
@@ -252,7 +252,7 @@ or the browser will show cached styles.
 ### Font icon subsets
 - Web icons: `data/fa-solid.woff` — regenerate with
   `python3 scripts/gen_fa_subset.py` after adding glyphs.
-- LCD icons: `main/font_icons.ttf` — regenerate with
+- LCD icons: `main/assets/fonts/font_icons.ttf` — regenerate with
   `python3 scripts/gen_icon_font.py`.
 - Both must be updated in tandem when adding new icons.
 - Define `#define FA_xxx` macros in `p4display.cpp` using the UTF-8

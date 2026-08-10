@@ -282,7 +282,8 @@ Truma heat). State lives in `P4ControlState::acFlap1/acFlap2` (raw wire value), 
   mode. (The IR remote doesn't share the BLE channel, but any press on the physical console still kicks our
   BLE off — see the physical-remote gotcha above.)
 - **Icons** (swing = oscillating flap between two bars; fix = three right arrows) are reproduced from the
-  app as filled contours in `scripts/flap_icons.py`, shared by both surfaces: baked into
+  app as filled contours in `ui/swing.svg` / `ui/fix.svg` — the single source of truth for both
+  surfaces since the procedural generator was dropped (`ea1a7dc`) — baked into
   `main/assets/fonts/font_icons.ttf` (U+E901/E902, via `gen_icon_font.py`) for the LCD and embedded as
   inline `<svg>` symbols (`#ic-flap-swing`/`#ic-flap-fix`) in `data/index.html` for the web.
 

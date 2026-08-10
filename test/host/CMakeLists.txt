@@ -7,25 +7,41 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Real production logic compiled straight from main/ (IDF-free modules only) so
 # the tests exercise the shipping code, not a copy. Every test now links the real
 # module — no inline re-implementations remain.
+#
+# Paths mirror main/'s subdirectory layout, and the include list mirrors
+# main/CMakeLists.txt::INCLUDE_DIRS so the modules resolve each other's headers
+# exactly as they do in the firmware build. Moving a module between subdirs
+# means updating both lists.
+set(TRUMINUS_MAIN ${CMAKE_CURRENT_SOURCE_DIR}/../../main)
+
 add_library(truminus_logic STATIC
     catch_amalgamated.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/mode_controller.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/ws_command.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/ws_diff.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/version_compare.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/lin_codec.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/lin_protocol.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/lin_frames.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/bthome_codec.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/am2301_codec.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/multiplus_codec.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/ultimatron_codec.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/victron_codec.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main/faultlog_codec.cpp
+    ${TRUMINUS_MAIN}/lin/mode_controller.cpp
+    ${TRUMINUS_MAIN}/lin/lin_codec.cpp
+    ${TRUMINUS_MAIN}/lin/lin_protocol.cpp
+    ${TRUMINUS_MAIN}/lin/lin_frames.cpp
+    ${TRUMINUS_MAIN}/web/ws_command.cpp
+    ${TRUMINUS_MAIN}/web/ws_diff.cpp
+    ${TRUMINUS_MAIN}/web/ws_frames.cpp
+    ${TRUMINUS_MAIN}/ota/version_compare.cpp
+    ${TRUMINUS_MAIN}/ble/bthome_codec.cpp
+    ${TRUMINUS_MAIN}/ble/multiplus_codec.cpp
+    ${TRUMINUS_MAIN}/ble/ultimatron_codec.cpp
+    ${TRUMINUS_MAIN}/ble/victron_codec.cpp
+    ${TRUMINUS_MAIN}/sensors/am2301_codec.cpp
+    ${TRUMINUS_MAIN}/core/faultlog_codec.cpp
 )
 target_include_directories(truminus_logic PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../main
+    ${TRUMINUS_MAIN}
+    ${TRUMINUS_MAIN}/app
+    ${TRUMINUS_MAIN}/ui
+    ${TRUMINUS_MAIN}/web
+    ${TRUMINUS_MAIN}/lin
+    ${TRUMINUS_MAIN}/ble
+    ${TRUMINUS_MAIN}/sensors
+    ${TRUMINUS_MAIN}/ota
+    ${TRUMINUS_MAIN}/core
 )
 
 # Test executable
@@ -45,6 +61,7 @@ add_executable(tests
     test_victron_parser.cpp
     test_ws_command.cpp
     test_ws_diff.cpp
+    test_ws_frames.cpp
 )
 
 target_link_libraries(tests PRIVATE truminus_logic)

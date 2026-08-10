@@ -11,6 +11,7 @@
 #include "libs/tiny_ttf/lv_tiny_ttf.h"
 #include "nvs.h"
 #include <stdio.h>
+#include <stdarg.h>
 #include <cmath>
 #include <string.h>
 
@@ -281,6 +282,93 @@ static struct {
 
 } ui;
 
+// ── Set-if-changed widget helpers ─────────────────────────────────────────
+//
+// LVGL does not short-circuit these setters when the value is unchanged:
+// lv_label_set_text() frees and reallocates the string then marks a refresh,
+// and every lv_obj_set_style_*() runs lv_obj_refresh_style() → lv_obj_invalidate()
+// unconditionally.  p4DisplayUpdate() touches ~40 widgets on every 1 s tick, which
+// overflows LVGL's 32-slot dirty-area list (LV_INV_BUF_SIZE) — at which point
+// lv_refr.c discards the list and substitutes the whole screen area, i.e. a full
+// 800×480 repaint every second even when nothing moved.  Comparing first keeps
+// the dirty area down to the fields that actually changed.
+//
+// INVARIANT: any widget touched from the periodic refresh path
+// (p4DisplayUpdate / refresh_controls / refresh_flame_icon) must be written
+// through these helpers, never through the raw lv_* setter.  Setters that
+// already self-guard — lv_obj_add_flag/remove_flag, lv_obj_add_state/clear_state,
+// lv_bar_set_value — are safe to call directly.
+static void set_text(lv_obj_t* o, const char* txt)
+{
+    if (!o || !txt) return;
+    const char* cur = lv_label_get_text(o);
+    if (cur && strcmp(cur, txt) == 0) return;
+    lv_label_set_text(o, txt);
+}
+
+static void set_text_fmt(lv_obj_t* o, const char* fmt, ...) LV_FORMAT_ATTRIBUTE(2, 3);
+static void set_text_fmt(lv_obj_t* o, const char* fmt, ...)
+{
+    if (!o) return;
+    // Widest caller is the status-bar "<ssid> / <ip>" line: 32 + 3 + 15 + NUL.
+    char buf[64];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    set_text(o, buf);
+}
+
+// The getters take an lv_part_t while the setters take an lv_style_selector_t;
+// a bare part is a valid selector, so one lv_part_t parameter drives both.
+static void set_bg_color(lv_obj_t* o, lv_color_t c, lv_part_t part = LV_PART_MAIN)
+{
+    if (!o || lv_color_eq(lv_obj_get_style_bg_color(o, part), c)) return;
+    lv_obj_set_style_bg_color(o, c, part);
+}
+
+static void set_text_color(lv_obj_t* o, lv_color_t c)
+{
+    if (!o || lv_color_eq(lv_obj_get_style_text_color(o, LV_PART_MAIN), c)) return;
+    lv_obj_set_style_text_color(o, c, LV_PART_MAIN);
+}
+
+static void set_text_opa(lv_obj_t* o, lv_opa_t opa)
+{
+    if (!o || lv_obj_get_style_text_opa(o, LV_PART_MAIN) == opa) return;
+    lv_obj_set_style_text_opa(o, opa, LV_PART_MAIN);
+}
+
+static void set_opa(lv_obj_t* o, lv_opa_t opa)
+{
+    if (!o || lv_obj_get_style_opa(o, LV_PART_MAIN) == opa) return;
+    lv_obj_set_style_opa(o, opa, LV_PART_MAIN);
+}
+
+// Height carries LV_STYLE_PROP_FLAG_LAYOUT_UPDATE, so an unguarded write also
+// dirties the parent's layout — worth skipping even more than a plain repaint.
+static void set_height(lv_obj_t* o, int32_t h)
+{
+    if (!o || lv_obj_get_style_height(o, LV_PART_MAIN) == h) return;
+    lv_obj_set_height(o, h);
+}
+
+// One control bit on one button.  `ctrl` must be a single flag: LVGL's
+// has_button_ctrl() answers "are ALL these bits set", so a multi-bit mask
+// would compare wrong.
+static void bm_set_ctrl(lv_obj_t* bm, uint32_t id, lv_buttonmatrix_ctrl_t ctrl, bool on)
+{
+    if (!bm || lv_buttonmatrix_has_button_ctrl(bm, id, ctrl) == on) return;
+    if (on) lv_buttonmatrix_set_button_ctrl(bm, id, ctrl);
+    else    lv_buttonmatrix_clear_button_ctrl(bm, id, ctrl);
+}
+
+static void bm_set_ctrl_all(lv_obj_t* bm, uint32_t count,
+                            lv_buttonmatrix_ctrl_t ctrl, bool on)
+{
+    for (uint32_t i = 0; i < count; ++i) bm_set_ctrl(bm, i, ctrl, on);
+}
+
 // ── Topbar status-icon state machine ──────────────────────────────────────
 // The four status glyphs (WiFi, LIN, BLE, cloud/tunnel) share one all-white
 // visual vocabulary: DISABLED = dim, CONNECTING = blink, CONNECTED = solid,
@@ -339,8 +427,8 @@ static void repaint_icon(int i)
     case IST_CONNECTED:  opa = LV_OPA_COVER; break;
     case IST_FAILED:     opa = LV_OPA_COVER; slash = true; break;
     }
-    lv_obj_set_style_text_color(ic, lv_color_white(), 0);
-    lv_obj_set_style_text_opa(ic, opa, 0);
+    set_text_color(ic, lv_color_white());
+    set_text_opa(ic, opa);
     if (sl) {
         if (slash) lv_obj_clear_flag(sl, LV_OBJ_FLAG_HIDDEN);
         else       lv_obj_add_flag(sl, LV_OBJ_FLAG_HIDDEN);
@@ -589,6 +677,10 @@ static bool s_acConnected = false;
 // set, the topbar snowflake blinks — analogous to the flame while the Truma
 // burner is firing. Driven with the shared 500 ms icon-blink timer phase.
 static bool s_acCompressorOn = false;
+// Cached burner-for-hot-water flag and water temperature (LIN frames 0x22/0x21).
+// Drive the topbar drop the same way the two above drive the flame/snowflake.
+static bool  s_waterHeating = false;
+static float s_waterTemp    = NAN;
 
 // Btnmatrix maps filled from i18n strings each time build_main_screen() runs.
 // Stored as module-level arrays so LVGL's pointer reference stays valid.
@@ -1455,20 +1547,20 @@ static void refresh_flame_icon()
     // for a running compressor.
     bool strike = cooling && !s_acConnected;
     if (cooling) {
-        lv_label_set_text(ui.icon_flame, FA_SNOWFLAKE);
-        lv_obj_set_style_text_color(ui.icon_flame, lv_color_hex(0x44aaff), 0);
+        set_text(ui.icon_flame, FA_SNOWFLAKE);
+        set_text_color(ui.icon_flame, lv_color_hex(0x44aaff));
         // Solid + slash when unreachable; solid when cooling idle; blink while
         // the compressor is actually running (mirrors the flame on burner
         // demand). The 500 ms icon-blink timer repaints this.
         lv_opa_t opa = !s_acConnected      ? LV_OPA_COVER
                      : s_acCompressorOn    ? (s_iconBlink ? LV_OPA_COVER : LV_OPA_20)
                                            : LV_OPA_COVER;
-        lv_obj_set_style_text_opa(ui.icon_flame, opa, 0);
+        set_text_opa(ui.icon_flame, opa);
     } else {
-        lv_label_set_text(ui.icon_flame, FA_FIRE);
-        lv_obj_set_style_text_color(ui.icon_flame, C_AMBER, 0);
-        lv_obj_set_style_text_opa(ui.icon_flame,
-            (s_linOk && st.heatingOn) ? LV_OPA_COVER : LV_OPA_30, 0);
+        set_text(ui.icon_flame, FA_FIRE);
+        set_text_color(ui.icon_flame, C_AMBER);
+        set_text_opa(ui.icon_flame,
+            (s_linOk && st.heatingOn) ? LV_OPA_COVER : LV_OPA_30);
     }
     if (ui.slash_flame) {
         if (strike) lv_obj_clear_flag(ui.slash_flame, LV_OBJ_FLAG_HIDDEN);
@@ -1476,15 +1568,30 @@ static void refresh_flame_icon()
     }
 }
 
+// Update the topbar water-drop indicator.  Three states, mirroring the web's
+// refreshIndicators(): dim when hot water isn't selected (or the bus is down, so
+// the setting is queued rather than applied), solid once selected, and blinking
+// while the Truma reports the burner actually running for it.  "At target"
+// (within 1 °C of the mode's setpoint) drops back to solid — frame 0x22 can keep
+// asserting demand for a moment after the temperature is satisfied.
+static void refresh_tint_icon()
+{
+    bool boilerOn = s_linOk && st.boilerMode != 0;
+    float wSet    = (st.boilerMode == 1) ? 40.0f : 60.0f;
+    bool atTemp   = boilerOn && !std::isnan(s_waterTemp) && s_waterTemp > 0.0f
+                    && s_waterTemp >= wSet - 1.0f;
+    bool demand   = boilerOn && s_waterHeating && !atTemp;
+    set_text_opa(ui.icon_tint,
+        !boilerOn ? LV_OPA_30
+      : demand    ? (s_iconBlink ? LV_OPA_COVER : LV_OPA_20)
+                  : LV_OPA_COVER);
+}
+
 // Set a one-of-N selection on a button matrix via the CHECKED ctrl bit.
 static void bm_select(lv_obj_t* bm, int sel, int count)
 {
-    for (int i = 0; i < count; ++i) {
-        if (i == sel)
-            lv_buttonmatrix_set_button_ctrl(bm, i, LV_BUTTONMATRIX_CTRL_CHECKED);
-        else
-            lv_buttonmatrix_clear_button_ctrl(bm, i, LV_BUTTONMATRIX_CTRL_CHECKED);
-    }
+    for (int i = 0; i < count; ++i)
+        bm_set_ctrl(bm, i, LV_BUTTONMATRIX_CTRL_CHECKED, i == sel);
 }
 
 static void ac_btn_select(int sel)  // sel 0–3: cool/eco/heat/off
@@ -1500,11 +1607,11 @@ static void refresh_controls()
     char buf[20];
     // Whole degrees while cooling (matches the whole-degree A/C step); halves for Truma heat.
     snprintf(buf, sizeof(buf), sp_cooling() ? "%.0f°C" : "%.1f°C", st.roomSetpoint);
-    lv_label_set_text(ui.lbl_room_sp, buf);
+    set_text(ui.lbl_room_sp, buf);
 
     // ── Heat-source panel: CALEFACCIÓN (Truma only) vs CLIMATIZACIÓN (A/C) ──
     if (st.openairConfigured) {
-        lv_label_set_text(ui.lbl_heat_title, t(TK::CLIMATE));
+        set_text(ui.lbl_heat_title, t(TK::CLIMATE));
         lv_obj_add_flag(ui.btnmx_heat, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(ui.row_ac, LV_OBJ_FLAG_HIDDEN);
         int sel = st.heatingOn ? 2 : (st.acMode == 1) ? 0 : (st.acMode == 2) ? 1 : 3;
@@ -1512,13 +1619,13 @@ static void refresh_controls()
         // Heat is delivered by the Truma over LIN; without the bus it can't be
         // commanded, so grey out and lock only that button (cool/eco/off drive
         // the A/C over BLE and stay live).
-        lv_obj_set_style_opa(ui.btn_ac[2], s_linOk ? LV_OPA_COVER : LV_OPA_50, 0);
+        set_opa(ui.btn_ac[2], s_linOk ? LV_OPA_COVER : LV_OPA_50);
         if (s_linOk) lv_obj_add_flag(ui.btn_ac[2], LV_OBJ_FLAG_CLICKABLE);
         else         lv_obj_remove_flag(ui.btn_ac[2], LV_OBJ_FLAG_CLICKABLE);
         // Cool/eco drive the A/C over BLE — disable them when it's unreachable
         // (off stays live; you can always stop cooling).
         for (int i = 0; i <= 1; i++) {
-            lv_obj_set_style_opa(ui.btn_ac[i], s_acConnected ? LV_OPA_COVER : LV_OPA_50, 0);
+            set_opa(ui.btn_ac[i], s_acConnected ? LV_OPA_COVER : LV_OPA_50);
             if (s_acConnected) lv_obj_add_flag(ui.btn_ac[i], LV_OBJ_FLAG_CLICKABLE);
             else               lv_obj_remove_flag(ui.btn_ac[i], LV_OBJ_FLAG_CLICKABLE);
         }
@@ -1544,7 +1651,7 @@ static void refresh_controls()
             lv_obj_add_flag(ui.flap_grid, LV_OBJ_FLAG_HIDDEN);
         }
     } else {
-        lv_label_set_text(ui.lbl_heat_title, t(TK::HEATING));
+        set_text(ui.lbl_heat_title, t(TK::HEATING));
         lv_obj_add_flag(ui.row_ac, LV_OBJ_FLAG_HIDDEN);
         // CALEFACCIÓN (Truma) has no flaps: full-width setpoint, grid hidden.
         layout_setpoint_row(false);
@@ -1553,9 +1660,8 @@ static void refresh_controls()
         bm_select(ui.btnmx_heat, st.heatingOn ? 1 : 0, 2);
         // The whole Truma heating toggle is meaningless without the LIN bus —
         // grey it out and stop it emitting commands until the bus returns.
-        if (s_linOk) lv_buttonmatrix_clear_button_ctrl_all(ui.btnmx_heat, LV_BUTTONMATRIX_CTRL_DISABLED);
-        else         lv_buttonmatrix_set_button_ctrl_all(ui.btnmx_heat, LV_BUTTONMATRIX_CTRL_DISABLED);
-        lv_obj_set_style_opa(ui.btnmx_heat, s_linOk ? LV_OPA_COVER : LV_OPA_50, 0);
+        bm_set_ctrl_all(ui.btnmx_heat, 2, LV_BUTTONMATRIX_CTRL_DISABLED, !s_linOk);
+        set_opa(ui.btnmx_heat, s_linOk ? LV_OPA_COVER : LV_OPA_50);
         if (st.heatingOn) lv_obj_remove_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
         else              lv_obj_add_flag(ui.row_sp, LV_OBJ_FLAG_HIDDEN);
     }
@@ -1575,18 +1681,14 @@ static void refresh_controls()
         // Auto/Man only selectable in cool mode; eco/off lock it to Auto.
         bool autoSel = cool ? st.acFanAuto : true;
         bm_select(ui.btnmx_ac_fan, autoSel ? 0 : 1, 2);
-        for (int i = 0; i < 2; ++i) {
-            if (cool) lv_buttonmatrix_clear_button_ctrl(ui.btnmx_ac_fan, i, LV_BUTTONMATRIX_CTRL_DISABLED);
-            else      lv_buttonmatrix_set_button_ctrl(ui.btnmx_ac_fan, i, LV_BUTTONMATRIX_CTRL_DISABLED);
-        }
-        lv_obj_set_style_opa(ui.btnmx_ac_fan, cool ? LV_OPA_COVER : LV_OPA_40, 0);
+        bm_set_ctrl_all(ui.btnmx_ac_fan, 2, LV_BUTTONMATRIX_CTRL_DISABLED, !cool);
+        set_opa(ui.btnmx_ac_fan, cool ? LV_OPA_COVER : LV_OPA_40);
 
         // Speed selector only in cool + Man.
         if (cool && !st.acFanAuto) {
             if (st.acFanSpeed < 1) st.acFanSpeed = 1;
             if (st.acFanSpeed > 6) st.acFanSpeed = 6;
-            char b[8]; snprintf(b, sizeof(b), "%d", st.acFanSpeed);
-            lv_label_set_text(ui.lbl_acfan_lvl, b);
+            set_text_fmt(ui.lbl_acfan_lvl, "%d", st.acFanSpeed);
             lv_obj_remove_flag(ui.btn_acfan_dn,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(ui.btn_acfan_up,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(ui.lbl_acfan_lvl, LV_OBJ_FLAG_HIDDEN);
@@ -1611,32 +1713,19 @@ static void refresh_controls()
         lv_obj_add_flag(ui.lbl_fan_lvl, LV_OBJ_FLAG_HIDDEN);
 
         int sel = (st.fanMode == 1) ? 0 : (st.fanMode == 2) ? 1 : 0;
-        for (int i = 0; i < 2; ++i) {
-            if (i == sel)
-                lv_buttonmatrix_set_button_ctrl(ui.btnmx_fan_heat, i, LV_BUTTONMATRIX_CTRL_CHECKED);
-            else
-                lv_buttonmatrix_clear_button_ctrl(ui.btnmx_fan_heat, i, LV_BUTTONMATRIX_CTRL_CHECKED);
-        }
+        bm_select(ui.btnmx_fan_heat, sel, 2);
     } else {
         lv_obj_add_flag(ui.btnmx_fan_heat, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(ui.btnmx_fan_off, LV_OBJ_FLAG_HIDDEN);
 
         bool fanOn = (st.fanMode >= 3);
-        int sel = fanOn ? 1 : 0;
-        for (int i = 0; i < 2; ++i) {
-            if (i == sel)
-                lv_buttonmatrix_set_button_ctrl(ui.btnmx_fan_off, i, LV_BUTTONMATRIX_CTRL_CHECKED);
-            else
-                lv_buttonmatrix_clear_button_ctrl(ui.btnmx_fan_off, i, LV_BUTTONMATRIX_CTRL_CHECKED);
-        }
+        bm_select(ui.btnmx_fan_off, fanOn ? 1 : 0, 2);
 
         if (fanOn) {
             int lvl = st.fanMode - 2;
             if (lvl < 1)  lvl = 1;
             if (lvl > 10) lvl = 10;
-            char b[8];
-            snprintf(b, sizeof(b), "%d", lvl);
-            lv_label_set_text(ui.lbl_fan_lvl, b);
+            set_text_fmt(ui.lbl_fan_lvl, "%d", lvl);
             lv_obj_remove_flag(ui.btn_fan_dn,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(ui.btn_fan_up,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(ui.lbl_fan_lvl, LV_OBJ_FLAG_HIDDEN);
@@ -1649,14 +1738,10 @@ static void refresh_controls()
 
 boiler:
     int bi = (st.boilerMode >= 0 && st.boilerMode <= 3) ? st.boilerMode : 0;
-    for (int i = 0; i < 4; ++i) {
-        if (i == bi)
-            lv_buttonmatrix_set_button_ctrl(ui.btnmx_boiler, i, LV_BUTTONMATRIX_CTRL_CHECKED);
-        else
-            lv_buttonmatrix_clear_button_ctrl(ui.btnmx_boiler, i, LV_BUTTONMATRIX_CTRL_CHECKED);
-    }
+    bm_select(ui.btnmx_boiler, bi, 4);
 
     refresh_flame_icon();
+    refresh_tint_icon();   // st.boilerMode may have just changed
 }
 
 // ── Event callbacks ───────────────────────────────────────────────────────────
@@ -2085,6 +2170,13 @@ void p4SetFanMode(int mode)
     if (mode > 12) mode = 12;
     if (!lvglLockForSet()) return;
     st.fanMode = mode;
+    // Same normalisation the on-screen controls and p4SetHeating() apply: eco
+    // and high (1/2) exist only while heating, the numeric levels only while
+    // it is off. Neither UI can produce the other combination, but a remote
+    // setter can — `{"id":"/fan","value":"high"}` with heat off used to stick,
+    // and derive_mode() then encoded it as 0x12, which frame 0x20 cannot tell
+    // apart from level 2. Normalising here keeps st truthful for every caller.
+    apply_heat_fan_rule();
     refresh_controls();
     lvglUnlock();
 }
@@ -2406,8 +2498,10 @@ static void icon_blink_timer_cb(lv_timer_t*)
                 : (s_tunnel_state == 3) ? IST_FAILED
                                         : IST_DISABLED;
     for (int i = 0; i < 4; i++) repaint_icon(i);
-    // Advance the snowflake blink (compressor running) on the same phase.
+    // Advance the snowflake blink (compressor running) and the water-drop blink
+    // (burner running for hot water) on the same phase.
     refresh_flame_icon();
+    refresh_tint_icon();
 }
 
 void p4DisplayRebuild()
@@ -2504,14 +2598,14 @@ void p4DisplayUpdate(const P4DisplayData& d)
     }
 
     if (!std::isnan(d.roomTemp))
-        lv_label_set_text_fmt(ui.lbl_room_temp, "%.1f°C", d.roomTemp);
+        set_text_fmt(ui.lbl_room_temp, "%.1f°C", d.roomTemp);
     else
-        lv_label_set_text(ui.lbl_room_temp, "--°C");
+        set_text(ui.lbl_room_temp, "--°C");
 
     if (!std::isnan(d.outdoorTemp))
-        lv_label_set_text_fmt(ui.lbl_outdoor, "%.1f°C", d.outdoorTemp);
+        set_text_fmt(ui.lbl_outdoor, "%.1f°C", d.outdoorTemp);
     else
-        lv_label_set_text(ui.lbl_outdoor, "--°C");
+        set_text(ui.lbl_outdoor, "--°C");
 
     // WiFi/LIN/BLE only report a boolean (or a 3-level BLE state), so each icon
     // stays dim until its subsystem starts in bootTask's sequence, then blinks
@@ -2536,53 +2630,53 @@ void p4DisplayUpdate(const P4DisplayData& d)
     // is up AND the function is requested.  Without LIN the values reported
     // by the rest of the UI are stale/wishful — keep the icons dim to avoid
     // implying the appliance is actually doing something.  Matches the web
-    // refreshIndicators() gating.
-    lv_obj_set_style_text_opa(ui.icon_tint,
-        (d.linOk && d.boilerMode != 0) ? LV_OPA_COVER : LV_OPA_30, 0);
+    // refreshIndicators() gating.  Cache first: both refreshers read the
+    // statics, not `d`, so the 500 ms blink timer sees the same state.
     s_linOk = d.linOk;
     s_acConnected = d.acConnected;
     s_acCompressorOn = d.acCompressorOn;
+    s_waterHeating = d.waterHeating;
+    s_waterTemp = d.waterTemp;
     refresh_flame_icon();
+    refresh_tint_icon();
 
     // Boiler thermometer.  The scale tops out at the selected boiler target
     // (40 °C in eco, 60 °C otherwise) so the fill rescales with the setpoint.
     if (!std::isnan(d.waterTemp)) {
-        lv_label_set_text_fmt(ui.lbl_water_temp, "%.0f°C", d.waterTemp);
+        set_text_fmt(ui.lbl_water_temp, "%.0f°C", d.waterTemp);
         float scaleMax = (d.boilerMode == 1) ? 40.0f : 60.0f;
         float frac = d.waterTemp / scaleMax;
         if (frac < 0.0f) frac = 0.0f;
         if (frac > 1.0f) frac = 1.0f;
-        lv_obj_set_height(ui.water_fill, (int)(frac * WATER_FILL_H + 0.5f));
+        set_height(ui.water_fill, (int)(frac * WATER_FILL_H + 0.5f));
         lv_color_t wc = (d.waterTemp < 30.0f) ? C_WATER_COLD
                       : (d.waterTemp < 51.0f) ? C_WATER_WARM
                                               : C_WATER_HOT;
-        lv_obj_set_style_bg_color(ui.water_fill, wc, 0);
+        set_bg_color(ui.water_fill, wc);
     } else {
-        lv_label_set_text(ui.lbl_water_temp, "--°C");
-        lv_obj_set_height(ui.water_fill, 0);
+        set_text(ui.lbl_water_temp, "--°C");
+        set_height(ui.water_fill, 0);
     }
 
     // Solar data — when invalid show "--" everywhere
     if (d.solar.valid) {
-        lv_label_set_text(ui.lbl_solar_status, translate_solar_status(d.solar.status));
+        set_text(ui.lbl_solar_status, translate_solar_status(d.solar.status));
         char g[20];
-        snprintf(buf, sizeof(buf), "%.1f", d.solar.currentA);
-        lv_label_set_text(ui.lbl_solar_current, buf);
-        lv_label_set_text(ui.lbl_solar_current_u, "A");
-        lv_label_set_text(ui.lbl_solar_power, group_int(g, sizeof(g), d.solar.powerW));
-        lv_label_set_text(ui.lbl_solar_power_u, "W");
-        snprintf(buf, sizeof(buf), "%.2f", d.solar.kWhToday);
-        lv_label_set_text(ui.lbl_solar_yield, buf);
+        set_text_fmt(ui.lbl_solar_current, "%.1f", d.solar.currentA);
+        set_text(ui.lbl_solar_current_u, "A");
+        set_text(ui.lbl_solar_power, group_int(g, sizeof(g), d.solar.powerW));
+        set_text(ui.lbl_solar_power_u, "W");
+        set_text_fmt(ui.lbl_solar_yield, "%.2f", d.solar.kWhToday);
         snprintf(buf, sizeof(buf), "kWh %s", t(TK::TODAY));
-        lv_label_set_text(ui.lbl_solar_yield_u, buf);
+        set_text(ui.lbl_solar_yield_u, buf);
     } else {
-        lv_label_set_text(ui.lbl_solar_status,  "--");
-        lv_label_set_text(ui.lbl_solar_current, "--");
-        lv_label_set_text(ui.lbl_solar_current_u, "");
-        lv_label_set_text(ui.lbl_solar_power,   "--");
-        lv_label_set_text(ui.lbl_solar_power_u,   "");
-        lv_label_set_text(ui.lbl_solar_yield,   "--");
-        lv_label_set_text(ui.lbl_solar_yield_u,   "");
+        set_text(ui.lbl_solar_status,  "--");
+        set_text(ui.lbl_solar_current, "--");
+        set_text(ui.lbl_solar_current_u, "");
+        set_text(ui.lbl_solar_power,   "--");
+        set_text(ui.lbl_solar_power_u,   "");
+        set_text(ui.lbl_solar_yield,   "--");
+        set_text(ui.lbl_solar_yield_u,   "");
     }
 
     // Battery — SOC persists on the long (5 min) freshness window; the
@@ -2594,10 +2688,10 @@ void p4DisplayUpdate(const P4DisplayData& d)
         if (soc > 100) soc = 100;
         lv_bar_set_value(ui.bar_batt, soc, LV_ANIM_ON);
         lv_color_t bc = (soc < 20) ? C_RED : (soc < 50) ? C_AMBER_BAR : C_GREEN;
-        lv_obj_set_style_bg_color(ui.bar_batt, bc, LV_PART_INDICATOR);
-        lv_label_set_text_fmt(ui.lbl_batt_soc, "%d%%", soc);
+        set_bg_color(ui.bar_batt, bc, LV_PART_INDICATOR);
+        set_text_fmt(ui.lbl_batt_soc, "%d%%", soc);
     } else {
-        lv_label_set_text(ui.lbl_batt_soc, "--%");
+        set_text(ui.lbl_batt_soc, "--%");
         lv_bar_set_value(ui.bar_batt, 0, LV_ANIM_OFF);
     }
 
@@ -2605,31 +2699,31 @@ void p4DisplayUpdate(const P4DisplayData& d)
     if (d.batt.valid && d.batt.flowValid) {
         int battW = (int)lroundf(d.batt.voltageV * d.batt.currentA);
         char gb[20];
-        lv_label_set_text_fmt(ui.lbl_bpwr_w, "%s W", group_int(gb, sizeof(gb), battW));
+        set_text_fmt(ui.lbl_bpwr_w, "%s W", group_int(gb, sizeof(gb), battW));
         if (battW > 5) {
-            lv_obj_set_style_bg_color(ui.box_bpwr, C_PORT_GREEN_BODY, 0);
-            lv_obj_set_style_bg_color(ui.hdr_bpwr, C_PORT_GREEN_HDR, 0);
-            lv_label_set_text(ui.hdr_bpwr_lbl, t(TK::BATT_CHARGE));
+            set_bg_color(ui.box_bpwr, C_PORT_GREEN_BODY);
+            set_bg_color(ui.hdr_bpwr, C_PORT_GREEN_HDR);
+            set_text(ui.hdr_bpwr_lbl, t(TK::BATT_CHARGE));
             ui.flow_bpwr_dir = 1;
             lv_obj_clear_flag(ui.flow_bpwr_str, LV_OBJ_FLAG_HIDDEN);
         } else if (battW < -5) {
-            lv_obj_set_style_bg_color(ui.box_bpwr, C_PORT_RED_BODY, 0);
-            lv_obj_set_style_bg_color(ui.hdr_bpwr, C_PORT_RED_HDR, 0);
-            lv_label_set_text(ui.hdr_bpwr_lbl, t(TK::BATT_DISCHARGE));
+            set_bg_color(ui.box_bpwr, C_PORT_RED_BODY);
+            set_bg_color(ui.hdr_bpwr, C_PORT_RED_HDR);
+            set_text(ui.hdr_bpwr_lbl, t(TK::BATT_DISCHARGE));
             ui.flow_bpwr_dir = -1;
             lv_obj_clear_flag(ui.flow_bpwr_str, LV_OBJ_FLAG_HIDDEN);
         } else {
-            lv_obj_set_style_bg_color(ui.box_bpwr, C_PORT_GREY_BODY, 0);
-            lv_obj_set_style_bg_color(ui.hdr_bpwr, C_PORT_GREY_HDR, 0);
-            lv_label_set_text(ui.hdr_bpwr_lbl, t(TK::BATT_CHARGE));
+            set_bg_color(ui.box_bpwr, C_PORT_GREY_BODY);
+            set_bg_color(ui.hdr_bpwr, C_PORT_GREY_HDR);
+            set_text(ui.hdr_bpwr_lbl, t(TK::BATT_CHARGE));
             ui.flow_bpwr_dir = 0;
             lv_obj_add_flag(ui.flow_bpwr_str, LV_OBJ_FLAG_HIDDEN);
         }
     } else {
-        lv_label_set_text(ui.lbl_bpwr_w, "--");
-        lv_obj_set_style_bg_color(ui.box_bpwr, C_PORT_GREY_BODY, 0);
-        lv_obj_set_style_bg_color(ui.hdr_bpwr, C_PORT_GREY_HDR, 0);
-        lv_label_set_text(ui.hdr_bpwr_lbl, t(TK::BATT_CHARGE));
+        set_text(ui.lbl_bpwr_w, "--");
+        set_bg_color(ui.box_bpwr, C_PORT_GREY_BODY);
+        set_bg_color(ui.hdr_bpwr, C_PORT_GREY_HDR);
+        set_text(ui.hdr_bpwr_lbl, t(TK::BATT_CHARGE));
         ui.flow_bpwr_dir = 0;
         lv_obj_add_flag(ui.flow_bpwr_str, LV_OBJ_FLAG_HIDDEN);
     }
@@ -2640,24 +2734,24 @@ void p4DisplayUpdate(const P4DisplayData& d)
         char g[20];
         auto set_port_color = [](lv_obj_t* box, lv_obj_t* hdr,
                                  lv_color_t bc, lv_color_t hc) {
-            lv_obj_set_style_bg_color(box, bc, 0);
-            lv_obj_set_style_bg_color(hdr, hc, 0);
+            set_bg_color(box, bc);
+            set_bg_color(hdr, hc);
         };
         if (d.multi.valid) {
-            lv_label_set_text(ui.lbl_inv_state, translate_multi_state(d.multi.deviceState));
+            set_text(ui.lbl_inv_state, translate_multi_state(d.multi.deviceState));
             // MULTI_POWER_NA = the inverter is connected but this port is at
             // rest / not reporting → a real reading of 0 W, and idle flow below.
             // "--" is reserved for the not-connected case (the else branch).
             bool mainsNa = (d.multi.acInW  == MULTI_POWER_NA);
             bool loadNa  = (d.multi.acOutW == MULTI_POWER_NA);
             snprintf(tb, sizeof(tb), "%s W", group_int(g, sizeof(g), mainsNa ? 0 : (int)d.multi.acInW));
-            lv_label_set_text(ui.lbl_inv_mains_w, tb);
+            set_text(ui.lbl_inv_mains_w, tb);
             snprintf(tb, sizeof(tb), "%s W", group_int(g, sizeof(g), loadNa ? 0 : (int)d.multi.acOutW));
-            lv_label_set_text(ui.lbl_inv_load_w, tb);
+            set_text(ui.lbl_inv_load_w, tb);
             int battW = (int)lroundf((std::isnan(d.multi.battV) ? 0.0f : d.multi.battV)
                                      * d.multi.battA);
             snprintf(tb, sizeof(tb), "%s W", group_int(g, sizeof(g), battW));
-            lv_label_set_text(ui.lbl_inv_batt_w, tb);
+            set_text(ui.lbl_inv_batt_w, tb);
 
             // Drive the zebra-stripe animation.  Positive direction = flow
             // away from MPX (right) for mains/load; for batt, positive =
@@ -2677,8 +2771,8 @@ void p4DisplayUpdate(const P4DisplayData& d)
             set_port_color(ui.box_mains, ui.hdr_mains,
                            acOn ? C_PORT_GREEN_BODY : C_PORT_GREY_BODY,
                            acOn ? C_PORT_GREEN_HDR  : C_PORT_GREY_HDR);
-            if (acOn) lv_label_set_text_fmt(ui.hdr_mains_lbl, "%s " FA_PLUG_BOLT, t(TK::INV_MAINS));
-            else      lv_label_set_text(ui.hdr_mains_lbl, t(TK::INV_MAINS));
+            if (acOn) set_text_fmt(ui.hdr_mains_lbl, "%s " FA_PLUG_BOLT, t(TK::INV_MAINS));
+            else      set_text(ui.hdr_mains_lbl, t(TK::INV_MAINS));
 
             // CARGA: red when delivering power, grey when idle
             bool loadOn = !loadNa && abs(d.multi.acOutW) > 5;
@@ -2690,21 +2784,21 @@ void p4DisplayUpdate(const P4DisplayData& d)
             if (battW > 5) {
                 set_port_color(ui.box_batt, ui.hdr_batt,
                                C_PORT_GREEN_BODY, C_PORT_GREEN_HDR);
-                lv_label_set_text(ui.hdr_batt_lbl, "BAT. " FA_ARROW_R);
+                set_text(ui.hdr_batt_lbl, "BAT. " FA_ARROW_R);
             } else if (battW < -5) {
                 set_port_color(ui.box_batt, ui.hdr_batt,
                                C_PORT_RED_BODY, C_PORT_RED_HDR);
-                lv_label_set_text(ui.hdr_batt_lbl, FA_ARROW_L " BAT.");
+                set_text(ui.hdr_batt_lbl, FA_ARROW_L " BAT.");
             } else {
                 set_port_color(ui.box_batt, ui.hdr_batt,
                                C_PORT_GREY_BODY, C_PORT_GREY_HDR);
-                lv_label_set_text(ui.hdr_batt_lbl, "BAT.");
+                set_text(ui.hdr_batt_lbl, "BAT.");
             }
         } else {
-            lv_label_set_text(ui.lbl_inv_state, "--");
-            lv_label_set_text(ui.lbl_inv_mains_w, "--");
-            lv_label_set_text(ui.lbl_inv_load_w,  "--");
-            lv_label_set_text(ui.lbl_inv_batt_w,  "--");
+            set_text(ui.lbl_inv_state, "--");
+            set_text(ui.lbl_inv_mains_w, "--");
+            set_text(ui.lbl_inv_load_w,  "--");
+            set_text(ui.lbl_inv_batt_w,  "--");
             ui.flow_mains_dir = ui.flow_load_dir = ui.flow_batt_dir = 0;
             lv_obj_add_flag(ui.flow_mains_str, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(ui.flow_load_str,  LV_OBJ_FLAG_HIDDEN);
@@ -2712,8 +2806,8 @@ void p4DisplayUpdate(const P4DisplayData& d)
             set_port_color(ui.box_mains, ui.hdr_mains, C_PORT_GREY_BODY, C_PORT_GREY_HDR);
             set_port_color(ui.box_load,  ui.hdr_load,  C_PORT_GREY_BODY, C_PORT_GREY_HDR);
             set_port_color(ui.box_batt,  ui.hdr_batt,  C_PORT_GREY_BODY, C_PORT_GREY_HDR);
-            lv_label_set_text(ui.hdr_mains_lbl, t(TK::INV_MAINS));
-            lv_label_set_text(ui.hdr_batt_lbl, "BAT.");
+            set_text(ui.hdr_mains_lbl, t(TK::INV_MAINS));
+            set_text(ui.hdr_batt_lbl, "BAT.");
         }
     }
 
@@ -2725,19 +2819,19 @@ void p4DisplayUpdate(const P4DisplayData& d)
         if (pct > 100) pct = 100;
         lv_bar_set_value(ui.bar_tank, pct, LV_ANIM_ON);
         lv_color_t tc = (pct < 20) ? C_RED : (pct < 50) ? C_AMBER_BAR : C_WATER_COLD;
-        lv_obj_set_style_bg_color(ui.bar_tank, tc, LV_PART_INDICATOR);
-        lv_label_set_text_fmt(ui.lbl_tank_pct, "%d %%", pct);
+        set_bg_color(ui.bar_tank, tc, LV_PART_INDICATOR);
+        set_text_fmt(ui.lbl_tank_pct, "%d %%", pct);
     } else {
-        lv_label_set_text(ui.lbl_tank_pct, "-- %");
+        set_text(ui.lbl_tank_pct, "-- %");
         lv_bar_set_value(ui.bar_tank, 0, LV_ANIM_OFF);
     }
 
     if (d.wifiOk && d.ssid && d.ip) {
-        lv_label_set_text_fmt(ui.lbl_conn, "%s / %s", d.ssid, d.ip);
-        lv_obj_set_style_text_color(ui.lbl_conn, C_TEXT, 0);
+        set_text_fmt(ui.lbl_conn, "%s / %s", d.ssid, d.ip);
+        set_text_color(ui.lbl_conn, C_TEXT);
     } else {
-        lv_label_set_text(ui.lbl_conn, t(TK::STATUS_NO_WIFI));
-        lv_obj_set_style_text_color(ui.lbl_conn, C_LABEL, 0);
+        set_text(ui.lbl_conn, t(TK::STATUS_NO_WIFI));
+        set_text_color(ui.lbl_conn, C_LABEL);
     }
 
     refresh_controls();
@@ -2750,9 +2844,8 @@ void p4DisplaySetStatus(const char* msg, bool isError)
     if (!msg) return;
     if (!lvglLock(50)) return;
     if (ui.lbl_status) {
-        lv_label_set_text(ui.lbl_status, msg);
-        lv_obj_set_style_text_color(ui.lbl_status,
-            isError ? C_RED : C_LABEL, 0);
+        set_text(ui.lbl_status, msg);
+        set_text_color(ui.lbl_status, isError ? C_RED : C_LABEL);
     }
     lvglUnlock();
 }

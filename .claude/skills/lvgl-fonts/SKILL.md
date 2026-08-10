@@ -16,9 +16,9 @@ file is available — no pre-compilation step needed.
 Embedded files:
 | Variable | File | Purpose |
 |----------|------|---------|
-| `font_regular_ttf_*` | `main/font_regular.ttf` | Body text — Latin + accents |
-| `font_bold_ttf_*`    | `main/font_bold.ttf`    | Section titles |
-| `font_icons_ttf_*`   | `main/font_icons.ttf`   | FA6 Free Solid icon subset |
+| `font_regular_ttf_*` | `main/assets/fonts/font_regular.ttf` | Body text — Latin + accents |
+| `font_bold_ttf_*`    | `main/assets/fonts/font_bold.ttf`    | Section titles |
+| `font_icons_ttf_*`   | `main/assets/fonts/font_icons.ttf`   | FA6 Free Solid icon subset |
 
 ---
 
@@ -39,7 +39,7 @@ fonts — LVGL walks the fallback chain per glyph.
 
 ## 3. FA icon font — codepoints and defines
 
-`main/font_icons.ttf` is a **subset** of FA6 Free Solid 6.7.2.
+`main/assets/fonts/font_icons.ttf` is a **subset** of FA6 Free Solid 6.7.2.
 The source OTF is committed at `scripts/fonts/fa6-free-solid-900.otf`.
 
 Current codepoints in `#define FA_*` macros (`p4display.cpp`):
@@ -78,7 +78,7 @@ For U+E000–U+EFFF range (e.g. U+E3AF): same formula applies.
    python3 scripts/gen_icon_font.py
    ```
    This reads from `scripts/fonts/fa6-free-solid-900.otf` and overwrites
-   `main/font_icons.ttf`. The script prints ✓/✗ for each glyph.
+   `main/assets/fonts/font_icons.ttf`. The script prints ✓/✗ for each glyph.
 4. Add a `#define FA_NEWICON "\xNN\xNN\xNN"` in `p4display.cpp`.
 5. Recompile and flash.
 
@@ -134,7 +134,7 @@ if sign_in_glyph:
 ```
 
 Always run `python3 scripts/gen_icon_font.py` after adding any keyboard-symbol
-codepoint to regenerate `main/font_icons.ttf`.
+codepoint to regenerate `main/assets/fonts/font_icons.ttf`.
 
 ---
 
@@ -171,7 +171,7 @@ design only** — not for code generation. The workflow:
 
 EEZ font config uses `embeddedFontFile` (base64 TTF, for editor rendering)
 and `lvglRanges` in `"start-end"` format (e.g. `"8211-8212"`). The
-`source.filePath` is `"../main/font_regular.ttf"` (relative to `ui/`).
+`source.filePath` is `"../main/assets/fonts/font_regular.ttf"` (relative to `ui/`).
 
 **Do not rely on EEZ-generated C code** — it is incompatible with the
 Tiny TTF approach used in the firmware.

@@ -10,24 +10,19 @@
 #include "openairble.hpp"
 #include "openair_config.hpp"
 #include "truma_lin.hpp"
+#include "lin_codec.hpp"
 #include "am2301.hpp"
 #include "wifi_manager.hpp"
 #include "wstunnel.hpp"
 #include "mode_controller.hpp"
 #include "ws_diff.hpp"
+#include "ws_frames.hpp"
+#include "ble_status.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
 #include <cmath>
 #include <cstring>
-
-// Format a Multiplus AC power field for JSON: a plain integer, or "null"
-// when the value is the VE.Bus "not available" sentinel.
-static const char* multiPowerJson(int32_t w, char* buf, size_t n) {
-    if (w == MULTI_POWER_NA) return "null";
-    snprintf(buf, n, "%d", (int)w);
-    return buf;
-}
 
 // Set when the A/C control state was just adopted from unit telemetry (not a
 // user action). broadcastControlChanges still emits the changed fields so the UI
@@ -120,12 +115,10 @@ static void adoptAcStateFromUnit() {
 static void broadcastControlChanges(const P4ControlState& cs) {
     static P4ControlState prev = {};
     static bool          inited = false;
-    char buf[160];
+    char buf[WS_FRAME_BUF];
 
     auto emit = [&](const char* id, const char* value) {
-        snprintf(buf, sizeof(buf),
-                 "{\"command\":\"setting\",\"id\":\"/%s\",\"value\":\"%s\"}",
-                 id, value);
+        wsFmtSetting(buf, sizeof(buf), id, value);
         wsQueueSend(buf);
     };
 
@@ -173,7 +166,14 @@ static void broadcastControlChanges(const P4ControlState& cs) {
         emit("ac_flap2", cs.acFlap2 ? "1" : "0");
         acChanged = true;
     }
-    if (!inited || cs.roomSetpoint != prev.roomSetpoint) acChanged = true;
+    // The setpoint stepper is SHARED between Truma heat and A/C cooling, so a
+    // change to it only concerns the A/C while a cooling mode is actually
+    // selected. Without this gate, nudging the room target in CALEFACCIÓN (or
+    // with the A/C off) queues a BLE command to a unit that should be left
+    // alone — which wakes it and makes it beep.
+    bool acCooling = openairCfgIsActive() && !cs.heatingOn &&
+                     (cs.acMode == 1 || cs.acMode == 2);
+    if (acCooling && cs.roomSetpoint != prev.roomSetpoint) acChanged = true;
 
     // Push a setpoint to the unit ONLY when the user actually changed an A/C
     // control — never on init (the default control state is not the unit's real
@@ -235,25 +235,18 @@ static void broadcastBleData() {
     static VictronData    prevV = {};
     static UltimatronData prevU = {};
     static bool           inited = false;
-    char buf[256];
+    char buf[WS_FRAME_BUF];
 
     VictronData v = victronGetData();
     if (!inited || victronChanged(v, prevV)) {
-        snprintf(buf, sizeof(buf),
-                 "{\"command\":\"solar\",\"valid\":%s,\"state\":%u,"
-                 "\"pvW\":%d,\"kWh\":%.2f,\"battV\":%.2f,\"battA\":%.2f}",
-                 v.valid ? "true" : "false",
-                 (unsigned)v.state, (int)v.pvW, v.kWhToday, v.battV, v.battA);
+        wsFmtSolar(buf, sizeof(buf), v);
         wsQueueSend(buf);
         prevV = v;
     }
 
     UltimatronData u = ultimatronGetData();
     if (!inited || ultimatronChanged(u, prevU)) {
-        snprintf(buf, sizeof(buf),
-                 "{\"command\":\"batt\",\"valid\":%s,\"flow\":%s,\"soc\":%u,\"battV\":%.2f,\"battA\":%.2f}",
-                 u.valid ? "true" : "false", u.flowValid ? "true" : "false",
-                 (unsigned)u.soc, u.battV, u.battA);
+        wsFmtBatt(buf, sizeof(buf), u);
         wsQueueSend(buf);
         prevU = u;
     }
@@ -264,23 +257,11 @@ static void broadcastBleData() {
 static void broadcastMultiplusData() {
     static MultiplusData prev   = {};
     static bool          inited = false;
-    char buf[224];
+    char buf[WS_FRAME_BUF];
 
     MultiplusData m = multiplusGetData();
     if (inited && !multiplusChanged(m, prev)) return;
-    char mInW[12], mOutW[12];
-    snprintf(buf, sizeof(buf),
-             "{\"command\":\"multi\",\"valid\":%s,\"state\":%u,"
-             "\"ac_in_w\":%s,\"ac_out_w\":%s,"
-             "\"batt_v\":%.2f,\"batt_a\":%.1f,"
-             "\"ac_in_state\":%u,\"alarm\":%u,\"soc\":%u}",
-             m.valid ? "true" : "false",
-             (unsigned)m.deviceState,
-             multiPowerJson(m.acInW, mInW, sizeof(mInW)),
-             multiPowerJson(m.acOutW, mOutW, sizeof(mOutW)),
-             std::isnan(m.battV) ? 0.0 : m.battV, m.battA,
-             (unsigned)m.acInState, (unsigned)m.alarm,
-             (unsigned)m.soc);
+    wsFmtMulti(buf, sizeof(buf), m);
     wsQueueSend(buf);
     prev   = m;
     inited = true;
@@ -308,15 +289,8 @@ static void broadcastOpenAirData() {
                 || fabsf(d.probe2C - prev.probe2C) > 0.5f;
     if (!changed) return;
 
-    char buf[224];
-    snprintf(buf, sizeof(buf),
-             "{\"command\":\"ac\",\"valid\":%s,\"conn\":%s,"
-             "\"probe1\":%.1f,\"probe2\":%.1f,"
-             "\"blower_pct\":%d,\"comp_rpm\":%d,\"errors\":%d,\"needpair\":%s}",
-             d.valid ? "true" : "false", conn ? "true" : "false",
-             d.probe1C, d.probe2C,
-             d.blowerSpeedPct, d.compressorSpeedRpm, d.errors,
-             needPair ? "true" : "false");
+    char buf[WS_FRAME_BUF];
+    wsFmtAc(buf, sizeof(buf), d, conn, needPair);
     wsQueueSend(buf);
     prev         = d;
     prevNeedPair = needPair;
@@ -328,13 +302,11 @@ static void broadcastOpenAirData() {
 static void broadcastTankData() {
     static TankData prev   = {};
     static bool     inited = false;
-    char buf[96];
+    char buf[WS_FRAME_BUF];
 
     TankData t = tankGetData();
     if (!inited || tankChanged(t, prev)) {
-        snprintf(buf, sizeof(buf),
-                 "{\"command\":\"tank\",\"valid\":%s,\"pct\":%u}",
-                 t.valid ? "true" : "false", (unsigned)t.pct);
+        wsFmtTank(buf, sizeof(buf), t);
         wsQueueSend(buf);
         prev   = t;
         inited = true;
@@ -345,31 +317,26 @@ static void broadcastTankData() {
 static void broadcastLinTemps() {
     static TrumaLinSnapshot prev = {};
     static bool             inited = false;
-    char buf[96];
+    char buf[WS_FRAME_BUF];
 
     TrumaLinSnapshot lin;
-    trumaLinGetSnapshot(lin);
+    // No fresh read means nothing changed to broadcast — skip the tick rather
+    // than diff against a fabricated snapshot.
+    if (!trumaLinGetSnapshot(lin)) return;
 
     auto emit = [&](const char* id, const char* value) {
-        snprintf(buf, sizeof(buf),
-                 "{\"command\":\"status\",\"id\":\"/%s\",\"value\":\"%s\"}",
-                 id, value);
+        wsFmtStatus(buf, sizeof(buf), id, value);
         wsQueueSend(buf);
-    };
-
-    auto fmtTemp = [](float t, char* out, size_t n) {
-        if (!std::isfinite(t) || t <= -200.0f) snprintf(out, n, "-273");
-        else                              snprintf(out, n, "%.1f", t);
     };
 
     char val[16];
 
     if (!inited || linTempChanged(lin.roomTemp, prev.roomTemp)) {
-        fmtTemp(lin.roomTemp, val, sizeof(val));
+        wsFmtTemp(val, sizeof(val), lin.roomTemp);
         emit("room_temp", val);
     }
     if (!inited || linTempChanged(lin.waterTemp, prev.waterTemp)) {
-        fmtTemp(lin.waterTemp, val, sizeof(val));
+        wsFmtTemp(val, sizeof(val), lin.waterTemp);
         emit("water_temp", val);
     }
     if (!inited || lin.waterHeating != prev.waterHeating) {
@@ -379,14 +346,32 @@ static void broadcastLinTemps() {
         emit("linok", lin.linOk ? "1" : "0");
     }
 
+    // Truma fault, gated on a class the Truma actually defines (trumaClassKnown)
+    // so a misaligned 0x3D read can't fabricate one. The snapshot sends the same
+    // pair on connect — keep both sides in step.
+    {
+        bool    fault = trumaClassKnown(lin.errClass);
+        uint8_t cls   = fault ? lin.errClass : 0;
+        uint8_t code  = fault ? lin.errCode  : 0;
+        bool    pFault = trumaClassKnown(prev.errClass);
+        if (!inited || cls != (pFault ? prev.errClass : 0)) {
+            snprintf(val, sizeof(val), "%u", cls);
+            emit("err_class", val);
+        }
+        if (!inited || code != (pFault ? prev.errCode : 0)) {
+            snprintf(val, sizeof(val), "%u", code);
+            emit("err_code", val);
+        }
+    }
+
     // AM2301 external sensor — not LIN-derived, but shares this slot to reuse
-    // fmtTemp and the change-detection cadence.
+    // the temperature formatting and the change-detection cadence.
     {
         static float prevOutdoor = NAN;
         Am2301Data   am = am2301GetData();
         float        outdoor = am.valid ? am.tempC : NAN;
         if (!inited || linTempChanged(outdoor, prevOutdoor)) {
-            fmtTemp(outdoor, val, sizeof(val));
+            wsFmtTemp(val, sizeof(val), outdoor);
             emit("outdoor_temp", val);
             prevOutdoor = outdoor;
         }
@@ -400,26 +385,17 @@ static void broadcastIconStates() {
     static int prevBle = -1;
     static int prevTun = -1;
 
-    VictronData    v  = victronGetData();
-    UltimatronData u  = ultimatronGetData();
-    TankData       tk = tankGetData();
-    MultiplusData  mp = multiplusGetData();
-    OpenAirData    oa = openairGetData();
-    int ble = (v.valid || u.valid || tk.valid || mp.valid || oa.valid) ? 2
-            : (victronIsConfigured() || ultimatronIsConfigured()
-               || tankIsConfigured() || multiplusIsConfigured()
-               || openairIsConfigured()) ? 1
-            : 0;
+    int ble = bleIconState();
     int tun = static_cast<int>(wstunnelUiState());
 
-    char buf[80];
+    char buf[WS_FRAME_BUF];
     if (ble != prevBle) {
-        snprintf(buf, sizeof(buf), "{\"command\":\"icon\",\"id\":\"ble\",\"state\":%d}", ble);
+        wsFmtIcon(buf, sizeof(buf), "ble", ble);
         wsQueueSend(buf);
         prevBle = ble;
     }
     if (tun != prevTun) {
-        snprintf(buf, sizeof(buf), "{\"command\":\"icon\",\"id\":\"tunnel\",\"state\":%d}", tun);
+        wsFmtIcon(buf, sizeof(buf), "tunnel", tun);
         wsQueueSend(buf);
         prevTun = tun;
     }

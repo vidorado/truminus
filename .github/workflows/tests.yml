@@ -1,0 +1,28 @@
+# Host unit tests — the IDF-free logic modules under main/ (codecs, LIN frame
+# packing, semver, WS command/diff) compiled natively and run under Catch2.
+#
+# Separate from ci.yml on purpose: that one builds the firmware in the ESP-IDF
+# container and is workflow_dispatch-only so releases stay a single build. This
+# needs no IDF and finishes in seconds, so it can afford to run on every push —
+# which is the point. test/host/CMakeLists.txt lists main/ sources by path, so a
+# file moving between subdirectories silently breaks the suite; nothing caught
+# that when main/ was reorganised into subdirs because no workflow ran it.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run host tests
+        working-directory: test/host
+        run: ./build.sh && ./build/tests

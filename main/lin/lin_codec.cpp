@@ -26,3 +26,11 @@ double parseF21WaterTemp(const uint8_t* d) {
 bool parseF22WaterHeating(const uint8_t* d) {
     return (d[1] & 0xC0) == 0x40;
 }
+
+bool trumaClassKnown(uint8_t c) {
+    switch (c) {
+        case 0x01: case 0x02: case 0x05: case 0x06:
+        case 0x10: case 0x20: case 0x30: case 0x40: return true;
+        default: return false;
+    }
+}

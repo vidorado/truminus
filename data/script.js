@@ -704,10 +704,10 @@ function applyStatus(id, value) {
 
     if (id === 'err_code') {
         var newCode = parseInt(value) || 0;
-        if (newCode !== s_errCode) {
-            s_errCode = newCode;
-            if (newCode !== 0) s_errAcked = false;
-        }
+        // Re-arm on any change, including back to 0: the class alone decides
+        // whether a fault is live, so a code change under the same class is a
+        // different fault and must re-pop the modal.
+        if (newCode !== s_errCode) { s_errCode = newCode; s_errAcked = false; }
         updateErrorDisplay();
     }
 }
@@ -1035,7 +1035,11 @@ var ERR_COLOR = { none: '', warn: '#ffaa00', error: '#ff4444', locked: '#cc2222'
 // warning).  Returns { col, lbl, sub, desc, short, acked } or null.
 //   lbl/sub/desc → the detailed modal.   short → the one-line footer/LCD text.
 function resolveFault() {
-    if (s_errCode !== 0) {
+    // The CLASS decides whether there is a fault; the code only names it. The
+    // firmware already zeroes both unless the class is one the Truma defines,
+    // so a non-zero class here is always a real fault — and one reported with
+    // code 0 must still surface. Same rule as the LCD (display_sync.cpp).
+    if (s_errClass !== 0) {
         var sev  = errSeverity(s_errClass);
         var lbl  = t('err_' + sev) || sev.toUpperCase();
         var desc = (typeof ErrText !== 'undefined' && ErrText[s_errCode])
@@ -1155,8 +1159,8 @@ function hideErrorModal() {
 
 // Acknowledge whichever error is currently driving the modal (Truma first).
 function acknowledgeError() {
-    if (s_errCode !== 0) s_errAcked = true;
-    else                 s_acErrAcked = true;
+    if (s_errClass !== 0) s_errAcked = true;
+    else                  s_acErrAcked = true;
     hideErrorModal();
 }
 

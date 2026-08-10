@@ -6,7 +6,9 @@
 #include "tankble.hpp"
 #include "multiplusble.hpp"
 #include "openairble.hpp"
+#include "ble_status.hpp"
 #include "truma_lin.hpp"
+#include "lin_codec.hpp"
 #include "am2301.hpp"
 #include "wifi_manager.hpp"
 #include "wstunnel.hpp"
@@ -109,12 +111,15 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
     d.multi.alarm       = mp.alarm;
     d.multi.acInState   = mp.acInState;
 
-    // LIN snapshot → room/water temp + LIN-ok dot.
-    TrumaLinSnapshot lin;
+    // LIN snapshot → room/water temp + LIN-ok dot.  Static so a failed lock take
+    // carries the previous tick's values forward instead of blanking the panel;
+    // this runs only on the main loop, so there is no sharing to guard.
+    static TrumaLinSnapshot lin = { false, NAN, NAN, false, 0, 0, 0, 0 };
     trumaLinGetSnapshot(lin);
-    d.linOk     = lin.linOk;
-    d.roomTemp  = lin.roomTemp;
-    d.waterTemp = lin.waterTemp;
+    d.linOk        = lin.linOk;
+    d.roomTemp     = lin.roomTemp;
+    d.waterTemp    = lin.waterTemp;
+    d.waterHeating = lin.waterHeating;
 
     // AM2301 external sensor → outdoor temp (NAN until first valid read).
     Am2301Data am = am2301GetData();
@@ -194,19 +199,17 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
     // keeps its own ack so a masked fault re-surfaces only if not yet acked.
     {
         // A GetErrorInfo reply is only a real fault when its class is one the
-        // Truma actually defines (see truma-protocol skill). At cold boot the
-        // 0x3D read can arrive one byte misaligned and echo request bytes back
-        // (e.g. class 0x46 / code 0x20), which would otherwise pop a spurious
-        // red modal — so ignore any class outside the known set, mirroring the
-        // "unknown A/C code → ignore" guard below.
-        auto trumaClassKnown = [](uint8_t c) {
-            switch (c) {
-                case 0x01: case 0x02: case 0x05: case 0x06:
-                case 0x10: case 0x20: case 0x30: case 0x40: return true;
-                default: return false;
-            }
-        };
-        int truma = trumaClassKnown(lin.errClass) ? lin.errCode : 0;
+        // Truma actually defines — trumaClassKnown() (lin_codec) owns that set
+        // and is the shared gate for every fault surface, LCD and web alike.
+        //
+        // The CLASS decides whether there is a fault; the code only names it.
+        // Keying on the code would swallow any fault the Truma reports with
+        // code 0 — the appliance would sit locked out with a silent UI. Both
+        // go into the identity so a new code under the same class re-pops the
+        // modal instead of inheriting the previous dismissal (every known class
+        // is non-zero, so the identity is non-zero exactly when there's a fault).
+        int truma = trumaClassKnown(lin.errClass)
+                    ? ((lin.errClass << 8) | lin.errCode) : 0;
         OpenAirData omd = openairGetData();
         int ac = (openairCfgIsActive() && omd.valid) ? omd.errors : 0;
         if (ac != 0 && !openairErrorTitle(ac)) ac = 0;   // unknown A/C code → ignore
@@ -268,11 +271,7 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
             p4OtaMarkPrompted();
     }
     OpenAirData oad = openairGetData();
-    d.bleState = (vd.valid || ud.valid || td.valid || mp.valid || oad.valid) ? 2
-               : (victronIsConfigured() || ultimatronIsConfigured()
-                  || tankIsConfigured() || multiplusIsConfigured()
-                  || openairIsConfigured()) ? 1
-               : 0;
+    d.bleState = bleIconState();
 
     d.openairConfigured = openairCfgIsActive();
     // "Connected" = live telemetry, not merely a cached frame — so the snowflake

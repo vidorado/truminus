@@ -118,10 +118,16 @@ idf.py -p /dev/ttyACM0 flash monitor
 idf.py fullclean
 ```
 
-Web assets under `data/` are compiled into the firmware binary by
-`scripts/compress_fs.py` (runs automatically at cmake configure time). A
-**firmware reflash is required** after any change to `data/` — there is no
-separate filesystem partition.
+Web assets under `data/` are **not** part of the firmware binary: they are built
+into a LittleFS image and flashed to a dedicated partition. `idf.py flash`
+includes it, but after a change to `data/` alone you can reflash just the assets:
+
+```bash
+idf.py littlefs-flash-littlefs
+```
+
+The image is regenerated on every build, with cache-busting hashes rewritten and
+compressible files pre-gzipped alongside the originals.
 
 ---
 
@@ -335,8 +341,8 @@ This project started as a fork of **[olivluca/TruMinus](https://github.com/olivl
 topic layout, Home Assistant autodiscovery and the original web interface all come
 from olivluca's work.
 
-The previous board (ESP32-C5 / NM-CYD-C5) is preserved in the git history and in
-[`.claude/skills/nm-cyd-c5/SKILL.md`](.claude/skills/nm-cyd-c5/SKILL.md).
+The previous board (ESP32-C5 / NM-CYD-C5) is preserved in the git history: see
+the commits before `4d30c6b` ("migrate from CYD-C5 to JC4880-P4").
 
 ---
 

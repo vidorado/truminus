@@ -11,6 +11,7 @@
 #include "wifi_manager.hpp"
 #include "wstunnel.hpp"
 #include "p4_ota.hpp"
+#include "truma_lin.hpp"
 #include <algorithm>
 #include <strings.h>
 #include <ctype.h>
@@ -227,6 +228,66 @@ static int cmd_scan(int argc, char** argv) {
     return 0;
 }
 
+// Human-readable TOnOff state (see the truma-protocol skill).
+static const char* onoff_state_name(uint8_t s) {
+    switch (s) {
+        case 0:  return "no power";
+        case 1:  return "idle";
+        case 2:  return "on (running)";
+        case 3:  return "shutting down";
+        case 4:  return "powering up";
+        default: return "?";
+    }
+}
+
+static void print_frame(const char* label, const uint8_t* d, uint32_t ageMs,
+                        uint32_t okCount) {
+    printf("%-10s", label);
+    for (int i = 0; i < 8; i++) printf(" %02X", d[i]);
+    if (ageMs == UINT32_MAX) printf("   never  ok=%lu\n", (unsigned long)okCount);
+    else printf("   %lums ago  ok=%lu\n", (unsigned long)ageMs,
+                (unsigned long)okCount);
+}
+
+static int cmd_lin(int argc, char** argv) {
+    if (argc >= 2 && strcasecmp(argv[1], "log") == 0) {
+        bool on = (argc >= 3 && strcasecmp(argv[2], "on") == 0);
+        trumaLinSetVerbose(on);
+        printf("LIN verbose logging %s\n", on ? "on" : "off");
+        return 0;
+    }
+
+    TrumaLinSnapshot s{};
+    TrumaLinDiag     d{};
+    if (!trumaLinGetSnapshot(s) || !trumaLinGetDiag(d)) {
+        printf("LIN snapshot busy, try again\n");
+        return 1;
+    }
+
+    printf("bus:       linOk=%d  cycles=%lu  rxBytes=%lu\n",
+           s.linOk, (unsigned long)d.cycles, (unsigned long)d.rxBytes);
+    printf("temps:     room=%.1f  water=%.1f  waterHeating=%d\n",
+           s.roomTemp, s.waterTemp, s.waterHeating);
+    // requested vs current is the whole story when the Truma answers on the bus
+    // but does nothing: "on" requested with current still idle means the unit is
+    // refusing to start, not that the command never arrived.
+    printf("onOff:     requesting=%s  requested=%u (%s)  current=%u (%s)\n",
+           d.onState ? "on" : "off",
+           s.requestedState, onoff_state_name(s.requestedState),
+           s.currentState,   onoff_state_name(s.currentState));
+    printf("error:     class=0x%02X  code=0x%02X (%u)\n",
+           s.errClass, s.errCode, s.errCode);
+    print_frame("RX 21h", d.last21, d.ageF21Ms, d.okF21);
+    print_frame("RX 22h", d.last22, d.ageF22Ms, d.okF22);
+    print_frame("RX 3Dh", d.last3D, d.ageF3DMs, d.okF3D);
+    printf("TX 20h    ");
+    for (int i = 0; i < 8; i++) printf(" %02X", d.lastTx20[i]);
+    printf("\nTX 3Ch    ");
+    for (int i = 0; i < 8; i++) printf(" %02X", d.lastTx3C[i]);
+    printf("\n");
+    return 0;
+}
+
 static int cmd_show(int, char**) {
     TunnelConfig tc{}; wstunnelLoadConfig(tc);
     printf("tunnel:     %s server=%s\n",
@@ -291,6 +352,7 @@ void cliStart() {
     esp_console_cmd_t c_ota        = {}; c_ota.command        = "ota";        c_ota.help        = "ota [check|install]: check for / install firmware update"; c_ota.func        = cmd_ota;
     esp_console_cmd_t c_scan       = {}; c_scan.command       = "scan";       c_scan.help       = "scan [secs]: list BLE devices in range with RSSI";   c_scan.func       = cmd_scan;
     esp_console_cmd_t c_show       = {}; c_show.command       = "show";       c_show.help       = "show: print stored BLE config";                      c_show.func       = cmd_show;
+    esp_console_cmd_t c_lin        = {}; c_lin.command        = "lin";        c_lin.help        = "lin [log on|off]: dump LIN bus state / toggle verbose logging"; c_lin.func        = cmd_lin;
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_wifi));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_tunnel));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_victron));
@@ -300,6 +362,7 @@ void cliStart() {
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_ota));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_scan));
     ESP_ERROR_CHECK(esp_console_cmd_register(&c_show));
+    ESP_ERROR_CHECK(esp_console_cmd_register(&c_lin));
     esp_console_register_help_command();
 
     ESP_ERROR_CHECK(esp_console_start_repl(repl));

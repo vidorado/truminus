@@ -24,10 +24,9 @@
 #include "wstunnel.hpp"
 #include "wifi_manager.hpp"
 #include "truma_lin.hpp"
-#include "victronble.hpp"
-#include "ultimatronble.hpp"
-#include "tankble.hpp"
-#include "multiplusble.hpp"
+#include "victronble.hpp"      // scan suspend/resume around flash writes
+#include "ultimatronble.hpp"   // idem
+#include "ble_status.hpp"
 
 #include <string.h>
 #include <stdio.h>
@@ -698,18 +697,20 @@ static bool env_ready() {
     bool tun_ok = (wstunnelUiState() == TunnelUiState::DISABLED) ||
                   (wstunnelUiState() == TunnelUiState::CONNECTED);
 
-    // LIN: a fresh slave frame (Combi powered & responding).
-    TrumaLinSnapshot lin;
-    trumaLinGetSnapshot(lin);
-    bool lin_ok = lin.linOk;
+    // LIN: a fresh slave frame (Combi powered & responding).  A failed lock take
+    // counts as not-ready rather than reading an uninitialised linOk — this gates
+    // the post-OTA rollback decision, so it must never hinge on stack garbage.
+    // env_ready() is polled, so a one-off miss just defers the check.
+    TrumaLinSnapshot lin = { false, 0.0f, 0.0f, false, 0, 0, 0, 0 };
+    bool lin_ok = trumaLinGetSnapshot(lin) && lin.linOk;
 
-    // BLE: if nothing is configured, treat as satisfied; otherwise require at
-    // least one valid advert from any configured device.
-    bool ble_configured = victronIsConfigured() || ultimatronIsConfigured() ||
-                          tankIsConfigured() || multiplusIsConfigured();
-    bool ble_ok = !ble_configured ||
-                  victronGetData().valid || ultimatronGetData().valid ||
-                  tankGetData().valid || multiplusGetData().valid;
+    // BLE: nothing configured counts as satisfied; otherwise require at least
+    // one configured device to have reported.  bleIconState() already encodes
+    // exactly that (0 = none configured, 2 = something reporting, 1 = configured
+    // but silent), and sharing it keeps this in step when a driver is added —
+    // the open-coded copy this replaced predated the OpenAir driver and was
+    // never extended to cover it.
+    bool ble_ok = (bleIconState() != 1);
 
     return ip && tun_ok && lin_ok && ble_ok;
 }
