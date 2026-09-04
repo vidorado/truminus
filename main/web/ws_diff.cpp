@@ -41,6 +41,7 @@ bool multiplusChanged(const MultiplusData& c, const MultiplusData& p) {
             || multiPowerChanged(c.acOutW, p.acOutW)
             || (!std::isnan(c.battV) && fabsf(c.battV - p.battV) > 0.05f)
             || fabsf(c.battA - p.battA) > 0.1f
+            || c.battTempC != p.battTempC
             || c.soc != p.soc));
 }
 

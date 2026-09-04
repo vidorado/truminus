@@ -107,6 +107,7 @@ void displaySyncTick(P4DisplayData& d, uint32_t iter) {
     d.multi.acOutW      = mp.acOutW;
     d.multi.battV       = mp.battV;
     d.multi.battA       = mp.battA;
+    d.multi.battTempC   = mp.battTempC;
     d.multi.soc         = mp.soc;
     d.multi.alarm       = mp.alarm;
     d.multi.acInState   = mp.acInState;

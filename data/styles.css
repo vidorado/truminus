@@ -451,6 +451,7 @@ body {
   .btn-fan     { padding: 4px 4px; }
   .panel-inv .inv-mpx       { width: 78px; min-height: 60px; }
   .panel-inv .inv-mpx-state { font-size: 0.62em; }
+  .panel-inv .inv-mpx-temp  { font-size: 0.64em; height: 12px; line-height: 12px; }
   .panel-inv .inv-mpx-top   { padding: 6px 4px; gap: 5px; }
   .panel-inv .inv-mid       { padding: 8px 0; overflow: visible; }
   .panel-inv .inv-flow-left  { left: 0; right: calc(50% + 40px); width: auto; }
@@ -1059,11 +1060,14 @@ body {
   line-height: 1.25;
 }
 
-/* Per-line colours mirror C_TEXT / C_CYAN / C_CYAN_BR / C_YELLOW. */
+/* Per-line colours mirror C_TEXT / C_GREEN / C_CYAN / C_CYAN_BR / C_YELLOW. */
 .solar-line.solar-status  { color: #ffffff; font-size: 0.95em; }
-.solar-line.solar-current { color: #aaccff; }   /* C_CYAN — A on its own line */
-.solar-line.solar-power   { color: #88ccff; }   /* C_CYAN_BR — W on its own line */
+.solar-line.solar-volt    { color: #44ff44; }   /* C_GREEN — battery voltage */
 .solar-line.solar-prod    { color: #ffdd66; }   /* C_YELLOW */
+/* Current and power share one line, leaving a row for the voltage. */
+.solar-line.solar-flow    { display: flex; gap: 12px; }
+.solar-flow .solar-current { color: #aaccff; }  /* C_CYAN */
+.solar-flow .solar-power   { color: #88ccff; }  /* C_CYAN_BR */
 
 /* Battery SOC label */
 .batt-soc-lbl {
@@ -1323,6 +1327,20 @@ body {
 }
 .inv-mpx-ear-l { left: 0; }
 .inv-mpx-ear-r { right: 0; }
+/* Battery temperature, centered in the top band of the blue body: above the
+   orange bar and in the gap between the two dark ears (which span 22% each). */
+.inv-mpx-temp {
+  position: absolute;
+  top: 0;
+  left: 22%;
+  right: 22%;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  font-size: 0.72em;
+  white-space: nowrap;
+  z-index: 1;
+}
 .inv-mpx-top {
   flex: 1;
   background: #0077c5;

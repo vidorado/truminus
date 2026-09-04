@@ -240,6 +240,7 @@ static struct {
 
     // SOLAR panel
     lv_obj_t* lbl_solar_status;
+    lv_obj_t* lbl_solar_volt;      lv_obj_t* lbl_solar_volt_u;
     lv_obj_t* lbl_solar_current;   lv_obj_t* lbl_solar_current_u;
     lv_obj_t* lbl_solar_power;     lv_obj_t* lbl_solar_power_u;
     lv_obj_t* lbl_solar_yield;     lv_obj_t* lbl_solar_yield_u;
@@ -258,6 +259,7 @@ static struct {
 
     // INVERSOR panel (Victron VE.Bus / Multiplus)
     lv_obj_t* lbl_inv_state;       // "Inverting" / "Charging" / "Off" / …
+    lv_obj_t* lbl_inv_temp;        // battery temperature, top band of the icon
     lv_obj_t* lbl_inv_mains_w;     // shore power
     lv_obj_t* lbl_inv_load_w;      // AC out power
     lv_obj_t* lbl_inv_batt_w;      // computed battery W (V*A)
@@ -1168,10 +1170,24 @@ static void build_main_screen()
         // because the two fonts have different descender heights.
         lv_obj_set_style_translate_y(*unit_out, -3, 0);
     };
-    make_reading( 82, C_CYAN,    &ui.lbl_solar_current, &ui.lbl_solar_current_u);
-    make_reading(111, C_CYAN_BR, &ui.lbl_solar_power,   &ui.lbl_solar_power_u);
+    // Second [value|unit] pair appended to an existing reading row, so current
+    // and power share one line and free a row for the battery voltage.
+    auto add_reading = [&](lv_obj_t* val_sibling, lv_color_t color,
+                           lv_obj_t** val_out, lv_obj_t** unit_out) {
+        lv_obj_t* row = lv_obj_get_parent(val_sibling);
+        *val_out  = make_label(row, "--", s_font_20, color, 0, 0);
+        *unit_out = make_label(row, "",   s_font_14, color, 0, 0);
+        lv_obj_set_style_translate_y(*unit_out, -3, 0);
+        lv_obj_set_style_pad_left(*val_out, 12, 0);   // gap between the pairs
+    };
+
+    make_reading( 82, C_GREEN,   &ui.lbl_solar_volt,    &ui.lbl_solar_volt_u);
+    make_reading(111, C_CYAN,    &ui.lbl_solar_current, &ui.lbl_solar_current_u);
+    add_reading(ui.lbl_solar_current, C_CYAN_BR,
+                &ui.lbl_solar_power, &ui.lbl_solar_power_u);
     make_reading(140, C_YELLOW,  &ui.lbl_solar_yield,   &ui.lbl_solar_yield_u);
     // Per-unit baseline tweaks (make_reading lifts every unit by 3 px).
+    lv_obj_set_style_translate_y(ui.lbl_solar_volt_u,    -2, 0);  // "V"
     lv_obj_set_style_translate_y(ui.lbl_solar_current_u, -2, 0);  // "A"
     lv_obj_set_style_translate_y(ui.lbl_solar_yield_u,   -2, 0);  // "kWh"
 
@@ -1372,6 +1388,14 @@ static void build_main_screen()
         // border shifts the visible interior.
         lv_obj_align(ui.lbl_inv_state, LV_ALIGN_TOP_MID, 0,
                      DW_BOTTOM + (BLUE_H - DW_BOTTOM - STATE_H) / 2);
+
+        // Battery temperature, centered in the top band of the blue body —
+        // above the orange bar and in the gap between the two dark ears.
+        ui.lbl_inv_temp = lv_label_create(mp);
+        lv_label_set_text(ui.lbl_inv_temp, "--");
+        lv_obj_set_style_text_color(ui.lbl_inv_temp, C_TEXT, 0);
+        lv_obj_set_style_text_font(ui.lbl_inv_temp, s_font_14, 0);
+        lv_obj_align(ui.lbl_inv_temp, LV_ALIGN_TOP_MID, 0, 3);
 
         auto make_flow = [&](int x, int y, int w,
                              lv_obj_t** out, lv_obj_t** stripes_out) {
@@ -2662,6 +2686,8 @@ void p4DisplayUpdate(const P4DisplayData& d)
     if (d.solar.valid) {
         set_text(ui.lbl_solar_status, translate_solar_status(d.solar.status));
         char g[20];
+        set_text_fmt(ui.lbl_solar_volt, "%.2f", d.solar.voltageV);
+        set_text(ui.lbl_solar_volt_u, "V");
         set_text_fmt(ui.lbl_solar_current, "%.1f", d.solar.currentA);
         set_text(ui.lbl_solar_current_u, "A");
         set_text(ui.lbl_solar_power, group_int(g, sizeof(g), d.solar.powerW));
@@ -2671,6 +2697,8 @@ void p4DisplayUpdate(const P4DisplayData& d)
         set_text(ui.lbl_solar_yield_u, buf);
     } else {
         set_text(ui.lbl_solar_status,  "--");
+        set_text(ui.lbl_solar_volt,    "--");
+        set_text(ui.lbl_solar_volt_u,    "");
         set_text(ui.lbl_solar_current, "--");
         set_text(ui.lbl_solar_current_u, "");
         set_text(ui.lbl_solar_power,   "--");
@@ -2748,6 +2776,11 @@ void p4DisplayUpdate(const P4DisplayData& d)
             set_text(ui.lbl_inv_mains_w, tb);
             snprintf(tb, sizeof(tb), "%s W", group_int(g, sizeof(g), loadNa ? 0 : (int)d.multi.acOutW));
             set_text(ui.lbl_inv_load_w, tb);
+            // -128 is the VE.Bus "temperature not available" marker.
+            if (d.multi.battTempC != -128)
+                set_text_fmt(ui.lbl_inv_temp, "%d°", (int)d.multi.battTempC);
+            else
+                set_text(ui.lbl_inv_temp, "--");
             int battW = (int)lroundf((std::isnan(d.multi.battV) ? 0.0f : d.multi.battV)
                                      * d.multi.battA);
             snprintf(tb, sizeof(tb), "%s W", group_int(g, sizeof(g), battW));
@@ -2796,6 +2829,7 @@ void p4DisplayUpdate(const P4DisplayData& d)
             }
         } else {
             set_text(ui.lbl_inv_state, "--");
+            set_text(ui.lbl_inv_temp,  "--");
             set_text(ui.lbl_inv_mains_w, "--");
             set_text(ui.lbl_inv_load_w,  "--");
             set_text(ui.lbl_inv_batt_w,  "--");

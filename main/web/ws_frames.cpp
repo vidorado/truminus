@@ -11,6 +11,14 @@ static const char* multiPowerJson(int32_t w, char* scratch, size_t n) {
     return scratch;
 }
 
+// Battery temperature: a plain integer, or JSON null for the VE.Bus
+// "not available" marker, so the web shows "--" instead of a bogus -128 °C.
+static const char* multiTempJson(int8_t c, char* scratch, size_t n) {
+    if (c == -128) return "null";
+    snprintf(scratch, n, "%d", (int)c);
+    return scratch;
+}
+
 void wsFmtTemp(char* out, size_t n, float celsius) {
     if (!std::isfinite(celsius) || celsius <= -200.0f) snprintf(out, n, "-273");
     else                                               snprintf(out, n, "%.1f", celsius);
@@ -38,18 +46,20 @@ void wsFmtTank(char* buf, size_t n, const TankData& t) {
 }
 
 void wsFmtMulti(char* buf, size_t n, const MultiplusData& m) {
-    char inW[12], outW[12];
+    char inW[12], outW[12], tC[8];
     snprintf(buf, n,
              "{\"command\":\"multi\",\"valid\":%s,\"state\":%u,"
              "\"ac_in_w\":%s,\"ac_out_w\":%s,"
              "\"batt_v\":%.2f,\"batt_a\":%.1f,"
-             "\"ac_in_state\":%u,\"alarm\":%u,\"soc\":%u}",
+             "\"ac_in_state\":%u,\"alarm\":%u,\"soc\":%u,"
+             "\"batt_temp\":%s}",
              m.valid ? "true" : "false",
              (unsigned)m.deviceState,
              multiPowerJson(m.acInW,  inW,  sizeof(inW)),
              multiPowerJson(m.acOutW, outW, sizeof(outW)),
              std::isnan(m.battV) ? 0.0 : m.battV, m.battA,
-             (unsigned)m.acInState, (unsigned)m.alarm, (unsigned)m.soc);
+             (unsigned)m.acInState, (unsigned)m.alarm, (unsigned)m.soc,
+             multiTempJson(m.battTempC, tC, sizeof(tC)));
 }
 
 void wsFmtAc(char* buf, size_t n, const OpenAirData& d, bool conn, bool needPair) {

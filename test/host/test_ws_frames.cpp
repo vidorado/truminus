@@ -87,13 +87,19 @@ TEST_CASE("wsFmtMulti renders the NA power sentinel as JSON null", "[ws_frames]"
     MultiplusData m{};
     m.deviceState = 9; m.acInW = 230; m.acOutW = 450;
     m.battV = 13.1f; m.battA = -8.25f;
-    m.acInState = 0; m.alarm = 0; m.soc = 77; m.valid = true;
+    m.acInState = 0; m.alarm = 0; m.soc = 77; m.battTempC = 21; m.valid = true;
 
     CHECK(multi(m) ==
           "{\"command\":\"multi\",\"valid\":true,\"state\":9,"
           "\"ac_in_w\":230,\"ac_out_w\":450,"
           "\"batt_v\":13.10,\"batt_a\":-8.2,"
-          "\"ac_in_state\":0,\"alarm\":0,\"soc\":77}");
+          "\"ac_in_state\":0,\"alarm\":0,\"soc\":77,"
+          "\"batt_temp\":21}");
+
+    // -128 is the VE.Bus "no temperature" marker: null, not a bogus -128 °C.
+    m.battTempC = -128;
+    CHECK(multi(m).find("\"batt_temp\":null") != std::string::npos);
+    m.battTempC = 21;
 
     // A port at rest reports the sentinel; it must become null, never a number
     // (0 W and "not reporting" mean different things to the web UI).

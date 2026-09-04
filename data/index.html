@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="TruMinus" />
 <link rel="manifest" href="/icons/site.webmanifest" />
 <title>TruMinus</title>
-<link rel="stylesheet" href="styles.css?v=ae41a967">
+<link rel="stylesheet" href="styles.css?v=bf834cfc">
 </head>
 <body>
 
@@ -185,8 +185,11 @@
       <div class="p-title" data-i18n="solar">SOLAR</div>
       <div class="solar-col">
         <div id="solar_state" class="solar-line solar-status">--</div>
-        <div class="solar-line solar-current"><span id="solar_battA">--</span>&thinsp;A</div>
-        <div class="solar-line solar-power"><span id="solar_pvW">--</span>&thinsp;W</div>
+        <div class="solar-line solar-volt"><span id="solar_battV">--</span>&thinsp;V</div>
+        <div class="solar-line solar-flow">
+          <span class="solar-current"><span id="solar_battA">--</span>&thinsp;A</span>
+          <span class="solar-power"><span id="solar_pvW">--</span>&thinsp;W</span>
+        </div>
         <div class="solar-line solar-prod">
           <span id="solar_kWh">--</span>&thinsp;kWh&ensp;<span data-i18n="today">hoy</span>
         </div>
@@ -230,6 +233,7 @@
           <div class="inv-mpx">
             <div class="inv-mpx-ear inv-mpx-ear-l"></div>
             <div class="inv-mpx-ear inv-mpx-ear-r"></div>
+            <div id="inv_temp" class="inv-mpx-temp">--</div>
             <div class="inv-mpx-top">
               <div class="inv-mpx-bar"></div>
               <div class="inv-mpx-display"></div>
@@ -318,6 +322,6 @@
 <script src="reconnecting-websocket.min.js?v=a1a77c36"></script>
 <script src="errors.js?v=adc0aa57"></script>
 <script src="i18n.js?v=35439beb"></script>
-<script src="script.js?v=14586b6e"></script>
+<script src="script.js?v=f3d30a7c"></script>
 </body>
 </html>

@@ -50,6 +50,7 @@ struct P4MultiData {
     int32_t     acOutW;       // load power [W]
     float       battV;        // battery voltage [V] (NaN = no data)
     float       battA;        // battery current [A] (positive = charging)
+    int8_t      battTempC;    // battery temperature [°C] (-128 = no data)
     uint8_t     soc;          // 0..100 %, 0xFF = no data
     uint8_t     alarm;        // 0..2; 3 = no data
     uint8_t     acInState;    // 0=AC1, 1=AC2, 2=disconnected, 3=no data

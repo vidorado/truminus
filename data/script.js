@@ -1189,12 +1189,14 @@ function applySolar(d) {
         document.getElementById('solar_pvW').textContent  = '--';
         document.getElementById('solar_kWh').textContent  = '--';
         document.getElementById('solar_battA').textContent = '--';
+        document.getElementById('solar_battV').textContent = '--';
         return;
     }
     stateLbl.textContent = t(SOLAR_STATES[d.state] || 'sol_off');
     document.getElementById('solar_pvW').textContent   = fmtW(d.pvW);
     document.getElementById('solar_kWh').textContent   = d.kWh;
     document.getElementById('solar_battA').textContent = d.battA;
+    document.getElementById('solar_battV').textContent = parseFloat(d.battV).toFixed(2);
 }
 
 function applyTank(d) {
@@ -1231,6 +1233,7 @@ var MULTI_STATES = {
 
 function applyMulti(d) {
     var st  = document.getElementById('inv_state');
+    var tp  = document.getElementById('inv_temp');
     var rm  = document.getElementById('inv_mains_w');
     var rl  = document.getElementById('inv_load_w');
     var rb  = document.getElementById('inv_batt_w');
@@ -1243,6 +1246,7 @@ function applyMulti(d) {
 
     if (!d.valid) {
         if (st) st.textContent = '--';
+        if (tp) tp.textContent = '--';
         if (rm) rm.textContent = '--';
         if (rl) rl.textContent = '--';
         if (rb) rb.textContent = '--';
@@ -1255,6 +1259,12 @@ function applyMulti(d) {
         return;
     }
     if (st) st.textContent = t(MULTI_STATES[d.state] || 'inv_st_off');
+    // batt_temp arrives as null when the VE.Bus record carries no temperature.
+    if (tp) {
+        var tC = (d.batt_temp === null || d.batt_temp === undefined)
+                 ? null : parseInt(d.batt_temp);
+        tp.textContent = (tC === null || isNaN(tC)) ? '--' : (tC + '\u00b0');
+    }
     // ac_in_w / ac_out_w arrive as null when the inverter is connected but a
     // port is at rest / not reporting (VE.Bus no-data sentinel) — that is a real
     // reading of 0 W, and keeps the flow idle. '--' is reserved for the
